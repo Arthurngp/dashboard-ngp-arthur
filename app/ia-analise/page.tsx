@@ -6,26 +6,26 @@ import { SURL, ANON } from '@/lib/constants'
 import styles from './ia-analise.module.css'
 
 const MODELS: Record<string, { v: string; l: string }[]> = {
-  openai:    [{ v: 'gpt-4o', l: 'GPT-4o' }, { v: 'gpt-4o-mini', l: 'GPT-4o Mini' }, { v: 'gpt-4-turbo', l: 'GPT-4 Turbo' }, { v: 'gpt-3.5-turbo', l: 'GPT-3.5 Turbo' }],
+  openai: [{ v: 'gpt-4o', l: 'GPT-4o' }, { v: 'gpt-4o-mini', l: 'GPT-4o Mini' }, { v: 'gpt-4-turbo', l: 'GPT-4 Turbo' }, { v: 'gpt-3.5-turbo', l: 'GPT-3.5 Turbo' }],
   anthropic: [{ v: 'claude-opus-4-6', l: 'Claude Opus' }, { v: 'claude-sonnet-4-6', l: 'Claude Sonnet' }, { v: 'claude-haiku-4-5-20251001', l: 'Claude Haiku' }],
-  gemini:    [{ v: 'gemini-1.5-pro', l: 'Gemini 1.5 Pro' }, { v: 'gemini-1.5-flash', l: 'Gemini 1.5 Flash' }, { v: 'gemini-2.0-flash', l: 'Gemini 2.0 Flash' }],
-  custom:    [{ v: 'custom', l: 'Definido pelo endpoint' }],
+  gemini: [{ v: 'gemini-1.5-pro', l: 'Gemini 1.5 Pro' }, { v: 'gemini-1.5-flash', l: 'Gemini 1.5 Flash' }, { v: 'gemini-2.0-flash', l: 'Gemini 2.0 Flash' }],
+  custom: [{ v: 'custom', l: 'Definido pelo endpoint' }],
 }
 
 const ENDPOINTS: Record<string, string> = {
-  openai:    'https://api.openai.com/v1/chat/completions',
+  openai: 'https://api.openai.com/v1/chat/completions',
   anthropic: 'https://api.anthropic.com/v1/messages',
-  gemini:    'https://generativelanguage.googleapis.com/v1beta/chat/completions',
-  custom:    '',
+  gemini: 'https://generativelanguage.googleapis.com/v1beta/chat/completions',
+  custom: '',
 }
 
 const ANALYSIS_TYPES = [
-  { value: 'geral',       label: 'Análise geral de performance' },
-  { value: 'otimizacao',  label: 'Sugestões de otimização' },
+  { value: 'geral', label: 'Análise geral de performance' },
+  { value: 'otimizacao', label: 'Sugestões de otimização' },
   { value: 'diagnostico', label: 'Diagnóstico de campanhas' },
-  { value: 'projecao',    label: 'Projeção e previsão' },
+  { value: 'projecao', label: 'Projeção e previsão' },
   { value: 'comparativo', label: 'Análise comparativa' },
-  { value: 'custom',      label: 'Pergunta personalizada' },
+  { value: 'custom', label: 'Pergunta personalizada' },
 ]
 
 interface Metrics {
@@ -58,7 +58,7 @@ function renderMarkdown(text: string): string {
     .replace(/^## (.+)$/gm, '<h3>$1</h3>')
     .replace(/^# (.+)$/gm, '<h3>$1</h3>')
     .replace(/^- (.+)$/gm, '<li>$1</li>')
-    .replace(/(<li>.*<\/li>)/gs, '<ul>$1</ul>')
+    .replace(/(<li>[\s\S]*<\/li>)/g, '<ul>$1</ul>')
     .replace(/\n{2,}/g, '</p><p>')
     .replace(/\n/g, '<br>')
     .replace(/^(.+)$/, '<p>$1</p>')
@@ -68,22 +68,22 @@ export default function IaAnalisePage() {
   const router = useRouter()
   const sess = getSession()
 
-  const [provider, setProvider]         = useState('openai')
-  const [model, setModel]               = useState('gpt-4o')
-  const [apiKey, setApiKey]             = useState('')
-  const [showKey, setShowKey]           = useState(false)
+  const [provider, setProvider] = useState('openai')
+  const [model, setModel] = useState('gpt-4o')
+  const [apiKey, setApiKey] = useState('')
+  const [showKey, setShowKey] = useState(false)
   const [customEndpoint, setCustomEndpoint] = useState('')
   const [analysisType, setAnalysisType] = useState('geral')
   const [extraContext, setExtraContext] = useState('')
   const [customQuestion, setCustomQuestion] = useState('')
-  const [metrics, setMetrics]           = useState<Metrics>({})
-  const [clientName, setClientName]     = useState('')
-  const [period, setPeriod]             = useState('últimos 30 dias')
-  const [output, setOutput]             = useState<string | null>(null)
-  const [rawOutput, setRawOutput]       = useState('')
-  const [loading, setLoading]           = useState(false)
-  const [error, setError]               = useState('')
-  const [copied, setCopied]             = useState(false)
+  const [metrics, setMetrics] = useState<Metrics>({})
+  const [clientName, setClientName] = useState('')
+  const [period, setPeriod] = useState('últimos 30 dias')
+  const [output, setOutput] = useState<string | null>(null)
+  const [rawOutput, setRawOutput] = useState('')
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState('')
+  const [copied, setCopied] = useState(false)
 
   useEffect(() => {
     if (!sess || sess.auth !== '1') { router.replace('/login'); return }
@@ -103,7 +103,7 @@ export default function IaAnalisePage() {
   function loadMetrics() {
     const stored = sessionStorage.getItem('ngp_ia_metrics')
     if (stored) {
-      try { setMetrics(JSON.parse(stored)) } catch {}
+      try { setMetrics(JSON.parse(stored)) } catch { }
     }
   }
 
@@ -137,12 +137,12 @@ export default function IaAnalisePage() {
 
   function buildPrompt() {
     const tipoLabel: Record<string, string> = {
-      geral:       'Faça uma análise geral de performance das métricas abaixo.',
-      otimizacao:  'Com base nas métricas abaixo, dê sugestões práticas e objetivas de otimização de campanhas.',
+      geral: 'Faça uma análise geral de performance das métricas abaixo.',
+      otimizacao: 'Com base nas métricas abaixo, dê sugestões práticas e objetivas de otimização de campanhas.',
       diagnostico: 'Faça um diagnóstico detalhado das campanhas com base nas métricas. Identifique pontos de atenção.',
-      projecao:    'Com base nos dados, faça uma projeção para o próximo período e recomendações.',
+      projecao: 'Com base nos dados, faça uma projeção para o próximo período e recomendações.',
       comparativo: 'Analise os dados e identifique o que está performando bem e o que precisa melhorar.',
-      custom:      customQuestion || 'Analise as métricas abaixo e responda com insights relevantes.',
+      custom: customQuestion || 'Analise as métricas abaixo e responda com insights relevantes.',
     }
 
     const metricsText = Object.keys(metrics).length
@@ -240,23 +240,23 @@ Estruture sua resposta com títulos em negrito usando **titulo**, use bullet poi
       method: 'POST',
       headers: { 'Content-Type': 'application/json', apikey: ANON },
       body: JSON.stringify({ token: sess?.session }),
-    }).catch(() => {})
+    }).catch(() => { })
     clearSession()
     router.replace('/login')
   }
 
   const metricItems = [
-    { k: 'Cliente',      v: clientName || '—' },
+    { k: 'Cliente', v: clientName || '—' },
     { k: 'Investimento', v: fmtMetric(metrics.spend, 'R$') },
-    { k: 'Leads',        v: fmtMetric(metrics.leads, '') },
-    { k: 'CPL',          v: fmtMetric(metrics.cpl, 'R$') },
-    { k: 'Impressões',   v: fmtMetric(metrics.impressions, '') },
-    { k: 'Cliques',      v: fmtMetric(metrics.clicks, '') },
-    { k: 'CTR',          v: metrics.ctr ? metrics.ctr + '%' : '—' },
-    { k: 'ROAS',         v: metrics.roas ? metrics.roas + 'x' : '—' },
-    { k: 'Compras',      v: fmtMetric(metrics.purchases, '') },
-    { k: 'CPC',          v: fmtMetric(metrics.cpc, 'R$') },
-    { k: 'Alcance',      v: fmtMetric(metrics.reach, '') },
+    { k: 'Leads', v: fmtMetric(metrics.leads, '') },
+    { k: 'CPL', v: fmtMetric(metrics.cpl, 'R$') },
+    { k: 'Impressões', v: fmtMetric(metrics.impressions, '') },
+    { k: 'Cliques', v: fmtMetric(metrics.clicks, '') },
+    { k: 'CTR', v: metrics.ctr ? metrics.ctr + '%' : '—' },
+    { k: 'ROAS', v: metrics.roas ? metrics.roas + 'x' : '—' },
+    { k: 'Compras', v: fmtMetric(metrics.purchases, '') },
+    { k: 'CPC', v: fmtMetric(metrics.cpc, 'R$') },
+    { k: 'Alcance', v: fmtMetric(metrics.reach, '') },
   ].filter(i => i.v !== '—')
 
   if (!sess) return null
@@ -269,7 +269,7 @@ Estruture sua resposta com títulos em negrito usando **titulo**, use bullet poi
         <div className={styles.sidebarLogo}>
           <div className={styles.logoMark}>
             <svg viewBox="0 0 24 24" fill="white" width={16} height={16}>
-              <path d="M3 3h7v7H3zm11 0h7v7h-7zM3 14h7v7H3zm14 3a4 4 0 110-8 4 4 0 010 8z"/>
+              <path d="M3 3h7v7H3zm11 0h7v7h-7zM3 14h7v7H3zm14 3a4 4 0 110-8 4 4 0 010 8z" />
             </svg>
           </div>
           <div>
@@ -281,37 +281,37 @@ Estruture sua resposta com títulos em negrito usando **titulo**, use bullet poi
         <nav className={styles.sidebarNav}>
           <span className={styles.navLabel}>Visão geral</span>
           <button className={styles.navItem} onClick={() => router.push('/dashboard')}>
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width={15} height={15}><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width={15} height={15}><rect x="3" y="3" width="7" height="7" /><rect x="14" y="3" width="7" height="7" /><rect x="14" y="14" width="7" height="7" /><rect x="3" y="14" width="7" height="7" /></svg>
             Resumo
           </button>
           <button className={styles.navItem} onClick={() => router.push('/dashboard')}>
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width={15} height={15}><polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2"/></svg>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width={15} height={15}><polygon points="23 7 16 12 23 17 23 7" /><rect x="1" y="5" width="15" height="14" rx="2" /></svg>
             Campanhas
           </button>
           <button className={styles.navItem} onClick={() => window.open('/relatorio?novo=1', '_blank')}>
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width={15} height={15}><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width={15} height={15}><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z" /><polyline points="14 2 14 8 20 8" /></svg>
             Relatório ↗
           </button>
           <span className={styles.navLabel} style={{ marginTop: 6 }}>Plataformas</span>
           <button className={styles.navItem} onClick={() => router.push('/dashboard')}>
-            <svg viewBox="0 0 24 24" fill="#1877f2" width={15} height={15}><circle cx="12" cy="12" r="10"/><path d="M16 8h-2a2 2 0 00-2 2v2h4l-.5 4H12v8h-4v-8H6v-4h2v-2a6 6 0 016-6h2v4z" fill="#fff"/></svg>
+            <svg viewBox="0 0 24 24" fill="#1877f2" width={15} height={15}><circle cx="12" cy="12" r="10" /><path d="M16 8h-2a2 2 0 00-2 2v2h4l-.5 4H12v8h-4v-8H6v-4h2v-2a6 6 0 016-6h2v4z" fill="#fff" /></svg>
             Meta Ads
           </button>
           <button className={styles.navItem} style={{ opacity: 0.6, cursor: 'default' }}>
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width={15} height={15}><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width={15} height={15}><circle cx="11" cy="11" r="8" /><path d="m21 21-4.35-4.35" /></svg>
             Google Ads <span className={styles.navBadge}>breve</span>
           </button>
           <span className={styles.navLabel} style={{ marginTop: 6 }}>Sistema</span>
           <button className={styles.navItem} onClick={() => router.push('/dashboard')}>
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width={15} height={15}><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87"/><path d="M16 3.13a4 4 0 010 7.75"/></svg>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width={15} height={15}><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2" /><circle cx="9" cy="7" r="4" /><path d="M23 21v-2a4 4 0 00-3-3.87" /><path d="M16 3.13a4 4 0 010 7.75" /></svg>
             Trocar conta
           </button>
           <button className={styles.navItem} onClick={() => router.push('/utm-builder')}>
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width={15} height={15}><path d="M10 13a5 5 0 007.54.54l3-3a5 5 0 00-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 00-7.54-.54l-3 3a5 5 0 007.07 7.07l1.71-1.71"/></svg>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width={15} height={15}><path d="M10 13a5 5 0 007.54.54l3-3a5 5 0 00-7.07-7.07l-1.72 1.71" /><path d="M14 11a5 5 0 00-7.54-.54l-3 3a5 5 0 007.07 7.07l1.71-1.71" /></svg>
             UTM Builder
           </button>
           <button className={`${styles.navItem} ${styles.navItemActive}`}>
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width={15} height={15}><path d="M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2zm0 4a1.5 1.5 0 1 1-1.5 1.5A1.5 1.5 0 0 1 12 6zm3 11H9v-2h2v-4H9v-2h4v6h2z"/></svg>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width={15} height={15}><path d="M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2zm0 4a1.5 1.5 0 1 1-1.5 1.5A1.5 1.5 0 0 1 12 6zm3 11H9v-2h2v-4H9v-2h4v6h2z" /></svg>
             Análise IA
           </button>
         </nav>
