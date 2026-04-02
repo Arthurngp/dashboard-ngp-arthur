@@ -2,7 +2,8 @@
 // Ex: https://dashboardngp.vercel.app,http://localhost:3000
 export function getCorsHeaders(req: Request): HeadersInit {
   const origin = req.headers.get('origin') || ''
-  const allowed = (Deno.env.get('ALLOWED_ORIGIN') ?? '').split(',').map(o => o.trim())
+  // @ts-ignore
+  const allowed = (Deno.env.get('ALLOWED_ORIGIN') ?? '').split(',')
   const isAllowed = allowed.includes(origin)
 
   return {
