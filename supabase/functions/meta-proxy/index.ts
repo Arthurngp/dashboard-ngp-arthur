@@ -61,17 +61,26 @@ serve(async (req) => {
 
     let metaToken = tokenUser?.meta_token || Deno.env.get('META_ACCESS_TOKEN')
 
-    // Fallback: buscar token de um NGP ativo (o Business Manager central)
+    // Fallback: buscar token de qualquer NGP ativo que tenha meta_token preenchido
     if (!metaToken) {
-      const { data: ngpFallback } = await sb
+      const { data: ngpList } = await sb
         .from('usuarios')
         .select('meta_token')
         .eq('role', 'ngp')
         .eq('ativo', true)
         .not('meta_token', 'is', null)
-        .limit(1)
-        .single()
-      metaToken = ngpFallback?.meta_token
+        .limit(5)
+
+      // Pega o primeiro token não-vazio
+      if (ngpList && ngpList.length > 0) {
+        for (const u of ngpList) {
+          if (u.meta_token && u.meta_token.trim().length > 0) {
+            metaToken = u.meta_token
+            break
+          }
+        }
+      }
+      console.log(`[meta-proxy] Fallback token search: found=${!!metaToken}, ngp_count=${ngpList?.length || 0}`)
     }
 
     if (!metaToken) {
