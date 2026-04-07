@@ -23,7 +23,7 @@ type Screen = 'select' | 'dashboard'
 type Tab = 'resumo' | 'campanhas' | 'graficos' | 'relatorios' | 'plataformas'
 interface Viewing { account: string; name: string; username: string; id: string }
 
-const INS_FIELDS = 'campaign_id,campaign_name,spend,impressions,clicks,ctr,cpc,reach,actions,action_values,purchase_roas'
+const INS_FIELDS = 'campaign_id,campaign_name,campaign_effective_status,spend,impressions,clicks,ctr,cpc,reach,actions,action_values,purchase_roas'
 
 const ALL_METRICS = [
   { id: 'spend',         label: 'Investido',   section: '💰 Financeiro' },
@@ -234,7 +234,7 @@ export default function DashboardPage() {
       if (d.error) throw new Error(d.error.message || JSON.stringify(d.error))
       const mapped = (d.data || []).map((c: Record<string, unknown>) => ({
         id: String(c.campaign_id || ''), name: String(c.campaign_name || ''),
-        status: '', objective: '',
+        status: String(c.campaign_effective_status || ''), objective: '',
         ...(parseIns(c) || {}),
       })) as Campaign[]
       setCampaigns(mapped.sort((a, b) => b.spend - a.spend))
@@ -253,7 +253,7 @@ export default function DashboardPage() {
       if (d.error) return
       const mapped = (d.data || []).map((c: Record<string, unknown>) => ({
         id: String(c.campaign_id || ''), name: String(c.campaign_name || ''),
-        status: '', objective: '',
+        status: String(c.campaign_effective_status || ''), objective: '',
         ...(parseIns(c) || {}),
       })) as Campaign[]
       setPrevCampaigns(mapped)
