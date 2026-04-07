@@ -91,7 +91,10 @@ serve(async (req) => {
     const normalizedEndpoint = endpoint.replace(/^\{account_id\}\//, '')
     let url = `https://graph.facebook.com/v19.0/${normalizedEndpoint}`
 
-    if (!normalizedEndpoint.includes('/')) {
+    if (normalizedEndpoint.startsWith('act_')) {
+      // Endpoint é diretamente um ID de conta (ex: act_123456789)
+      url = `https://graph.facebook.com/v19.0/${normalizedEndpoint}`
+    } else if (!normalizedEndpoint.includes('/')) {
       url = `https://graph.facebook.com/v19.0/act_${accountId}/${normalizedEndpoint}`
     }
 
