@@ -104,8 +104,20 @@ serve(async (req) => {
     const metaData = await metaRes.json()
 
     if (metaData?.error) {
-      console.error('[meta-proxy] Meta error:', metaData.error)
-      return json(req, { error: 'Erro ao consultar Meta API.' }, 502)
+      const metaErr = metaData.error
+      console.error('[meta-proxy] Meta error:', JSON.stringify(metaErr))
+      // Retorna detalhes do erro Meta para diagnóstico
+      const code = metaErr.code || 0
+      const subcode = metaErr.error_subcode || 0
+      let userMsg = 'Erro ao consultar Meta API.'
+      if (code === 190) userMsg = 'Token Meta expirado ou inválido. Peça ao gestor para atualizar.'
+      else if (code === 10 || code === 200 || code === 270) userMsg = `Sem permissão para acessar esta conta (act_${accountId}). Verifique no Business Manager.`
+      else if (code === 17 || code === 4) userMsg = 'Limite de requisições da Meta API atingido. Aguarde alguns minutos.'
+      else if (metaErr.message) userMsg = `Meta API: ${metaErr.message}`
+      return json(req, {
+        error: userMsg,
+        meta_error: { code, subcode, type: metaErr.type, account_id: accountId },
+      }, 502)
     }
 
     return json(req, metaData)
