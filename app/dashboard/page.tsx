@@ -20,7 +20,21 @@ import styles from './dashboard.module.css'
 ChartJS.register(CategoryScale, LinearScale, BarElement, LineElement, PointElement, ArcElement, Title, Tooltip, Legend, Filler)
 
 type Screen = 'select' | 'dashboard'
-type Tab = 'resumo' | 'campanhas' | 'graficos' | 'relatorios' | 'plataformas'
+type Tab = 'resumo' | 'campanhas' | 'graficos' | 'relatorios' | 'plataformas' | 'notificacoes'
+
+interface BudgetAlert {
+  clientId: string
+  clientName: string
+  clientFoto?: string
+  accountId: string
+  campaignId: string
+  campaignName: string
+  spend: number
+  dailyBudget: number
+  lifetimeBudget: number
+  budgetRemaining: number
+  severity: 'critical' | 'warning' | 'info'
+}
 interface Viewing { account: string; name: string; username: string; id: string }
 
 const INS_FIELDS = 'campaign_id,campaign_name,spend,impressions,clicks,ctr,cpc,reach,actions,action_values,purchase_roas'
@@ -114,6 +128,16 @@ export default function DashboardPage() {
 
   // ── Relatórios ───────────────────────────────────────────────────────────
   const [relatorios, setRelatorios] = useState<Relatorio[]>([])
+
+  // ── Notificações (alertas de saldo) ─────────────────────────────────────
+  const [budgetAlerts, setBudgetAlerts] = useState<BudgetAlert[]>([])
+  const [alertsLoading, setAlertsLoading] = useState(false)
+  const [alertsDismissed, setAlertsDismissed] = useState<Set<string>>(() => {
+    try {
+      const saved = localStorage.getItem('adsboard_dismissed_alerts')
+      return saved ? new Set(JSON.parse(saved)) : new Set()
+    } catch { return new Set() }
+  })
 
   // ── Campaign filter (resumo) ─────────────────────────────────────────────
   const [selectedCampIds, setSelectedCampIds] = useState<Set<string>>(new Set())
@@ -410,6 +434,103 @@ export default function DashboardPage() {
     setTimeSeriesLoading(false)
   }
 
+  async function loadBudgetAlerts() {
+    if (!clients.length) return
+    setAlertsLoading(true)
+    const alerts: BudgetAlert[] = []
+    try {
+      // Para cada cliente com conta Meta, buscar campanhas ativas com orçamento
+      const clientsWithAccount = clients.filter(c => c.meta_account_id)
+      for (const client of clientsWithAccount) {
+        try {
+          const d = await metaCall('campaigns', {
+            fields: 'id,name,effective_status,daily_budget,lifetime_budget,budget_remaining,spend_cap',
+            filtering: JSON.stringify([{ field: 'effective_status', operator: 'IN', value: ['ACTIVE'] }]),
+            limit: '50',
+          }, client.meta_account_id)
+
+          if (!d.data) continue
+
+          for (const camp of d.data as { id: string; name: string; daily_budget?: string; lifetime_budget?: string; budget_remaining?: string; spend_cap?: string }[]) {
+            const dailyBudget = parseFloat(camp.daily_budget || '0') / 100 // Meta retorna em centavos
+            const lifetimeBudget = parseFloat(camp.lifetime_budget || '0') / 100
+            const budgetRemaining = parseFloat(camp.budget_remaining || '0') / 100
+            const spendCap = parseFloat(camp.spend_cap || '0') / 100
+            const totalBudget = lifetimeBudget || spendCap || 0
+
+            // Calcular severidade
+            let severity: 'critical' | 'warning' | 'info' = 'info'
+
+            if (totalBudget > 0) {
+              const pctRemaining = (budgetRemaining / totalBudget) * 100
+              if (pctRemaining <= 5 || budgetRemaining <= 0) severity = 'critical'
+              else if (pctRemaining <= 20) severity = 'warning'
+              else continue // saldo ok, não alertar
+            } else if (dailyBudget > 0) {
+              // Campanha com orçamento diário — alertar se muito baixo
+              if (dailyBudget < 10) severity = 'warning'
+              else continue
+            } else {
+              continue // sem orçamento definido
+            }
+
+            alerts.push({
+              clientId: client.id,
+              clientName: client.nome,
+              clientFoto: client.foto_url,
+              accountId: client.meta_account_id || '',
+              campaignId: camp.id,
+              campaignName: camp.name,
+              spend: totalBudget - budgetRemaining,
+              dailyBudget,
+              lifetimeBudget: totalBudget,
+              budgetRemaining,
+              severity,
+            })
+          }
+        } catch (e) {
+          console.error(`[notificacoes] Erro ao checar ${client.nome}:`, e)
+        }
+      }
+
+      // Clientes SEM conta Meta configurada
+      for (const client of clients.filter(c => !c.meta_account_id)) {
+        alerts.push({
+          clientId: client.id,
+          clientName: client.nome,
+          clientFoto: client.foto_url,
+          accountId: '',
+          campaignId: '',
+          campaignName: 'Sem conta Meta configurada',
+          spend: 0, dailyBudget: 0, lifetimeBudget: 0, budgetRemaining: 0,
+          severity: 'info',
+        })
+      }
+
+      // Ordenar: critical primeiro, depois warning, depois info
+      const order = { critical: 0, warning: 1, info: 2 }
+      alerts.sort((a, b) => order[a.severity] - order[b.severity])
+      setBudgetAlerts(alerts)
+    } catch (e) {
+      console.error('[notificacoes] Erro geral:', e)
+    }
+    setAlertsLoading(false)
+  }
+
+  function dismissAlert(alertKey: string) {
+    setAlertsDismissed(prev => {
+      const next = new Set(prev)
+      next.add(alertKey)
+      localStorage.setItem('adsboard_dismissed_alerts', JSON.stringify([...next]))
+      return next
+    })
+  }
+
+  function clearDismissed() {
+    setAlertsDismissed(new Set())
+    localStorage.removeItem('adsboard_dismissed_alerts')
+  }
+
   async function loadRelatorios() {
     if (!viewing) return
     try {
@@ -507,6 +628,7 @@ export default function DashboardPage() {
   function switchTab(tab: Tab) {
     setActiveTab(tab)
     if (tab === 'relatorios' && relatorios.length === 0) loadRelatorios()
+    if (tab === 'notificacoes' && budgetAlerts.length === 0 && !alertsLoading) loadBudgetAlerts()
   }
 
   function toggleCamp(id: string) {
@@ -684,7 +806,7 @@ export default function DashboardPage() {
         </div>
 
         <div className={styles.tabs}>
-          {(['resumo','plataformas','campanhas','graficos','relatorios'] as Tab[]).map(t => (
+          {(['resumo','plataformas','campanhas','graficos','relatorios','notificacoes'] as Tab[]).map(t => (
             <button key={t} className={`${styles.tab} ${activeTab === t ? styles.tabActive : ''}`} onClick={() => switchTab(t)}>
               {t.charAt(0).toUpperCase() + t.slice(1)}
             </button>
@@ -1297,6 +1419,164 @@ export default function DashboardPage() {
                   ))}
                 </div>
             }
+          </>}
+
+          {/* ── NOTIFICAÇÕES ────────────────────────────────────────── */}
+          {activeTab === 'notificacoes' && <>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20 }}>
+              <div>
+                <div style={{ fontSize: 18, fontWeight: 800, color: '#111', letterSpacing: '-.02em' }}>🔔 Notificações de Saldo</div>
+                <div style={{ fontSize: 12, color: '#6E6E73', marginTop: 4 }}>Alertas de orçamento dos clientes cadastrados</div>
+              </div>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <button
+                  onClick={() => loadBudgetAlerts()}
+                  disabled={alertsLoading}
+                  style={{ background: '#111', color: '#fff', border: 'none', borderRadius: 8, padding: '8px 16px', fontSize: 12, fontWeight: 700, cursor: 'pointer', fontFamily: 'Sora,sans-serif', opacity: alertsLoading ? 0.6 : 1 }}
+                >
+                  {alertsLoading ? 'Verificando...' : '↻ Atualizar'}
+                </button>
+                {alertsDismissed.size > 0 && (
+                  <button
+                    onClick={clearDismissed}
+                    style={{ background: 'transparent', border: '1px solid #E5E5EA', borderRadius: 8, padding: '8px 14px', fontSize: 12, fontWeight: 600, cursor: 'pointer', color: '#6E6E73', fontFamily: 'Sora,sans-serif' }}
+                  >
+                    Mostrar dispensados ({alertsDismissed.size})
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {alertsLoading && (
+              <div className={styles.loadingBar}><div className={styles.spinner} /> Verificando saldo dos clientes...</div>
+            )}
+
+            {!alertsLoading && budgetAlerts.length === 0 && (
+              <div className={styles.empty}>
+                <div style={{ fontSize: 32, marginBottom: 8 }}>✅</div>
+                Nenhum alerta de saldo no momento. Todos os clientes estão com orçamento adequado.
+              </div>
+            )}
+
+            {!alertsLoading && budgetAlerts.length > 0 && (() => {
+              const visible = budgetAlerts.filter(a => !alertsDismissed.has(`${a.clientId}_${a.campaignId}`))
+              const criticalCount = visible.filter(a => a.severity === 'critical').length
+              const warningCount = visible.filter(a => a.severity === 'warning').length
+              const infoCount = visible.filter(a => a.severity === 'info').length
+
+              return (
+                <>
+                  {/* Summary badges */}
+                  <div style={{ display: 'flex', gap: 10, marginBottom: 16, flexWrap: 'wrap' }}>
+                    {criticalCount > 0 && (
+                      <div style={{ background: '#FEE2E2', color: '#DC2626', padding: '6px 14px', borderRadius: 20, fontSize: 12, fontWeight: 700, display: 'flex', alignItems: 'center', gap: 6 }}>
+                        🔴 {criticalCount} crítico{criticalCount > 1 ? 's' : ''}
+                      </div>
+                    )}
+                    {warningCount > 0 && (
+                      <div style={{ background: '#FEF3C7', color: '#D97706', padding: '6px 14px', borderRadius: 20, fontSize: 12, fontWeight: 700, display: 'flex', alignItems: 'center', gap: 6 }}>
+                        🟡 {warningCount} atenção
+                      </div>
+                    )}
+                    {infoCount > 0 && (
+                      <div style={{ background: '#DBEAFE', color: '#2563EB', padding: '6px 14px', borderRadius: 20, fontSize: 12, fontWeight: 700, display: 'flex', alignItems: 'center', gap: 6 }}>
+                        ℹ️ {infoCount} info
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Alert cards */}
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                    {visible.map(alert => {
+                      const key = `${alert.clientId}_${alert.campaignId}`
+                      const borderColor = alert.severity === 'critical' ? '#DC2626' : alert.severity === 'warning' ? '#D97706' : '#3B82F6'
+                      const bgColor = alert.severity === 'critical' ? '#FFF5F5' : alert.severity === 'warning' ? '#FFFBEB' : '#F0F9FF'
+                      const sevLabel = alert.severity === 'critical' ? '🔴 CRÍTICO' : alert.severity === 'warning' ? '🟡 ATENÇÃO' : 'ℹ️ INFO'
+                      const pctRemaining = alert.lifetimeBudget > 0 ? (alert.budgetRemaining / alert.lifetimeBudget * 100) : 0
+
+                      return (
+                        <div key={key} style={{
+                          background: bgColor, border: `1.5px solid ${borderColor}20`, borderLeft: `4px solid ${borderColor}`,
+                          borderRadius: 10, padding: '14px 18px', display: 'flex', alignItems: 'center', gap: 14,
+                          transition: 'all .15s',
+                        }}>
+                          {/* Client avatar */}
+                          <div style={{
+                            width: 40, height: 40, borderRadius: 10, background: 'linear-gradient(135deg,#CC1414,#7c3aed)',
+                            display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff',
+                            fontSize: 13, fontWeight: 800, flexShrink: 0, overflow: 'hidden', position: 'relative',
+                          }}>
+                            {alert.clientFoto
+                              ? <img src={alert.clientFoto} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover', position: 'absolute', inset: 0 }} />
+                              : alert.clientName.slice(0, 2).toUpperCase()
+                            }
+                          </div>
+
+                          {/* Info */}
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 3 }}>
+                              <span style={{ fontSize: 13, fontWeight: 700, color: '#111' }}>{alert.clientName}</span>
+                              <span style={{
+                                fontSize: 10, fontWeight: 700, padding: '2px 8px', borderRadius: 20,
+                                background: `${borderColor}18`, color: borderColor,
+                              }}>
+                                {sevLabel}
+                              </span>
+                            </div>
+                            <div style={{ fontSize: 12, color: '#6E6E73', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                              {alert.campaignName}
+                            </div>
+                            {alert.lifetimeBudget > 0 && (
+                              <div style={{ marginTop: 6, display: 'flex', alignItems: 'center', gap: 10 }}>
+                                <div style={{ flex: 1, height: 5, background: '#E5E5EA', borderRadius: 3, overflow: 'hidden', maxWidth: 200 }}>
+                                  <div style={{
+                                    height: '100%', borderRadius: 3,
+                                    background: alert.severity === 'critical' ? '#DC2626' : alert.severity === 'warning' ? '#D97706' : '#3B82F6',
+                                    width: `${Math.max(100 - pctRemaining, 0)}%`,
+                                  }} />
+                                </div>
+                                <span style={{ fontSize: 11, fontWeight: 600, color: '#6E6E73', whiteSpace: 'nowrap' }}>
+                                  R$ {fmt(alert.budgetRemaining)} restante de R$ {fmt(alert.lifetimeBudget)}
+                                </span>
+                              </div>
+                            )}
+                            {alert.dailyBudget > 0 && alert.lifetimeBudget === 0 && (
+                              <div style={{ fontSize: 11, color: '#6E6E73', marginTop: 4 }}>
+                                Orçamento diário: R$ {fmt(alert.dailyBudget)}
+                              </div>
+                            )}
+                            {!alert.accountId && (
+                              <div style={{ fontSize: 11, color: '#D97706', marginTop: 4, fontWeight: 600 }}>
+                                ⚠️ Configure a conta Meta deste cliente em Vincular Contas
+                              </div>
+                            )}
+                          </div>
+
+                          {/* Dismiss button */}
+                          <button
+                            onClick={() => dismissAlert(key)}
+                            title="Dispensar"
+                            style={{
+                              background: 'transparent', border: '1px solid #E5E5EA', borderRadius: 6,
+                              padding: '4px 8px', cursor: 'pointer', fontSize: 11, color: '#AEAEB2',
+                              fontFamily: 'Sora,sans-serif', flexShrink: 0,
+                            }}
+                          >
+                            ✕
+                          </button>
+                        </div>
+                      )
+                    })}
+
+                    {visible.length === 0 && alertsDismissed.size > 0 && (
+                      <div className={styles.empty}>
+                        Todos os alertas foram dispensados. Clique em &quot;Mostrar dispensados&quot; para restaurar.
+                      </div>
+                    )}
+                  </div>
+                </>
+              )
+            })()}
           </>}
 
         </div>

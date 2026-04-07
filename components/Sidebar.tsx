@@ -35,6 +35,7 @@ const ngpNav: NavItem[] = [
   { tab: 'campanhas',   icon: <Ico><polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2"/></Ico>, label: 'Campanhas',  href: '/dashboard' },
   { tab: 'graficos',    icon: <Ico><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></Ico>, label: 'Gráficos',   href: '/dashboard' },
   { tab: 'relatorios',  icon: <Ico><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></Ico>, label: 'Relatórios',  href: '/relatorio?novo=1' },
+  { tab: 'notificacoes', icon: <Ico><path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 01-3.46 0"/></Ico>, label: 'Notificações', href: '/dashboard' },
 ]
 
 const sistemaNav: NavItem[] = [
