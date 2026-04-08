@@ -4,3 +4,4 @@ node_modules/
 .env.local
 .claude/
 .DS_Store
+tsconfig.tsbuildinfo
