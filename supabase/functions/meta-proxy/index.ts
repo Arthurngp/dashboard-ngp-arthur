@@ -42,7 +42,11 @@ serve(async (req) => {
     }
 
     // 3. Determinar account_id autorizado
-    let accountId = account_id || usuario.meta_account_id
+    // Clientes só podem acessar a própria conta — ignora qualquer account_id enviado no body
+    let accountId = usuario.role === 'cliente'
+      ? usuario.meta_account_id
+      : (account_id || usuario.meta_account_id)
+
     if (!accountId) {
       return json(req, { error: 'Conta de anúncio não configurada.' }, 400)
     }

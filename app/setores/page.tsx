@@ -6,9 +6,6 @@ import Sidebar from '@/components/Sidebar'
 import ComingSoonModal from '@/components/ComingSoonModal'
 import styles from './setores.module.css'
 
-// ════════════════════════════════════════════════════════════════════════════
-// SETORES — edite as URLs externas abaixo conforme os sistemas reais
-// ════════════════════════════════════════════════════════════════════════════
 const SETORES = [
   {
     id: 'anuncios',
@@ -22,6 +19,7 @@ const SETORES = [
     ),
     href: '/dashboard',
     external: false,
+    embed: false,
     gradient: 'linear-gradient(135deg,#dc2626,#f97316)',
   },
   {
@@ -36,6 +34,7 @@ const SETORES = [
     ),
     href: 'https://financeiro.grupongp.com.br',
     external: true,
+    embed: true, // abre inline no NGP Space
     gradient: 'linear-gradient(135deg,#059669,#14b8a6)',
   },
   {
@@ -49,8 +48,9 @@ const SETORES = [
         <line x1="12" y1="22.08" x2="12" y2="12"/>
       </svg>
     ),
-    href: '#', // TODO: trocar pela URL do Comercial
+    href: '#',
     external: true,
+    embed: false,
     gradient: 'linear-gradient(135deg,#3b82f6,#7c3aed)',
   },
   {
@@ -64,36 +64,47 @@ const SETORES = [
         <circle cx="12" cy="12" r="2"/>
       </svg>
     ),
-    href: '#', // TODO: trocar pela URL do Trackeamento
+    href: '#',
     external: true,
+    embed: false,
     gradient: 'linear-gradient(135deg,#7c3aed,#ec4899)',
   },
 ] as const
 
 export default function SetoresPage() {
   const router = useRouter()
-  const [sess, setSess] = useState<ReturnType<typeof getSession> | null>(null)
-  const [comingSoon, setComingSoon] = useState<string | null>(null)
+  const [sess, setSess]             = useState<ReturnType<typeof getSession> | null>(null)
+  const [comingSoon, setComingSoon]   = useState<string | null>(null)
+  const [embedUrl, setEmbedUrl]     = useState<string | null>(null)
+  const [embedTitle, setEmbedTitle] = useState('')
+  const [iframeLoads, setIframeLoads] = useState(0)
 
   useEffect(() => {
     const s = getSession()
     if (!s || s.auth !== '1') { router.replace('/login'); return }
-    if (s.role !== 'ngp') { router.replace('/cliente'); return }
+    if (s.role !== 'ngp')     { router.replace('/cliente'); return }
     setSess(s)
   }, [router])
 
   if (!sess) return null
 
   function openSetor(setor: typeof SETORES[number]) {
-    if (setor.href === '#') {
-      setComingSoon(setor.title)
-      return
-    }
-    if (setor.external) {
-      window.open(setor.href, '_blank', 'noopener,noreferrer')
-    } else {
-      router.push(setor.href)
-    }
+    if (setor.href === '#') { setComingSoon(setor.title); return }
+    if (setor.embed)        { setEmbedUrl(setor.href); setEmbedTitle(setor.title); setIframeLoads(0); return }
+    if (setor.external)     { window.open(setor.href, '_blank', 'noopener,noreferrer'); return }
+    router.push(setor.href)
+  }
+
+  // Detecta navegação pós-login: segundo `load` = usuário fez login e foi redirecionado
+  function handleIframeLoad() {
+    setIframeLoads(prev => {
+      const next = prev + 1
+      if (next >= 2 && embedUrl) {
+        // Abre o sistema completo na aba atual e fecha o modal
+        window.location.href = embedUrl
+      }
+      return next
+    })
   }
 
   return (
@@ -121,7 +132,7 @@ export default function SetoresPage() {
                 <div className={styles.cardBody}>
                   <div className={styles.cardTitleRow}>
                     <h3 className={styles.cardTitle}>{setor.title}</h3>
-                    {setor.external && (
+                    {setor.external && !setor.embed && (
                       <span className={styles.externalTag} title="Abre em nova aba">↗</span>
                     )}
                   </div>
@@ -140,6 +151,40 @@ export default function SetoresPage() {
       </main>
 
       <ComingSoonModal setor={comingSoon} onClose={() => setComingSoon(null)} />
+
+      {/* Modal iframe para sistemas embarcados */}
+      {embedUrl && (
+        <div className={styles.embedOverlay} onClick={() => setEmbedUrl(null)}>
+          <div className={styles.embedModal} onClick={e => e.stopPropagation()}>
+            <div className={styles.embedHeader}>
+              <div className={styles.embedTitleRow}>
+                <span className={styles.embedDot} style={{ background: '#059669' }} />
+                <span className={styles.embedTitle}>{embedTitle}</span>
+                <span className={styles.embedUrl}>{embedUrl}</span>
+              </div>
+              <div className={styles.embedActions}>
+                <button
+                  className={styles.embedBtnExternal}
+                  onClick={() => window.open(embedUrl, '_blank', 'noopener,noreferrer')}
+                  title="Abrir em nova aba"
+                >
+                  ↗ Abrir em nova aba
+                </button>
+                <button className={styles.embedBtnClose} onClick={() => setEmbedUrl(null)} title="Fechar">
+                  ✕
+                </button>
+              </div>
+            </div>
+            <iframe
+              src={embedUrl}
+              className={styles.embedFrame}
+              title={embedTitle}
+              allow="fullscreen"
+              onLoad={handleIframeLoad}
+            />
+          </div>
+        </div>
+      )}
     </div>
   )
 }
