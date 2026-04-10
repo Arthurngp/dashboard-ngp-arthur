@@ -189,6 +189,9 @@ export default function PessoasPage() {
     setSess(s)
   }, [router])
 
+  // Headers padrão para Edge Functions (Authorization obrigatório no Supabase)
+  const efHeaders = { 'Content-Type': 'application/json', apikey: ANON, Authorization: `Bearer ${ANON}` }
+
   // Busca dados do dia atual
   const fetchToday = useCallback(async () => {
     const s = getSession()
@@ -196,16 +199,17 @@ export default function PessoasPage() {
     try {
       const res  = await fetch(`${SURL}/functions/v1/get-ponto-now`, {
         method:  'POST',
-        headers: { 'Content-Type': 'application/json', apikey: ANON },
+        headers: { 'Content-Type': 'application/json', apikey: ANON, Authorization: `Bearer ${ANON}` },
         body:    JSON.stringify({ session_token: s.session }),
       })
       const data = await res.json()
       if (data.error) return
-      // Sincroniza relógio com servidor
-      clockRef.current = new Date(data.server_now)
+      // Sincroniza relógio com servidor (somente se data válida)
+      const serverDate = new Date(data.server_now)
+      if (!isNaN(serverDate.getTime())) clockRef.current = serverDate
       setTodayRecords(data.today_records || [])
     } catch { /* silencioso */ }
-  }, [])
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Busca registros do mês
   const fetchMes = useCallback(async (mes: number, ano: number) => {
@@ -215,7 +219,7 @@ export default function PessoasPage() {
     try {
       const res  = await fetch(`${SURL}/functions/v1/get-ponto-mes`, {
         method:  'POST',
-        headers: { 'Content-Type': 'application/json', apikey: ANON },
+        headers: { 'Content-Type': 'application/json', apikey: ANON, Authorization: `Bearer ${ANON}` },
         body:    JSON.stringify({ session_token: s.session, mes, ano }),
       })
       const data = await res.json()
@@ -223,7 +227,7 @@ export default function PessoasPage() {
     } catch { /* silencioso */ } finally {
       setLoadingMes(false)
     }
-  }, [])
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (!sess) return
@@ -237,16 +241,20 @@ export default function PessoasPage() {
     fetchMes(selMes, selAno)
   }, [selMes, selAno]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Tick do relógio
+  // Tick do relógio — defensive: sempre inicializa com Date válida
   useEffect(() => {
     const interval = setInterval(() => {
-      if (!clockRef.current) { clockRef.current = new Date() }
-      else { clockRef.current = new Date(clockRef.current.getTime() + 1000) }
+      const prev = clockRef.current
+      const isValid = prev && !isNaN(prev.getTime())
+      clockRef.current = isValid
+        ? new Date(prev!.getTime() + 1000)
+        : new Date()
 
-      const brt = new Date(clockRef.current.getTime() + BRT_OFFSET)
-      const h   = brt.getUTCHours().toString().padStart(2, '0')
-      const m   = brt.getUTCMinutes().toString().padStart(2, '0')
-      const sc  = brt.getUTCSeconds().toString().padStart(2, '0')
+      const brtMs = clockRef.current.getTime() + BRT_OFFSET
+      const brt   = new Date(brtMs)
+      const h     = brt.getUTCHours().toString().padStart(2, '0')
+      const m     = brt.getUTCMinutes().toString().padStart(2, '0')
+      const sc    = brt.getUTCSeconds().toString().padStart(2, '0')
       setClockDisplay(`${h}:${m}:${sc}`)
     }, 1000)
     return () => clearInterval(interval)
@@ -261,7 +269,7 @@ export default function PessoasPage() {
     try {
       const res  = await fetch(`${SURL}/functions/v1/registrar-ponto`, {
         method:  'POST',
-        headers: { 'Content-Type': 'application/json', apikey: ANON },
+        headers: { 'Content-Type': 'application/json', apikey: ANON, Authorization: `Bearer ${ANON}` },
         body:    JSON.stringify({ session_token: s.session }),
       })
       const data = await res.json()
