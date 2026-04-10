@@ -2,7 +2,7 @@ export interface Session {
   auth: string
   session: string
   user: string
-  role: 'ngp' | 'cliente'
+  role: 'admin' | 'ngp' | 'cliente'
   username: string
   expires: string
   metaToken?: string

@@ -29,7 +29,7 @@ export function getSession(): Session | null {
       auth,
       session,
       user:        sessionStorage.getItem(KEYS.user)        || '',
-      role:       (sessionStorage.getItem(KEYS.role)        || 'cliente') as 'ngp' | 'cliente',
+      role:       (sessionStorage.getItem(KEYS.role)        || 'cliente') as 'admin' | 'ngp' | 'cliente',
       username:    sessionStorage.getItem(KEYS.username)    || '',
       expires,
       metaAccount: sessionStorage.getItem(KEYS.metaAccount) || undefined,
