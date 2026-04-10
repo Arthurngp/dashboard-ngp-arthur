@@ -153,7 +153,7 @@ export default function PerfilPage() {
   if (!sess) return null
 
   return (
-    <>
+    <div className={styles.wrap}>
       <div className={styles.topBar}>
         <button className={styles.btnBack} onClick={goBack}>← Voltar</button>
         <span className={styles.topTitle}>Meu Perfil</span>
@@ -226,6 +226,6 @@ export default function PerfilPage() {
         </div>
 
       </div>
-    </>
+    </div>
   )
 }

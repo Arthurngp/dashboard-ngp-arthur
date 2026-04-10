@@ -37,7 +37,7 @@ function LoginContent() {
   useEffect(() => {
     const sess = getSession()
     if (sess?.auth === '1') {
-      router.replace(sess.role === 'ngp' ? '/setores' : '/cliente')
+      router.replace(sess.role === 'ngp' || sess.role === 'admin' ? '/setores' : '/cliente')
       return
     }
     setMounted(true)
@@ -56,7 +56,7 @@ function LoginContent() {
     try {
       const res = await fetch(`${SURL}/functions/v1/login`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', apikey: ANON },
+        headers: { 'Content-Type': 'application/json', apikey: ANON, Authorization: `Bearer ${ANON}` },
         body: JSON.stringify({ username: user.trim().toLowerCase(), password: pass, role: tab }),
       })
       const data = await res.json()
@@ -82,7 +82,7 @@ function LoginContent() {
       const returnUrl  = params.get('returnUrl')
       const redirectTo = returnUrl
         ? decodeURIComponent(returnUrl)
-        : data.user.role === 'ngp' ? '/setores' : '/cliente'
+        : (data.user.role === 'ngp' || data.user.role === 'admin') ? '/setores' : '/cliente'
 
       setTimeout(() => router.replace(redirectTo), 900)
     } catch (e: unknown) {

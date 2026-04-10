@@ -17,7 +17,7 @@
 
 .content {
   width: 100%;
-  max-width: 940px;
+  max-width: 1100px;
   margin: 0 auto;
   display: flex;
   flex-direction: column;
@@ -303,6 +303,14 @@
 .table tbody tr:last-child td { border-bottom: none; }
 .table tbody tr:hover { background: #FAFAFA; }
 
+.tdUsuario {
+  font-size: 12px;
+  font-weight: 600;
+  color: #6B7280;
+  font-family: monospace;
+  white-space: nowrap;
+}
+
 .tdDate {
   font-weight: 600;
   color: #3B3B3E;
@@ -326,6 +334,41 @@
   font-weight: 700;
   letter-spacing: 0.03em;
   white-space: nowrap;
+}
+
+/* ── Admin: coluna ações ── */
+.thAcoes {
+  width: 56px;
+  text-align: center;
+}
+
+.btnDelete {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border: 1px solid #E5E5EA;
+  border-radius: 8px;
+  background: #fff;
+  color: #8E8E93;
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s, background 0.15s;
+}
+.btnDelete:hover:not(:disabled) {
+  color: #dc2626;
+  border-color: #dc2626;
+  background: #fee2e2;
+}
+.btnDelete:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.spinnerDark {
+  width: 12px;
+  height: 12px;
+  border: 2px solid rgba(0,0,0,0.15);
+  border-top-color: #1C1C1E;
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
 }
 
 /* ── Responsive ── */

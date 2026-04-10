@@ -82,7 +82,7 @@ export default function DashboardPage() {
 
   useEffect(() => {
     if (!sess || sess.auth !== '1') { router.replace('/login'); return }
-    if (sess.role !== 'ngp')        { router.replace('/cliente'); return }
+    if (sess.role !== 'ngp' && sess.role !== 'admin') { router.replace('/cliente'); return }
     setMounted(true)
   }, [])
 
@@ -196,7 +196,7 @@ export default function DashboardPage() {
 
   // ─── Init ────────────────────────────────────────────────────────────────
   useEffect(() => {
-    if (!sess || sess.role !== 'ngp') return
+    if (!sess || (sess.role !== 'ngp' && sess.role !== 'admin')) return
     const vAcc  = sessionStorage.getItem('ngp_viewing_account')
     const vName = sessionStorage.getItem('ngp_viewing_name')
     const vUser = sessionStorage.getItem('ngp_viewing_username')

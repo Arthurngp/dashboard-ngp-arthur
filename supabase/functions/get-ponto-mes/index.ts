@@ -48,6 +48,7 @@ serve(async (req) => {
       .from('ponto_registros')
       .select('id, tipo_registro, created_at')
       .eq('usuario_id', sessao.usuario_id)
+      .is('deleted_at', null)
       .gte('created_at', startUtc)
       .lt('created_at', endUtc)
       .order('created_at', { ascending: true })

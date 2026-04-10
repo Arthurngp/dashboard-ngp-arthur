@@ -41,11 +41,12 @@ serve(async (req) => {
     const tomorrowStr  = nextDay.toISOString().split('T')[0]
     const endOfToday   = `${tomorrowStr}T03:00:00.000Z`
 
-    // Registros de hoje
+    // Registros de hoje (excluindo soft-deletados)
     const { data: todayRecords } = await sb
       .from('ponto_registros')
       .select('id, tipo_registro, created_at')
       .eq('usuario_id', sessao.usuario_id)
+      .is('deleted_at', null)
       .gte('created_at', startOfToday)
       .lt('created_at', endOfToday)
       .order('created_at', { ascending: true })

@@ -8,7 +8,7 @@ export default function Home() {
   useEffect(() => {
     const sess = getSession()
     if (!sess) { router.replace('/login'); return }
-    router.replace(sess.role === 'ngp' ? '/setores' : '/cliente')
+    router.replace(sess.role === 'ngp' || sess.role === 'admin' ? '/setores' : '/cliente')
   }, [router])
   return null
 }
