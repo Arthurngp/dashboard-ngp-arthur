@@ -19,6 +19,13 @@ interface Props {
   onLogout?: () => void
   /** Oculta a seção de navegação do dashboard (usado na página de setores) */
   showDashboardNav?: boolean
+  /** Modo minimal: oculta SISTEMA e ADMINISTRAÇÃO, SETORES fechado por padrão.
+   *  Use em setores como Pessoas para ter nav própria abaixo. */
+  minimal?: boolean
+  /** Itens de navegação próprios do setor (aparece abaixo de SETORES no minimal mode) */
+  sectorNav?: NavItem[]
+  /** Título da seção de nav do setor */
+  sectorNavTitle?: string
 }
 
 interface NavItem { icon: React.ReactNode; label: string; href: string; tab?: string; badge?: string }
@@ -56,11 +63,12 @@ const setoresNav: NavItem[] = [
   { icon: <Ico><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="2"/></Ico>, label: 'Trackeamento', href: '#' },
 ]
 
-export default function Sidebar({ activeTab, onTabChange, onLogout, showDashboardNav = true }: Props) {
+export default function Sidebar({ activeTab, onTabChange, onLogout, showDashboardNav = true, minimal = false, sectorNav, sectorNavTitle }: Props) {
   const router   = useRouter()
   const pathname = usePathname()
   const sess     = getSession()
-  const [setoresOpen, setSetoresOpen] = useState(!showDashboardNav)
+  // minimal mode → SETORES fechado por padrão; setores hub → aberto por padrão
+  const [setoresOpen, setSetoresOpen] = useState(!showDashboardNav && !minimal)
 
   async function doLogout() {
     if (onLogout) { onLogout(); return }
@@ -134,11 +142,22 @@ export default function Sidebar({ activeTab, onTabChange, onLogout, showDashboar
         </button>
         {setoresOpen && renderNav(setoresNav)}
 
-        <div className={styles.navLabel} style={{ marginTop: 12 }}>SISTEMA</div>
-        {renderNav(sistemaNav)}
+        {/* Nav própria do setor (minimal mode) */}
+        {minimal && sectorNav && sectorNav.length > 0 && (
+          <>
+            <div className={styles.navLabel} style={{ marginTop: 12 }}>{sectorNavTitle || 'MENU'}</div>
+            {renderNav(sectorNav)}
+          </>
+        )}
 
-        <div className={styles.navLabel} style={{ marginTop: 12 }}>ADMINISTRAÇÃO</div>
-        {renderNav(adminNav)}
+        {!minimal && (
+          <>
+            <div className={styles.navLabel} style={{ marginTop: 12 }}>SISTEMA</div>
+            {renderNav(sistemaNav)}
+            <div className={styles.navLabel} style={{ marginTop: 12 }}>ADMINISTRAÇÃO</div>
+            {renderNav(adminNav)}
+          </>
+        )}
       </nav>
 
       <div className={styles.footer}>
