@@ -53,13 +53,13 @@ const sistemaNav: NavItem[] = [
 ]
 
 const adminNav: NavItem[] = [
-  { icon: <Ico><path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/></Ico>, label: 'Vincular Contas', href: '/admin/link-accounts' },
+  { icon: <Ico><path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/></Ico>, label: 'Vincular Contas', href: '/admin/contas' },
 ]
 
 const setoresNav: NavItem[] = [
   { icon: <Ico><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></Ico>, label: 'Relatórios e Dados', href: '/dashboard' },
   { icon: <Ico><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 000 7h5a3.5 3.5 0 010 7H6"/></Ico>, label: 'Financeiro', href: 'https://financeiro.grupongp.com.br' },
-  { icon: <Ico><path d="M21 16V8a2 2 0 00-1-1.73l-7-4a2 2 0 00-2 0l-7 4A2 2 0 003 8v8a2 2 0 001 1.73l7 4a2 2 0 002 0l7-4A2 2 0 0021 16z"/></Ico>, label: 'Comercial', href: '#' },
+  { icon: <Ico><path d="M21 16V8a2 2 0 00-1-1.73l-7-4a2 2 0 00-2 0l-7 4A2 2 0 003 8v8a2 2 0 001 1.73l7 4a2 2 0 002 0l7-4A2 2 0 0021 16z"/></Ico>, label: 'Comercial', href: '/comercial' },
   { icon: <Ico><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="2"/></Ico>, label: 'Trackeamento', href: '#' },
 ]
 
@@ -67,8 +67,12 @@ export default function Sidebar({ activeTab, onTabChange, onLogout, showDashboar
   const router   = useRouter()
   const pathname = usePathname()
   const sess     = getSession()
-  // minimal mode → SETORES fechado por padrão; setores hub → aberto por padrão
   const [setoresOpen, setSetoresOpen] = useState(!showDashboardNav && !minimal)
+  const [sectorNavOpen, setSectorNavOpen] = useState(true)
+  const [mobileOpen, setMobileOpen]   = useState(false)
+
+  // Fecha sidebar ao navegar
+  const handleNav = (fn: () => void) => { fn(); setMobileOpen(false) }
 
   async function doLogout() {
     if (onLogout) { onLogout(); return }
@@ -95,9 +99,9 @@ export default function Sidebar({ activeTab, onTabChange, onLogout, showDashboar
 
     function handleClick() {
       if (item.href === '#') return
-      if (item.href.startsWith('http')) { window.open(item.href, '_blank', 'noopener,noreferrer'); return }
-      if (isTabItem && item.tab) { onTabChange(item.tab); return }
-      router.push(item.href)
+      if (item.href.startsWith('http')) { handleNav(() => window.open(item.href, '_blank', 'noopener,noreferrer')); return }
+      if (isTabItem && item.tab) { handleNav(() => onTabChange(item.tab!)); return }
+      handleNav(() => router.push(item.href))
     }
 
     return (
@@ -115,8 +119,22 @@ export default function Sidebar({ activeTab, onTabChange, onLogout, showDashboar
   })
 
   return (
-    <aside className={styles.sidebar}>
-      <button className={styles.logoBtn} onClick={() => router.push('/setores')}>
+    <>
+      {/* Hamburguer — só aparece em mobile via CSS */}
+      <button className={styles.hamburger} onClick={() => setMobileOpen(true)} aria-label="Abrir menu">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" width={18} height={18}>
+          <line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/>
+        </svg>
+      </button>
+
+      {/* Overlay escuro */}
+      <div
+        className={`${styles.overlay} ${mobileOpen ? styles.overlayVisible : ''}`}
+        onClick={() => setMobileOpen(false)}
+      />
+
+    <aside className={`${styles.sidebar} ${mobileOpen ? styles.sidebarOpen : ''}`}>
+      <button className={styles.logoBtn} onClick={() => handleNav(() => router.push('/setores'))}>
         <div className={styles.logoMark}><LogoIcon /></div>
         <div>
           <div className={styles.logoText}>NGP <span>Space</span></div>
@@ -125,16 +143,9 @@ export default function Sidebar({ activeTab, onTabChange, onLogout, showDashboar
       </button>
 
       <nav className={styles.nav}>
-        {showDashboardNav && (
-          <>
-            <div className={styles.navLabel}>VISÃO GERAL</div>
-            {renderNav(ngpNav)}
-          </>
-        )}
-
         <button
           className={styles.navLabelBtn}
-          style={{ marginTop: showDashboardNav ? 12 : 0 }}
+          style={{ marginTop: 0 }}
           onClick={() => setSetoresOpen(o => !o)}
         >
           <span>SETORES</span>
@@ -145,8 +156,11 @@ export default function Sidebar({ activeTab, onTabChange, onLogout, showDashboar
         {/* Nav própria do setor (minimal mode) */}
         {minimal && sectorNav && sectorNav.length > 0 && (
           <>
-            <div className={styles.navLabel} style={{ marginTop: 12 }}>{sectorNavTitle || 'MENU'}</div>
-            {renderNav(sectorNav)}
+            <button className={styles.navLabelBtn} style={{ marginTop: 12 }} onClick={() => setSectorNavOpen(o => !o)}>
+              <span>{sectorNavTitle || 'MENU'}</span>
+              <span className={`${styles.chevron} ${sectorNavOpen ? styles.chevronOpen : ''}`}>›</span>
+            </button>
+            {sectorNavOpen && renderNav(sectorNav)}
           </>
         )}
 
@@ -155,6 +169,12 @@ export default function Sidebar({ activeTab, onTabChange, onLogout, showDashboar
             <div className={styles.navLabel} style={{ marginTop: 12 }}>SISTEMA</div>
             {renderNav(sistemaNav)}
             <div className={styles.navLabel} style={{ marginTop: 12 }}>ADMINISTRAÇÃO</div>
+            {renderNav(adminNav)}
+          </>
+        )}
+        {minimal && sectorNavTitle !== 'ADMINISTRAÇÃO' && sectorNavTitle !== 'CADASTRAR' && (
+          <>
+            <div className={styles.navLabel} style={{ marginTop: 24 }}>ADMINISTRAÇÃO</div>
             {renderNav(adminNav)}
           </>
         )}
@@ -173,5 +193,6 @@ export default function Sidebar({ activeTab, onTabChange, onLogout, showDashboar
         </div>
       </div>
     </aside>
+    </>
   )
 }

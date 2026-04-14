@@ -126,6 +126,7 @@ serve(async (req) => {
       token: sessionToken,
       usuario_id: usuario.id,
       expires_at: expiresAt,
+      last_activity: new Date().toISOString(),
     })
 
     if (sessionError) {

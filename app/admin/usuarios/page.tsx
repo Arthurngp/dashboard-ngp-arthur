@@ -6,23 +6,23 @@ import { SURL, ANON } from '@/lib/constants'
 import Sidebar from '@/components/Sidebar'
 import styles from './usuarios.module.css'
 
-interface Usuario {
-  id: string
-  nome: string
-  username: string
-  role: 'admin' | 'ngp' | 'cliente'
-  ativo: boolean
-  created_at: string
-  foto_url?: string
-}
+interface Usuario { id: string; nome: string; username: string; role: 'admin' | 'ngp' | 'cliente'; ativo: boolean; created_at: string; foto_url?: string }
 
-const ROLE_LABEL: Record<string, string> = {
-  admin: 'Admin',
-  ngp: 'NGP',
-  cliente: 'Cliente',
-}
-
+const ROLE_LABEL: Record<string, string> = { admin: 'Admin', ngp: 'NGP', cliente: 'Cliente' }
 const efHeaders = { 'Content-Type': 'application/json', apikey: ANON, Authorization: `Bearer ${ANON}` }
+
+const IcoAd = () => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" width={15} height={15}>
+    <path d="M10 13a5 5 0 007.54.54l3-3a5 5 0 00-7.07-7.07l-1.72 1.71"/>
+    <path d="M14 11a5 5 0 00-7.54-.54l-3 3a5 5 0 007.07 7.07l1.71-1.71"/>
+  </svg>
+)
+const IcoUsers = () => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" width={15} height={15}>
+    <path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/>
+    <path d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75"/>
+  </svg>
+)
 
 export default function UsuariosPage() {
   const router = useRouter()
@@ -30,15 +30,13 @@ export default function UsuariosPage() {
   const [usuarios, setUsuarios] = useState<Usuario[]>([])
   const [loading, setLoading] = useState(true)
   const [showForm, setShowForm] = useState(false)
-
-  // Form state
-  const [fNome, setFNome]     = useState('')
-  const [fUser, setFUser]     = useState('')
-  const [fEmail, setFEmail]   = useState('')
-  const [fPass, setFPass]     = useState('')
-  const [fRole, setFRole]     = useState<'admin' | 'ngp' | 'cliente'>('ngp')
-  const [fMeta, setFMeta]     = useState('')
-  const [saving, setSaving]   = useState(false)
+  const [fNome, setFNome] = useState('')
+  const [fUser, setFUser] = useState('')
+  const [fEmail, setFEmail] = useState('')
+  const [fPass, setFPass] = useState('')
+  const [fRole, setFRole] = useState<'admin' | 'ngp' | 'cliente'>('ngp')
+  const [fMeta, setFMeta] = useState('')
+  const [saving, setSaving] = useState(false)
   const [msg, setMsg] = useState<{ type: 'ok' | 'err'; text: string } | null>(null)
 
   useEffect(() => {
@@ -49,47 +47,28 @@ export default function UsuariosPage() {
   }, [router])
 
   const fetchUsuarios = useCallback(async () => {
-    const s = getSession()
-    if (!s) return
+    const s = getSession(); if (!s) return
     setLoading(true)
     try {
-      const res  = await fetch(`${SURL}/functions/v1/admin-listar-usuarios`, {
-        method: 'POST', headers: efHeaders,
-        body: JSON.stringify({ session_token: s.session }),
-      })
+      const res  = await fetch(`${SURL}/functions/v1/admin-listar-usuarios`, { method: 'POST', headers: efHeaders, body: JSON.stringify({ session_token: s.session }) })
       const data = await res.json()
-      if (data.error) { showMsg('err', data.error); return }
-      setUsuarios(data.usuarios || [])
-    } catch { showMsg('err', 'Erro de conexão.') }
+      if (!data.error) setUsuarios(data.usuarios || [])
+    } catch { /* silencioso */ }
     finally { setLoading(false) }
   }, [])
 
-  useEffect(() => {
-    if (sess) fetchUsuarios()
-  }, [sess, fetchUsuarios])
+  useEffect(() => { if (sess) fetchUsuarios() }, [sess, fetchUsuarios])
 
-  function showMsg(type: 'ok' | 'err', text: string) {
-    setMsg({ type, text })
-    setTimeout(() => setMsg(null), 5000)
-  }
+  function showMsg(type: 'ok' | 'err', text: string) { setMsg({ type, text }); setTimeout(() => setMsg(null), 5000) }
 
   async function criarUsuario(e: React.FormEvent) {
     e.preventDefault()
-    const s = getSession()
-    if (!s) return
+    const s = getSession(); if (!s) return
     setSaving(true)
     try {
       const res  = await fetch(`${SURL}/functions/v1/admin-criar-usuario`, {
         method: 'POST', headers: efHeaders,
-        body: JSON.stringify({
-          session_token: s.session,
-          nome: fNome,
-          username: fUser,
-          email: fEmail,
-          password: fPass,
-          role: fRole,
-          meta_account_id: fMeta || undefined,
-        }),
+        body: JSON.stringify({ session_token: s.session, nome: fNome, username: fUser, email: fEmail, password: fPass, role: fRole, meta_account_id: fMeta || undefined }),
       })
       const data = await res.json()
       if (data.error) { showMsg('err', data.error); return }
@@ -104,27 +83,21 @@ export default function UsuariosPage() {
   if (!sess) return null
 
   const sectorNav = [
-    {
-      icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" width={15} height={15}><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75"/></svg>,
-      label: 'Usuários',
-      href: '/admin/usuarios',
-    },
+    { icon: <IcoAd />,    label: 'Contas de Anúncio', href: '/admin/contas' },
+    { icon: <IcoUsers />, label: 'Usuários NGP Space', href: '/admin/usuarios' },
   ]
 
   return (
     <div className={styles.layout}>
-      <Sidebar showDashboardNav={false} minimal sectorNav={sectorNav} sectorNavTitle="ADMIN" />
-
+      <Sidebar showDashboardNav={false} minimal sectorNav={sectorNav} sectorNavTitle="CADASTRAR" />
       <main className={styles.main}>
         <div className={styles.content}>
 
           <header className={styles.header}>
-            <button className={styles.btnBack} onClick={() => router.push('/setores')}>
-              ← Setores
-            </button>
-            <div className={styles.eyebrow}>Admin · Sistema</div>
-            <h1 className={styles.title}>Cadastrar Usuários</h1>
-            <p className={styles.subtitle}>Gerencie todos os usuários do NGP Space.</p>
+            <button className={styles.btnBack} onClick={() => router.push('/setores')}>← Setores</button>
+            <div className={styles.eyebrow}>Admin · Cadastrar</div>
+            <h1 className={styles.title}>Usuários NGP Space</h1>
+            <p className={styles.subtitle}>Crie e gerencie os usuários do sistema.</p>
           </header>
 
           {msg && (
@@ -190,13 +163,7 @@ export default function UsuariosPage() {
               <div className={styles.tableWrap}>
                 <table className={styles.table}>
                   <thead>
-                    <tr>
-                      <th>Usuário</th>
-                      <th>Username</th>
-                      <th>Role</th>
-                      <th>Status</th>
-                      <th>Criado em</th>
-                    </tr>
+                    <tr><th>Usuário</th><th>Username</th><th>Role</th><th>Status</th><th>Criado em</th></tr>
                   </thead>
                   <tbody>
                     {usuarios.map(u => (
@@ -204,27 +171,15 @@ export default function UsuariosPage() {
                         <td>
                           <div className={styles.userCell}>
                             <div className={styles.avatar}>
-                              {u.foto_url
-                                ? <img src={u.foto_url} alt="" />
-                                : u.nome.slice(0, 2).toUpperCase()}
+                              {u.foto_url ? <img src={u.foto_url} alt="" /> : u.nome.slice(0,2).toUpperCase()}
                             </div>
                             <span className={styles.userName}>{u.nome}</span>
                           </div>
                         </td>
                         <td className={styles.tdMuted}>@{u.username}</td>
-                        <td>
-                          <span className={`${styles.roleBadge} ${styles[`role_${u.role}`]}`}>
-                            {ROLE_LABEL[u.role] || u.role}
-                          </span>
-                        </td>
-                        <td>
-                          <span className={`${styles.statusBadge} ${u.ativo ? styles.statusAtivo : styles.statusInativo}`}>
-                            {u.ativo ? 'Ativo' : 'Inativo'}
-                          </span>
-                        </td>
-                        <td className={styles.tdMuted}>
-                          {new Date(u.created_at).toLocaleDateString('pt-BR')}
-                        </td>
+                        <td><span className={`${styles.roleBadge} ${styles[`role_${u.role}`]}`}>{ROLE_LABEL[u.role] || u.role}</span></td>
+                        <td><span className={`${styles.statusBadge} ${u.ativo ? styles.statusAtivo : styles.statusInativo}`}>{u.ativo ? 'Ativo' : 'Inativo'}</span></td>
+                        <td className={styles.tdMuted}>{new Date(u.created_at).toLocaleDateString('pt-BR')}</td>
                       </tr>
                     ))}
                   </tbody>

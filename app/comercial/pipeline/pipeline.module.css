@@ -1,0 +1,192 @@
+/* ── Layout ─────────────────────────────────────────────────────────────── */
+.layout  { display: flex; height: 100vh; overflow: hidden; background: #0a0b0d; font-family: 'Sora', sans-serif; }
+.main    { flex: 1; display: flex; flex-direction: column; overflow: hidden; min-width: 0; }
+.content { display: flex; flex-direction: column; height: 100%; padding: 28px 28px 0; gap: 18px; overflow: hidden; }
+
+/* ── Header ─────────────────────────────────────────────────────────────── */
+.header      { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; flex-shrink: 0; }
+.headerLeft  { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+.headerRight { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.eyebrow     { font-size: 11px; font-weight: 600; color: #4a5168; text-transform: uppercase; letter-spacing: .07em; }
+.title       { font-size: 22px; font-weight: 700; color: #f0f2f5; margin: 2px 0 0; }
+
+/* ── Pipeline Selector ──────────────────────────────────────────────────── */
+.pipelineSelect {
+  background: #111318; border: 1px solid rgba(255,255,255,0.1); color: #e4e4e7;
+  padding: 8px 12px; border-radius: 8px; font-family: 'Sora', sans-serif;
+  font-size: 13px; font-weight: 600; cursor: pointer; outline: none;
+  transition: border-color .15s;
+}
+.pipelineSelect:hover { border-color: rgba(255,255,255,0.2); }
+.pipelineSelect option { background: #111318; }
+
+/* ── Buttons ────────────────────────────────────────────────────────────── */
+.btn {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 8px 14px; border-radius: 8px; border: 1px solid transparent;
+  font-family: 'Sora', sans-serif; font-size: 13px; font-weight: 600;
+  cursor: pointer; transition: all .15s; white-space: nowrap;
+}
+.btnGhost   { background: #111318; border-color: rgba(255,255,255,0.1); color: #a1a1aa; }
+.btnGhost:hover  { border-color: rgba(255,255,255,0.2); color: #e4e4e7; }
+.btnPrimary { background: #3b82f6; color: #fff; }
+.btnPrimary:hover { background: #2563eb; }
+.btnDanger  { background: rgba(220,38,38,.12); border-color: rgba(220,38,38,.25); color: #f87171; }
+.btnDanger:hover  { background: rgba(220,38,38,.2); }
+.btnSm      { padding: 5px 10px; font-size: 12px; }
+.btnIcon    { padding: 6px 8px; }
+
+/* ── Kanban Board ───────────────────────────────────────────────────────── */
+.board {
+  display: flex; gap: 14px;
+  overflow-x: auto; overflow-y: hidden;
+  padding-bottom: 24px; flex: 1;
+  align-items: flex-start;
+}
+.board::-webkit-scrollbar        { height: 5px; }
+.board::-webkit-scrollbar-track  { background: transparent; }
+.board::-webkit-scrollbar-thumb  { background: rgba(255,255,255,0.08); border-radius: 4px; }
+
+/* ── Kanban Column ──────────────────────────────────────────────────────── */
+.column {
+  min-width: 272px; width: 272px;
+  background: #111318; border: 1px solid rgba(255,255,255,0.07);
+  border-radius: 14px; display: flex; flex-direction: column;
+  max-height: 100%; flex-shrink: 0;
+}
+.columnOver { border-color: #3b82f6; background: #111c2e; }
+
+.columnHeader {
+  display: flex; align-items: center; gap: 8px;
+  padding: 14px 14px 10px; border-bottom: 1px solid rgba(255,255,255,0.06);
+  flex-shrink: 0;
+}
+.columnDot   { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+.columnName  { font-size: 13px; font-weight: 700; color: #e4e4e7; flex: 1; }
+.columnCount {
+  font-size: 11px; font-weight: 600; color: #71717a;
+  background: rgba(255,255,255,0.06); padding: 2px 7px; border-radius: 10px;
+}
+
+.columnBody {
+  padding: 10px; display: flex; flex-direction: column;
+  gap: 8px; overflow-y: auto; flex: 1;
+}
+.columnBody::-webkit-scrollbar        { width: 3px; }
+.columnBody::-webkit-scrollbar-track  { background: transparent; }
+.columnBody::-webkit-scrollbar-thumb  { background: rgba(255,255,255,0.08); border-radius: 2px; }
+
+.emptyColumn {
+  border: 2px dashed rgba(255,255,255,0.07); border-radius: 10px;
+  padding: 24px 12px; text-align: center;
+  font-size: 12px; color: #4a5168; flex: 1;
+}
+
+/* ── Lead Card ──────────────────────────────────────────────────────────── */
+.leadCard {
+  background: #181c23; border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 10px; padding: 12px 14px;
+  cursor: grab; transition: border-color .15s, box-shadow .15s;
+  display: flex; flex-direction: column; gap: 6px;
+  user-select: none;
+}
+.leadCard:hover { border-color: rgba(255,255,255,0.15); box-shadow: 0 4px 16px rgba(0,0,0,0.3); }
+.leadCardDragging { opacity: 0.45; cursor: grabbing; }
+.leadCardOverlay  { box-shadow: 0 16px 48px rgba(0,0,0,0.6); cursor: grabbing; border-color: #3b82f6; }
+
+.leadCompany { font-size: 13px; font-weight: 700; color: #e4e4e7; }
+.leadContact { font-size: 12px; color: #71717a; }
+.leadValue   { font-size: 12px; font-weight: 700; color: #3b82f6; margin-top: 2px; }
+.leadFooter  { display: flex; align-items: center; justify-content: space-between; margin-top: 4px; }
+.leadEditBtn {
+  font-size: 11px; color: #4a5168; background: none; border: none;
+  cursor: pointer; padding: 2px 4px; border-radius: 4px; font-family: 'Sora', sans-serif;
+  transition: color .15s;
+}
+.leadEditBtn:hover { color: #a1a1aa; }
+
+/* ── Loading / Empty ────────────────────────────────────────────────────── */
+.loadingWrap { display: flex; align-items: center; justify-content: center; flex: 1; }
+.loadingText { color: #4a5168; font-size: 14px; }
+
+/* ── Modal ──────────────────────────────────────────────────────────────── */
+.overlay {
+  position: fixed; inset: 0; background: rgba(0,0,0,0.7);
+  backdrop-filter: blur(4px); z-index: 1000;
+  display: flex; align-items: center; justify-content: center; padding: 16px;
+}
+.modal {
+  background: #111318; border: 1px solid rgba(255,255,255,0.1);
+  border-radius: 16px; padding: 28px; width: 100%; max-width: 460px;
+  display: flex; flex-direction: column; gap: 20px;
+  max-height: 90vh; overflow-y: auto;
+}
+.modalWide { max-width: 560px; }
+.modalTitle { font-size: 18px; font-weight: 700; color: #f0f2f5; margin: 0; }
+
+.modalActions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 4px; }
+.modalActionsSpread { display: flex; justify-content: space-between; gap: 10px; margin-top: 4px; }
+
+/* ── Form Fields ────────────────────────────────────────────────────────── */
+.field { display: flex; flex-direction: column; gap: 6px; }
+.field label { font-size: 12px; font-weight: 600; color: #71717a; text-transform: uppercase; letter-spacing: .04em; }
+.field input, .field select, .field textarea {
+  background: #0d0f14; border: 1px solid rgba(255,255,255,0.1); color: #e4e4e7;
+  padding: 10px 12px; border-radius: 8px; font-family: 'Sora', sans-serif;
+  font-size: 13px; outline: none; transition: border-color .15s; width: 100%; box-sizing: border-box;
+}
+.field input:focus, .field select:focus, .field textarea:focus { border-color: #3b82f6; }
+.field input::placeholder, .field textarea::placeholder { color: #4a5168; }
+.field select option { background: #111318; }
+.field textarea { resize: vertical; min-height: 80px; }
+.fieldGrid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+
+/* ── Stages Manager ─────────────────────────────────────────────────────── */
+.stagesList { display: flex; flex-direction: column; gap: 8px; max-height: 340px; overflow-y: auto; }
+.stageRow {
+  display: flex; align-items: center; gap: 8px;
+  background: #0d0f14; border: 1px solid rgba(255,255,255,0.07);
+  border-radius: 8px; padding: 8px 10px;
+}
+.stageColorInput { width: 32px; height: 32px; border: none; border-radius: 6px; cursor: pointer; padding: 2px; background: none; }
+.stageNameInput {
+  flex: 1; background: transparent; border: none; color: #e4e4e7;
+  font-family: 'Sora', sans-serif; font-size: 13px; font-weight: 600; outline: none;
+}
+.stageNameInput:focus { color: #f0f2f5; }
+.stageLeadCount { font-size: 11px; color: #4a5168; white-space: nowrap; }
+.stageDeleteBtn {
+  background: none; border: none; color: #4a5168; cursor: pointer;
+  font-size: 16px; padding: 2px 4px; border-radius: 4px; line-height: 1;
+  transition: color .15s;
+}
+.stageDeleteBtn:hover:not(:disabled) { color: #f87171; }
+.stageDeleteBtn:disabled { opacity: 0.3; cursor: not-allowed; }
+
+.addStageRow { display: flex; gap: 8px; margin-top: 4px; }
+.addStageInput {
+  flex: 1; background: #0d0f14; border: 1px solid rgba(255,255,255,0.1);
+  color: #e4e4e7; padding: 9px 12px; border-radius: 8px;
+  font-family: 'Sora', sans-serif; font-size: 13px; outline: none;
+  transition: border-color .15s;
+}
+.addStageInput:focus   { border-color: #3b82f6; }
+.addStageInput::placeholder { color: #4a5168; }
+
+/* ── Error / Toast ──────────────────────────────────────────────────────── */
+.errorBar { background: rgba(220,38,38,.12); color: #f87171; border: 1px solid rgba(220,38,38,.2); padding: 10px 14px; border-radius: 8px; font-size: 13px; flex-shrink: 0; }
+.successBar { background: rgba(22,163,74,.12); color: #4ade80; border: 1px solid rgba(22,163,74,.2); padding: 10px 14px; border-radius: 8px; font-size: 13px; flex-shrink: 0; }
+
+/* ── Footer ─────────────────────────────────────────────────────────────── */
+.footer { font-size: 11px; color: #2a2d3a; padding: 12px 0; flex-shrink: 0; display: flex; align-items: center; gap: 6px; }
+.footerDot { width: 6px; height: 6px; border-radius: 50%; background: #16a34a; display: inline-block; }
+
+/* ── Responsive ─────────────────────────────────────────────────────────── */
+@media (max-width: 768px) {
+  .content   { padding: 16px 12px 0; gap: 12px; }
+  .header    { gap: 8px; }
+  .title     { font-size: 18px; }
+  .board     { gap: 10px; padding-bottom: 16px; }
+  .column    { min-width: 240px; width: 240px; }
+  .modal     { padding: 20px; }
+}

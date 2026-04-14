@@ -12,6 +12,8 @@ interface PontoRecord {
   id: string
   tipo_registro: 'entrada' | 'saida_almoco' | 'retorno_almoco' | 'saida' | 'extra'
   created_at: string
+  usuario_id?: string
+  usuario_nome?: string
 }
 
 interface DayRow {
@@ -24,6 +26,8 @@ interface DayRow {
   totalMins: number
   status: 'complete' | 'overtime' | 'below' | 'incomplete' | 'empty'
   recordIds: string[]
+  usuarioId?: string
+  usuarioNome?: string
 }
 
 interface NextAction {
@@ -89,24 +93,35 @@ const DAYS   = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb']
 const MONTHS = ['Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez']
 
 function groupByDay(records: PontoRecord[]): DayRow[] {
+  // Group by user + date so admin sees each user's day separately
   const groups: Record<string, PontoRecord[]> = {}
   for (const r of records) {
     const dateStr = new Date(new Date(r.created_at).getTime() + BRT_OFFSET)
       .toISOString().split('T')[0]
-    if (!groups[dateStr]) groups[dateStr] = []
-    groups[dateStr].push(r)
+    const key = `${r.usuario_id || 'self'}__${dateStr}`
+    if (!groups[key]) groups[key] = []
+    groups[key].push(r)
   }
 
   return Object.entries(groups)
-    .sort(([a], [b]) => b.localeCompare(a))
-    .map(([dateStr, dayRecords]) => {
+    .sort(([a], [b]) => {
+      // Sort by date desc, then by user
+      const [, dateA] = a.split('__')
+      const [, dateB] = b.split('__')
+      return dateB.localeCompare(dateA) || a.localeCompare(b)
+    })
+    .map(([key, dayRecords]) => {
       dayRecords.sort((a, b) => a.created_at.localeCompare(b.created_at))
       const get = (t: string) => dayRecords.find(r => r.tipo_registro === t)
       const { totalMins, status } = calcBalance(dayRecords)
 
+      const [, dateStr] = key.split('__')
       const [y, mo, d] = dateStr.split('-').map(Number)
       const dateObj = new Date(Date.UTC(y, mo - 1, d, 12))
       const dayLabel = `${DAYS[dateObj.getUTCDay()]}, ${d} ${MONTHS[mo - 1]}`
+
+      const firstRec = dayRecords[0]
+      const usuarioNome = firstRec.usuario_nome || undefined
 
       return {
         dateStr,
@@ -118,6 +133,8 @@ function groupByDay(records: PontoRecord[]): DayRow[] {
         totalMins,
         status,
         recordIds: dayRecords.map(r => r.id),
+        usuarioId: firstRec.usuario_id,
+        usuarioNome,
       }
     })
 }
@@ -217,6 +234,9 @@ export default function PessoasPage() {
   // Delete
   const [deletingRow, setDeletingRow] = useState<string | null>(null)
 
+  // Admin: visualizar todos os usuários
+  const [viewAll, setViewAll] = useState(true)
+
   // Auth
   useEffect(() => {
     const s = getSession()
@@ -225,18 +245,13 @@ export default function PessoasPage() {
     setSess(s)
   }, [router])
 
-  // Verifica se é admin
-  const checkAdmin = useCallback(async () => {
+  // Verifica se é admin pelo role da sessão local
+  const checkAdmin = useCallback(async (): Promise<boolean> => {
     const s = getSession()
-    if (!s) return
-    try {
-      const res  = await fetch(`${SURL}/functions/v1/admin-ponto-check`, {
-        method: 'POST', headers: efHeaders,
-        body: JSON.stringify({ session_token: s.session }),
-      })
-      const data = await res.json()
-      setIsAdmin(data.is_admin === true)
-    } catch { /* silencioso */ }
+    if (!s) return false
+    const admin = s.role === 'admin'
+    setIsAdmin(admin)
+    return admin
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   const fetchToday = useCallback(async () => {
@@ -255,14 +270,14 @@ export default function PessoasPage() {
     } catch { /* silencioso */ }
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
-  const fetchMes = useCallback(async (mes: number, ano: number) => {
+  const fetchMes = useCallback(async (mes: number, ano: number, adminMode?: boolean) => {
     const s = getSession()
     if (!s) return
     setLoadingMes(true)
     try {
       const res  = await fetch(`${SURL}/functions/v1/get-ponto-mes`, {
         method: 'POST', headers: efHeaders,
-        body: JSON.stringify({ session_token: s.session, mes, ano }),
+        body: JSON.stringify({ session_token: s.session, mes, ano, admin_all: adminMode ?? false }),
       })
       const data = await res.json()
       if (!data.error) setMesRecords(data.records || [])
@@ -274,14 +289,13 @@ export default function PessoasPage() {
   useEffect(() => {
     if (!sess) return
     fetchToday()
-    fetchMes(selMes, selAno)
-    checkAdmin()
+    checkAdmin().then((admin) => fetchMes(selMes, selAno, admin && viewAll))
   }, [sess]) // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (!sess) return
-    fetchMes(selMes, selAno)
-  }, [selMes, selAno]) // eslint-disable-line react-hooks/exhaustive-deps
+    fetchMes(selMes, selAno, isAdmin && viewAll)
+  }, [selMes, selAno, viewAll, isAdmin]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Tick do relógio
   useEffect(() => {
@@ -367,8 +381,17 @@ export default function PessoasPage() {
   const findToday                = (tipo: string) => todayRecords.find(r => r.tipo_registro === tipo)
 
   // Nav do setor Pessoas na sidebar
+  const IcoTabela = () => (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
+      strokeLinecap="round" strokeLinejoin="round" width={15} height={15}>
+      <rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/>
+      <line x1="3" y1="15" x2="21" y2="15"/><line x1="9" y1="3" x2="9" y2="21"/>
+    </svg>
+  )
+
   const sectorNav = [
     { icon: <IcoRelogio />, label: 'Ponto Eletrônico', href: '/pessoas' },
+    { icon: <IcoTabela />,  label: 'Registros de Ponto', href: '/pessoas/registros' },
     ...(isAdmin ? [{ icon: <IcoLixeira />, label: 'Lixeira', href: '/pessoas/lixeira' }] : []),
   ]
 
@@ -455,6 +478,16 @@ export default function PessoasPage() {
             <div className={styles.mesHeader}>
               <h2 className={styles.mesTitle}>Histórico de Registros</h2>
               <div className={styles.mesFilter}>
+                {isAdmin && (
+                  <label className={styles.adminToggle}>
+                    <input
+                      type="checkbox"
+                      checked={viewAll}
+                      onChange={e => setViewAll(e.target.checked)}
+                    />
+                    Todos os usuários
+                  </label>
+                )}
                 <select
                   className={styles.mesSelect}
                   value={selMes}
@@ -501,7 +534,7 @@ export default function PessoasPage() {
                   <tbody>
                     {dayRows.map(row => (
                       <tr key={row.dateStr}>
-                        <td className={styles.tdUsuario}>{sess.username || sess.user}</td>
+                        <td className={styles.tdUsuario}>{row.usuarioNome || sess.username || sess.user}</td>
                         <td className={styles.tdDate}>{row.dateLabel}</td>
                         <td>{row.entrada      || <span className={styles.tdEmpty}>--:--</span>}</td>
                         <td>{row.saidaAlmoco  || <span className={styles.tdEmpty}>--:--</span>}</td>

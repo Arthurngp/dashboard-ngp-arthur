@@ -1,5 +1,6 @@
 import type { Metadata } from 'next'
 import './globals.css'
+import InactivityGuard from '@/components/InactivityGuard'
 
 export const metadata: Metadata = {
   title: 'NGP Space',
@@ -15,7 +16,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           rel="stylesheet"
         />
       </head>
-      <body>{children}</body>
+      <body><InactivityGuard>{children}</InactivityGuard></body>
     </html>
   )
 }

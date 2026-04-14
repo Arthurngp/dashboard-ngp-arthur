@@ -4,6 +4,19 @@ import { useRouter } from 'next/navigation'
 import { getSession } from '@/lib/auth'
 import Sidebar from '@/components/Sidebar'
 import ComingSoonModal from '@/components/ComingSoonModal'
+
+const IcoAd = () => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" width={15} height={15}>
+    <path d="M10 13a5 5 0 007.54.54l3-3a5 5 0 00-7.07-7.07l-1.72 1.71"/>
+    <path d="M14 11a5 5 0 00-7.54-.54l-3 3a5 5 0 007.07 7.07l1.71-1.71"/>
+  </svg>
+)
+const IcoUsers = () => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" width={15} height={15}>
+    <path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/>
+    <path d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75"/>
+  </svg>
+)
 import styles from './setores.module.css'
 
 interface Setor {
@@ -76,8 +89,8 @@ const SETORES: Setor[] = [
         <line x1="12" y1="22.08" x2="12" y2="12"/>
       </svg>
     ),
-    href: '#',
-    external: true,
+    href: '/comercial',
+    external: false,
     embed: false,
     gradient: 'linear-gradient(135deg,#3b82f6,#7c3aed)',
   },
@@ -99,23 +112,6 @@ const SETORES: Setor[] = [
   },
 ]
 
-const SETOR_ADMIN: Setor = {
-  id: 'usuarios',
-  title: 'Cadastrar Usuários',
-  desc: 'Crie e gerencie usuários do sistema NGP Space. Acesso exclusivo de administradores.',
-  icon: (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/>
-      <circle cx="9" cy="7" r="4"/>
-      <line x1="19" y1="8" x2="19" y2="14"/>
-      <line x1="22" y1="11" x2="16" y2="11"/>
-    </svg>
-  ),
-  href: '/admin/usuarios',
-  external: false,
-  embed: false,
-  gradient: 'linear-gradient(135deg,#CC1414,#f59e0b)',
-}
 
 export default function SetoresPage() {
   const router = useRouter()
@@ -133,6 +129,12 @@ export default function SetoresPage() {
   }, [router])
 
   if (!sess) return null
+
+  const isAdmin = sess.role === 'admin'
+  const adminSectorNav = isAdmin ? [
+    { icon: <IcoAd />,    label: 'Contas de Anúncio',  href: '/admin/contas' },
+    { icon: <IcoUsers />, label: 'Usuários NGP Space',  href: '/admin/usuarios' },
+  ] : undefined
 
   function openSetor(setor: Setor) {
     if (setor.href === '#') { setComingSoon(setor.title); return }
@@ -155,7 +157,7 @@ export default function SetoresPage() {
 
   return (
     <div className={styles.layout}>
-      <Sidebar showDashboardNav={false} />
+      <Sidebar showDashboardNav={false} minimal={isAdmin} sectorNav={adminSectorNav} sectorNavTitle="CADASTRAR" />
 
       <main className={styles.main}>
         <div className={styles.content}>
@@ -166,7 +168,7 @@ export default function SetoresPage() {
           </header>
 
           <section className={styles.grid}>
-            {[...SETORES, ...(sess.role === 'admin' ? [SETOR_ADMIN] : [])].map(setor => (
+            {SETORES.map(setor => (
               <button
                 key={setor.id}
                 className={styles.card}

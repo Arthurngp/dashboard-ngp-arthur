@@ -11,7 +11,8 @@
   display: flex;
   flex-direction: column;
   overflow-y: auto;
-  padding: 48px 56px;
+  /* espaço para o hamburguer em mobile */
+  padding: 72px 16px 24px;
   min-width: 0;
 }
 
@@ -21,7 +22,7 @@
   margin: 0 auto;
   display: flex;
   flex-direction: column;
-  gap: 28px;
+  gap: 20px;
 }
 
 /* ── Header ── */
@@ -35,7 +36,7 @@
   color: #8E8E93;
   cursor: pointer;
   padding: 0;
-  margin-bottom: 20px;
+  margin-bottom: 16px;
   display: inline-flex;
   align-items: center;
   gap: 4px;
@@ -54,15 +55,15 @@
 }
 
 .title {
-  font-size: 32px;
+  font-size: 24px;
   font-weight: 700;
   color: #1C1C1E;
-  margin: 0 0 8px;
+  margin: 0 0 6px;
   letter-spacing: -0.02em;
 }
 
 .subtitle {
-  font-size: 15px;
+  font-size: 13px;
   color: #6B7280;
   margin: 0;
 }
@@ -71,30 +72,24 @@
 .pontoWidget {
   background: #fff;
   border: 1px solid #E5E5EA;
-  border-radius: 20px;
-  padding: 32px;
-  display: grid;
-  grid-template-columns: auto 1fr;
-  grid-template-rows: auto auto;
-  gap: 24px 40px;
-  align-items: start;
+  border-radius: 16px;
+  padding: 20px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
 }
 
 /* Relógio */
 .clockSection {
-  grid-row: 1 / 2;
-  grid-column: 1 / 2;
   display: flex;
   flex-direction: column;
   align-items: flex-start;
-  justify-content: center;
-  padding-right: 40px;
-  border-right: 1px solid #F2F2F7;
-  min-width: 180px;
+  padding-bottom: 20px;
+  border-bottom: 1px solid #F2F2F7;
 }
 
 .clockTime {
-  font-size: 42px;
+  font-size: 36px;
   font-weight: 700;
   color: #1C1C1E;
   letter-spacing: -0.04em;
@@ -113,11 +108,9 @@
 
 /* Grid horários do dia */
 .todayGrid {
-  grid-row: 1 / 2;
-  grid-column: 2 / 3;
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: 16px;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 14px;
 }
 
 .todayItem {
@@ -135,7 +128,7 @@
 }
 
 .todayValue {
-  font-size: 20px;
+  font-size: 18px;
   font-weight: 600;
   color: #C7C7CC;
   font-variant-numeric: tabular-nums;
@@ -148,11 +141,9 @@
 
 /* Área da ação */
 .pontoActionArea {
-  grid-row: 2 / 3;
-  grid-column: 1 / 3;
   display: flex;
   align-items: center;
-  gap: 16px;
+  gap: 12px;
   flex-wrap: wrap;
 }
 
@@ -160,6 +151,7 @@
   font-size: 13px;
   color: #6B7280;
   white-space: nowrap;
+  width: 100%;
 }
 .todayTotal strong {
   color: #1C1C1E;
@@ -171,6 +163,7 @@
   font-weight: 600;
   padding: 8px 14px;
   border-radius: 8px;
+  width: 100%;
 }
 .pontoOk  { color: #059669; background: #d1fae5; }
 .pontoErr { color: #dc2626; background: #fee2e2; }
@@ -178,8 +171,10 @@
 .btnPonto {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   gap: 8px;
-  padding: 12px 24px;
+  width: 100%;
+  padding: 14px 24px;
   border: none;
   border-radius: 12px;
   color: #fff;
@@ -217,15 +212,16 @@
 .mesSection {
   background: #fff;
   border: 1px solid #E5E5EA;
-  border-radius: 20px;
+  border-radius: 16px;
   overflow: hidden;
 }
 
 .mesHeader {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 20px 24px;
+  align-items: flex-start;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px;
   border-bottom: 1px solid #F2F2F7;
 }
 
@@ -239,11 +235,27 @@
 
 .mesFilter {
   display: flex;
+  align-items: center;
   gap: 8px;
+  flex-wrap: wrap;
+  width: 100%;
+}
+
+.adminToggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #636366;
+  cursor: pointer;
+  user-select: none;
 }
 
 .mesSelect {
-  padding: 6px 10px;
+  flex: 1;
+  min-width: 0;
+  padding: 8px 10px;
   border: 1px solid #E5E5EA;
   border-radius: 8px;
   font-size: 13px;
@@ -258,7 +270,7 @@
 
 .mesLoading,
 .mesEmpty {
-  padding: 48px 24px;
+  padding: 40px 16px;
   text-align: center;
   font-size: 14px;
   color: #8E8E93;
@@ -267,12 +279,13 @@
 /* ── Tabela ── */
 .tableWrap {
   overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
 }
 
 .table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 13px;
+  font-size: 12px;
 }
 
 .table thead tr {
@@ -280,9 +293,9 @@
 }
 
 .table th {
-  padding: 10px 16px;
+  padding: 10px 12px;
   text-align: left;
-  font-size: 11px;
+  font-size: 10px;
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.06em;
@@ -292,7 +305,7 @@
 }
 
 .table td {
-  padding: 12px 16px;
+  padding: 11px 12px;
   color: #1C1C1E;
   font-weight: 500;
   border-bottom: 1px solid #F7F7F8;
@@ -304,7 +317,7 @@
 .table tbody tr:hover { background: #FAFAFA; }
 
 .tdUsuario {
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 600;
   color: #6B7280;
   font-family: monospace;
@@ -314,7 +327,7 @@
 .tdDate {
   font-weight: 600;
   color: #3B3B3E;
-  min-width: 130px;
+  min-width: 110px;
 }
 
 .tdTotal {
@@ -328,9 +341,9 @@
 
 .statusBadge {
   display: inline-block;
-  padding: 3px 10px;
+  padding: 3px 8px;
   border-radius: 6px;
-  font-size: 11px;
+  font-size: 10px;
   font-weight: 700;
   letter-spacing: 0.03em;
   white-space: nowrap;
@@ -338,7 +351,7 @@
 
 /* ── Admin: coluna ações ── */
 .thAcoes {
-  width: 56px;
+  width: 48px;
   text-align: center;
 }
 
@@ -371,32 +384,68 @@
   animation: spin 0.7s linear infinite;
 }
 
-/* ── Responsive ── */
-@media (max-width: 900px) {
-  .main { padding: 32px 24px; }
-  .title { font-size: 26px; }
+/* ── Tablet ── */
+@media (min-width: 600px) {
+  .main { padding: 32px 28px; }
+  .title { font-size: 28px; }
+
+  .pontoWidget { padding: 24px; }
+  .clockTime { font-size: 40px; }
+
+  .todayGrid { grid-template-columns: repeat(4, 1fr); }
+
+  .btnPonto { width: auto; }
+  .todayTotal { width: auto; }
+  .pontoMsg { width: auto; }
+
+  .mesHeader {
+    flex-direction: row;
+    align-items: center;
+  }
+  .mesFilter { width: auto; }
+}
+
+/* ── Desktop ── */
+@media (min-width: 768px) {
+  .main { padding: 48px 56px; }
+  .content { gap: 28px; }
+  .title { font-size: 32px; }
 
   .pontoWidget {
-    grid-template-columns: 1fr;
-    grid-template-rows: auto auto auto;
+    display: grid;
+    grid-template-columns: auto 1fr;
+    grid-template-rows: auto auto;
+    gap: 24px 40px;
+    align-items: start;
+    padding: 32px;
   }
+
   .clockSection {
-    grid-row: 1;
-    grid-column: 1;
-    border-right: none;
-    border-bottom: 1px solid #F2F2F7;
-    padding-right: 0;
-    padding-bottom: 20px;
-    min-width: unset;
+    grid-row: 1 / 2;
+    grid-column: 1 / 2;
+    padding-bottom: 0;
+    padding-right: 40px;
+    border-bottom: none;
+    border-right: 1px solid #F2F2F7;
+    min-width: 180px;
   }
+
+  .clockTime { font-size: 42px; }
+
   .todayGrid {
-    grid-row: 2;
-    grid-column: 1;
-    grid-template-columns: repeat(2, 1fr);
+    grid-row: 1 / 2;
+    grid-column: 2 / 3;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 16px;
   }
+
   .pontoActionArea {
-    grid-row: 3;
-    grid-column: 1;
+    grid-row: 2 / 3;
+    grid-column: 1 / 3;
   }
-  .clockTime { font-size: 36px; }
+
+  .mesHeader { padding: 20px 24px; }
+  .table { font-size: 13px; }
+  .table th { padding: 10px 16px; font-size: 11px; }
+  .table td { padding: 12px 16px; }
 }
