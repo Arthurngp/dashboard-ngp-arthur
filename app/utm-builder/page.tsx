@@ -2,7 +2,8 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import { getSession, clearSession } from '@/lib/auth'
-import { SURL, ANON } from '@/lib/constants'
+import { SURL } from '@/lib/constants'
+import { efHeaders } from '@/lib/api'
 import Sidebar from '@/components/Sidebar'
 import styles from './utm-builder.module.css'
 
@@ -150,7 +151,7 @@ export default function UTMBuilderPage() {
     if (s?.session) {
       fetch(`${SURL}/functions/v1/logout`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', apikey: ANON },
+        headers: efHeaders(),
         body: JSON.stringify({ token: s.session }),
       }).catch(() => {})
     }

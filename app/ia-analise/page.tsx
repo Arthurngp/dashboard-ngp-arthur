@@ -2,7 +2,8 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import { getSession, clearSession } from '@/lib/auth'
-import { SURL, ANON } from '@/lib/constants'
+import { SURL } from '@/lib/constants'
+import { efHeaders } from '@/lib/api'
 import styles from './ia-analise.module.css'
 
 const MODELS: Record<string, { v: string; l: string }[]> = {
@@ -238,7 +239,7 @@ Estruture sua resposta com títulos em negrito usando **titulo**, use bullet poi
     if (!confirm('Deseja sair?')) return
     fetch(`${SURL}/functions/v1/logout`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', apikey: ANON },
+      headers: efHeaders(),
       body: JSON.stringify({ token: sess?.session }),
     }).catch(() => { })
     clearSession()

@@ -1,18 +1,7 @@
-import { getSession } from '@/lib/auth'
-import { SURL, ANON } from '@/lib/constants'
+import { efCall } from '@/lib/api'
 
-export async function crmCall(fn: string, body: Record<string, unknown>) {
-  const session = getSession()
-  const res = await fetch(`${SURL}/functions/v1/${fn}`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'apikey': ANON,
-      'Authorization': `Bearer ${ANON}`,
-    },
-    body: JSON.stringify({ session_token: session?.session, ...body }),
-  })
-  return res.json()
+export async function crmCall(fn: string, body: Record<string, unknown>): Promise<any> {
+  return efCall(fn, body)
 }
 
 export interface CrmPipeline {
@@ -47,6 +36,17 @@ export interface CrmLead {
   position: number
   notes: string | null
   source: string | null
+  custom_data?: Record<string, any>
   created_at: string
   updated_at: string
+}
+
+export interface CrmPipelineField {
+  id: string
+  pipeline_id: string
+  name: string
+  type: string
+  options: string[]
+  position: number
+  created_at: string
 }

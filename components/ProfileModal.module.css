@@ -1,4 +1,16 @@
-.wrap {
+.overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.6);
+  backdrop-filter: blur(4px);
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+}
+
+.modal {
   --bg:     #0a0b0d;
   --bg2:    #111318;
   --bg3:    #181c23;
@@ -8,12 +20,21 @@
   --text3:  #4a5168;
   --accent: #CC1414;
   --green:  #16a34a;
+
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  width: 100%;
+  max-width: 500px;
+  max-height: 90vh;
+  overflow-y: auto;
+  box-shadow: 0 10px 40px rgba(0,0,0,0.5);
 }
 
 .topBar {
   display: flex;
   align-items: center;
-  gap: 14px;
+  justify-content: space-between;
   padding: 14px 24px;
   border-bottom: 1px solid var(--border);
   background: var(--bg2);
@@ -22,28 +43,24 @@
   z-index: 10;
 }
 
-.btnBack {
-  background: var(--bg3);
-  border: 1px solid var(--border);
-  color: var(--text2);
-  padding: 7px 14px;
-  border-radius: 8px;
-  cursor: pointer;
-  font-family: 'Sora', sans-serif;
-  font-size: 13px;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  transition: all .15s;
-}
-.btnBack:hover { color: var(--text); border-color: rgba(255,255,255,0.15); }
-
 .topTitle { font-size: 15px; font-weight: 600; color: var(--text); }
 
+.btnClose {
+  background: none;
+  border: none;
+  color: var(--text2);
+  font-size: 20px;
+  cursor: pointer;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: color .15s;
+}
+.btnClose:hover { color: var(--text); }
+
 .page {
-  max-width: 540px;
-  margin: 36px auto;
-  padding: 0 20px;
+  padding: 24px;
   display: flex;
   flex-direction: column;
   gap: 18px;
@@ -53,7 +70,7 @@
   background: var(--bg2);
   border: 1px solid var(--border);
   border-radius: 14px;
-  padding: 24px;
+  padding: 20px;
 }
 
 .cardTitle {
@@ -70,12 +87,12 @@
 .avatarWrap { position: relative; flex-shrink: 0; }
 
 .avatarCircle {
-  width: 80px;
-  height: 80px;
+  width: 70px;
+  height: 70px;
   border-radius: 50%;
   background: var(--accent);
   color: #fff;
-  font-size: 26px;
+  font-size: 24px;
   font-weight: 700;
   display: flex;
   align-items: center;
@@ -99,13 +116,13 @@
   justify-content: center;
   opacity: 0;
   transition: opacity .15s;
-  font-size: 20px;
+  font-size: 18px;
 }
 .avatarCircle:hover .avatarOverlay { opacity: 1; }
 
 .avatarInfo { display: flex; flex-direction: column; gap: 4px; }
-.uname { font-size: 18px; font-weight: 600; color: var(--text); }
-.uslug { font-size: 13px; color: var(--text2); }
+.uname { font-size: 16px; font-weight: 600; color: var(--text); }
+.uslug { font-size: 12px; color: var(--text2); }
 
 .roleBadge {
   display: inline-flex;
@@ -196,7 +213,8 @@
 .err { background: rgba(204,20,20,.12); color: var(--accent); }
 
 @media (max-width: 480px) {
-  .page { margin: 20px auto; }
   .avatarRow { flex-direction: column; text-align: center; }
   .avatarInfo { align-items: center; }
+  .modal { max-height: 100vh; border-radius: 0; height: 100%; }
+  .overlay { padding: 0; }
 }

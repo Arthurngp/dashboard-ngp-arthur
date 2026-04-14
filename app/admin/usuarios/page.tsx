@@ -2,14 +2,14 @@
 import { useEffect, useState, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import { getSession } from '@/lib/auth'
-import { SURL, ANON } from '@/lib/constants'
+import { SURL } from '@/lib/constants'
+import { efHeaders } from '@/lib/api'
 import Sidebar from '@/components/Sidebar'
 import styles from './usuarios.module.css'
 
 interface Usuario { id: string; nome: string; username: string; role: 'admin' | 'ngp' | 'cliente'; ativo: boolean; created_at: string; foto_url?: string }
 
 const ROLE_LABEL: Record<string, string> = { admin: 'Admin', ngp: 'NGP', cliente: 'Cliente' }
-const efHeaders = { 'Content-Type': 'application/json', apikey: ANON, Authorization: `Bearer ${ANON}` }
 
 const IcoAd = () => (
   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" width={15} height={15}>
@@ -50,7 +50,7 @@ export default function UsuariosPage() {
     const s = getSession(); if (!s) return
     setLoading(true)
     try {
-      const res  = await fetch(`${SURL}/functions/v1/admin-listar-usuarios`, { method: 'POST', headers: efHeaders, body: JSON.stringify({ session_token: s.session }) })
+      const res  = await fetch(`${SURL}/functions/v1/admin-listar-usuarios`, { method: 'POST', headers: efHeaders(), body: JSON.stringify({ session_token: s.session }) })
       const data = await res.json()
       if (!data.error) setUsuarios(data.usuarios || [])
     } catch { /* silencioso */ }
@@ -67,7 +67,7 @@ export default function UsuariosPage() {
     setSaving(true)
     try {
       const res  = await fetch(`${SURL}/functions/v1/admin-criar-usuario`, {
-        method: 'POST', headers: efHeaders,
+        method: 'POST', headers: efHeaders(),
         body: JSON.stringify({ session_token: s.session, nome: fNome, username: fUser, email: fEmail, password: fPass, role: fRole, meta_account_id: fMeta || undefined }),
       })
       const data = await res.json()
@@ -82,14 +82,9 @@ export default function UsuariosPage() {
 
   if (!sess) return null
 
-  const sectorNav = [
-    { icon: <IcoAd />,    label: 'Contas de Anúncio', href: '/admin/contas' },
-    { icon: <IcoUsers />, label: 'Usuários NGP Space', href: '/admin/usuarios' },
-  ]
-
   return (
     <div className={styles.layout}>
-      <Sidebar showDashboardNav={false} minimal sectorNav={sectorNav} sectorNavTitle="CADASTRAR" />
+      <Sidebar showDashboardNav={false} minimal />
       <main className={styles.main}>
         <div className={styles.content}>
 

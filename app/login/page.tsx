@@ -3,7 +3,8 @@ import { useState, useEffect, Suspense } from 'react'
 import Image from 'next/image'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { setSession, getSession } from '@/lib/auth'
-import { SURL, ANON } from '@/lib/constants'
+import { SURL } from '@/lib/constants'
+import { efHeaders } from '@/lib/api'
 import styles from './login.module.css'
 
 const DecoIcons = () => (
@@ -56,7 +57,7 @@ function LoginContent() {
     try {
       const res = await fetch(`${SURL}/functions/v1/login`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', apikey: ANON, Authorization: `Bearer ${ANON}` },
+        headers: efHeaders(),
         body: JSON.stringify({ username: user.trim().toLowerCase(), password: pass, role: tab }),
       })
       const data = await res.json()
@@ -84,7 +85,7 @@ function LoginContent() {
         ? decodeURIComponent(returnUrl)
         : (data.user.role === 'ngp' || data.user.role === 'admin') ? '/setores' : '/cliente'
 
-      setTimeout(() => router.replace(redirectTo), 900)
+      router.replace(redirectTo)
     } catch (e: unknown) {
       setError('Erro de conexão: ' + (e instanceof Error ? e.message : 'Tente novamente.'))
       setLoading(false)

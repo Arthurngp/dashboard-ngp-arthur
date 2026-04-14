@@ -5,6 +5,7 @@ import { getSession, clearSession } from '@/lib/auth'
 import { metaCall } from '@/lib/meta'
 import { parseIns, fmt, fmtN, fmtI } from '@/lib/utils'
 import { SURL, ANON } from '@/lib/constants'
+import { efHeaders } from '@/lib/api'
 import { Campaign, DateParam, Relatorio } from '@/types'
 import PeriodFilter from '@/components/PeriodFilter'
 import styles from './cliente.module.css'
@@ -70,7 +71,7 @@ export default function ClientePage() {
     const s = getSession()
     await fetch(`${SURL}/functions/v1/delete-relatorio`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', apikey: ANON },
+      headers: efHeaders(),
       body: JSON.stringify({ session_token: s?.session, id }),
     }).catch(() => {})
     setRelatorios(prev => prev.filter(r => r.id !== id))
@@ -88,7 +89,7 @@ export default function ClientePage() {
     const s = getSession()
     fetch(`${SURL}/functions/v1/logout`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', apikey: ANON },
+      headers: efHeaders(),
       body: JSON.stringify({ token: s?.session }),
     }).catch(() => {})
     clearSession(); router.replace('/login')

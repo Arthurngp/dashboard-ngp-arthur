@@ -4,7 +4,8 @@ import { useRouter } from 'next/navigation'
 import { getSession, clearSession } from '@/lib/auth'
 import { metaCall } from '@/lib/meta'
 import { parseIns, fmt, fmtN, fmtI } from '@/lib/utils'
-import { SURL, ANON } from '@/lib/constants'
+import { SURL } from '@/lib/constants'
+import { efHeaders } from '@/lib/api'
 import { Campaign, Adset, Ad, Cliente, Relatorio, DateParam } from '@/types'
 import PeriodFilter from '@/components/PeriodFilter'
 import AccountSelector from '@/components/AccountSelector'
@@ -244,7 +245,7 @@ export default function DashboardPage() {
     try {
       const res = await fetch(`${SURL}/functions/v1/get-ngp-data`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', apikey: ANON },
+        headers: efHeaders(),
         body: JSON.stringify({ session_token: sess?.session }),
       })
       const data = await res.json()
@@ -595,7 +596,7 @@ export default function DashboardPage() {
     try {
       const res = await fetch(`${SURL}/functions/v1/get-relatorios`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', apikey: ANON },
+        headers: efHeaders(),
         body: JSON.stringify({
           session_token: sess?.session,
           cliente_id: viewing.id,
@@ -611,7 +612,7 @@ export default function DashboardPage() {
     if (!confirm('Remover este relatório?')) return
     await fetch(`${SURL}/functions/v1/delete-relatorio`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', apikey: ANON },
+      headers: efHeaders(),
       body: JSON.stringify({ session_token: sess?.session, id }),
     }).catch(() => {})
     setRelatorios(p => p.filter(r => r.id !== id))
@@ -625,7 +626,7 @@ export default function DashboardPage() {
     try {
       const res = await fetch(`${SURL}/functions/v1/${data.id ? 'update-cliente' : 'add-cliente'}`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', apikey: ANON },
+        headers: efHeaders(),
         body: JSON.stringify({ session_token: sess?.session, ...data }),
       })
       const json = await res.json()
@@ -643,7 +644,7 @@ export default function DashboardPage() {
     try {
       const res = await fetch(`${SURL}/functions/v1/delete-cliente`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', apikey: ANON },
+        headers: efHeaders(),
         body: JSON.stringify({ session_token: sess?.session, id }),
       })
       const json = await res.json()
@@ -709,7 +710,7 @@ export default function DashboardPage() {
   function logout() {
     fetch(`${SURL}/functions/v1/logout`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', apikey: ANON },
+      headers: efHeaders(),
       body: JSON.stringify({ token: sess?.session }),
     }).catch(() => {})
     clearSession(); router.replace('/login')

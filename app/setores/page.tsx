@@ -131,10 +131,6 @@ export default function SetoresPage() {
   if (!sess) return null
 
   const isAdmin = sess.role === 'admin'
-  const adminSectorNav = isAdmin ? [
-    { icon: <IcoAd />,    label: 'Contas de Anúncio',  href: '/admin/contas' },
-    { icon: <IcoUsers />, label: 'Usuários NGP Space',  href: '/admin/usuarios' },
-  ] : undefined
 
   function openSetor(setor: Setor) {
     if (setor.href === '#') { setComingSoon(setor.title); return }
@@ -157,7 +153,7 @@ export default function SetoresPage() {
 
   return (
     <div className={styles.layout}>
-      <Sidebar showDashboardNav={false} minimal={isAdmin} sectorNav={adminSectorNav} sectorNavTitle="CADASTRAR" />
+      <Sidebar showDashboardNav={false} minimal={isAdmin} />
 
       <main className={styles.main}>
         <div className={styles.content}>

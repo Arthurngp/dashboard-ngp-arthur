@@ -220,6 +220,18 @@
   text-overflow: ellipsis;
 }
 
+.tdExtraCol {
+  color: #7c3aed;
+  font-weight: 600;
+}
+
+.extraPair {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+}
+
 .tdDate {
   color: #3a3a3c;
   font-weight: 600;

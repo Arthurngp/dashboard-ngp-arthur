@@ -1,14 +1,17 @@
 'use client'
 import React from 'react'
 import Sidebar from '@/components/Sidebar'
+import NGPLoading from '@/components/NGPLoading'
 import styles from '../comercial.module.css'
 import { getSession } from '@/lib/auth'
 import { useRouter } from 'next/navigation'
 import { useEffect, useState } from 'react'
+import { comercialNav } from '../comercial-nav'
 
 export default function ContratosPage() {
   const router = useRouter()
   const [sess, setSess] = useState<ReturnType<typeof getSession> | null>(null)
+
 
   useEffect(() => {
     const s = getSession()
@@ -24,13 +27,12 @@ export default function ContratosPage() {
       <Sidebar
         minimal={true}
         sectorNavTitle="COMERCIAL"
-        sectorNav={[
-          { icon: <div />, label: 'Gestão', href: '/comercial/gestao' },
-          { icon: <div />, label: 'Pipeline', href: '/comercial/pipeline' },
-          { icon: <div />, label: 'Propostas', href: '/comercial/propostas' },
-          { icon: <div />, label: 'Contratos', href: '/comercial/contratos' },
-          { icon: <div />, label: 'Metas e KPIs', href: '/comercial/kpis' },
-        ]}
+        sectorNav={comercialNav}
+        onTabChange={(tab) => {
+          if (tab === 'fields') router.push('/comercial/pipeline?tab=fields')
+          else if (tab === 'kanban') router.push('/comercial/pipeline?tab=kanban')
+          else if (tab === 'new_pipeline') router.push('/comercial/pipeline?action=new_pipeline')
+        }}
       />
       <main className={styles.main}>
         <div className={styles.content}>

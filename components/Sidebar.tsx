@@ -1,9 +1,11 @@
 'use client'
-import React, { useState } from 'react'
+import React, { useState, useEffect } from 'react'
 import styles from './Sidebar.module.css'
 import { useRouter, usePathname } from 'next/navigation'
+import ProfileModal from './ProfileModal'
 import { clearSession, getSession } from '@/lib/auth'
-import { SURL, ANON } from '@/lib/constants'
+import { SURL } from '@/lib/constants'
+import { efHeaders } from '@/lib/api'
 
 const LogoIcon = () => (
   <svg viewBox="0 0 24 24" fill="white" width={18} height={18}>
@@ -28,7 +30,14 @@ interface Props {
   sectorNavTitle?: string
 }
 
-interface NavItem { icon: React.ReactNode; label: string; href: string; tab?: string; badge?: string }
+interface NavItem { 
+  icon: React.ReactNode; 
+  label: string; 
+  href: string; 
+  tab?: string; 
+  badge?: string;
+  subItems?: NavItem[];
+}
 
 const Ico = ({ children, fill = 'none', stroke = 'currentColor', strokeWidth = '2' }: {
   children: React.ReactNode; fill?: string; stroke?: string; strokeWidth?: string
@@ -52,13 +61,15 @@ const sistemaNav: NavItem[] = [
   { icon: <Ico><circle cx="12" cy="12" r="10"/><path d="M12 8v4l3 3"/></Ico>, label: 'Análise IA',  href: '/ia-analise' },
 ]
 
-const adminNav: NavItem[] = [
-  { icon: <Ico><path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/></Ico>, label: 'Vincular Contas', href: '/admin/contas' },
+const cadastrarNav: NavItem[] = [
+  { icon: <Ico><path d="M10 13a5 5 0 007.54.54l3-3a5 5 0 00-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 00-7.54-.54l-3 3a5 5 0 007.07 7.07l1.71-1.71"/></Ico>, label: 'Contas de Anúncio', href: '/admin/contas' },
+  { icon: <Ico><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75"/></Ico>, label: 'Usuários NGP Space', href: '/admin/usuarios' },
 ]
 
 const setoresNav: NavItem[] = [
   { icon: <Ico><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></Ico>, label: 'Relatórios e Dados', href: '/dashboard' },
   { icon: <Ico><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 000 7h5a3.5 3.5 0 010 7H6"/></Ico>, label: 'Financeiro', href: 'https://financeiro.grupongp.com.br' },
+  { icon: <Ico><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75"/></Ico>, label: 'Pessoas', href: '/pessoas' },
   { icon: <Ico><path d="M21 16V8a2 2 0 00-1-1.73l-7-4a2 2 0 00-2 0l-7 4A2 2 0 003 8v8a2 2 0 001 1.73l7 4a2 2 0 002 0l7-4A2 2 0 0021 16z"/></Ico>, label: 'Comercial', href: '/comercial' },
   { icon: <Ico><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="2"/></Ico>, label: 'Trackeamento', href: '#' },
 ]
@@ -67,9 +78,18 @@ export default function Sidebar({ activeTab, onTabChange, onLogout, showDashboar
   const router   = useRouter()
   const pathname = usePathname()
   const sess     = getSession()
-  const [setoresOpen, setSetoresOpen] = useState(!showDashboardNav && !minimal)
+  const [setoresOpen, setSetoresOpen] = useState(!showDashboardNav)
   const [sectorNavOpen, setSectorNavOpen] = useState(true)
   const [mobileOpen, setMobileOpen]   = useState(false)
+  const [profileOpen, setProfileOpen] = useState(false)
+  const [showConfigMenu, setShowConfigMenu] = useState(false)
+  const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>({})
+
+  useEffect(() => {
+    function handleClickOutside() { setShowConfigMenu(false) }
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [])
 
   // Fecha sidebar ao navegar
   const handleNav = (fn: () => void) => { fn(); setMobileOpen(false) }
@@ -81,7 +101,7 @@ export default function Sidebar({ activeTab, onTabChange, onLogout, showDashboar
     if (s?.session) {
       fetch(`${SURL}/functions/v1/logout`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', apikey: ANON },
+        headers: efHeaders(),
         body: JSON.stringify({ token: s.session }),
       }).catch(() => {})
     }
@@ -91,30 +111,50 @@ export default function Sidebar({ activeTab, onTabChange, onLogout, showDashboar
 
   const initials = (sess?.user || 'NG').slice(0, 2).toUpperCase()
 
-  const renderNav = (nav: NavItem[]) => nav.map(item => {
+  const renderNav = (nav: NavItem[], depth = 0) => nav.map(item => {
     const isTabItem = !!onTabChange && !!item.tab
+    const isGroup   = !!item.subItems && item.subItems.length > 0
+    const isExpanded = expandedGroups[item.label] || false
+    
     const isActive  = isTabItem
       ? activeTab === item.tab
       : pathname === item.href.split('?')[0] && item.href !== '#'
 
     function handleClick() {
+      if (isGroup) {
+        setExpandedGroups(prev => ({ ...prev, [item.label]: !prev[item.label] }))
+        return
+      }
+      if (isTabItem && item.tab) { handleNav(() => onTabChange(item.tab!)); return }
       if (item.href === '#') return
       if (item.href.startsWith('http')) { handleNav(() => window.open(item.href, '_blank', 'noopener,noreferrer')); return }
-      if (isTabItem && item.tab) { handleNav(() => onTabChange(item.tab!)); return }
       handleNav(() => router.push(item.href))
     }
 
     return (
-      <button
-        key={item.href + item.label}
-        className={`${styles.navItem} ${isActive ? styles.active : ''}`}
-        onClick={handleClick}
-        style={{ cursor: item.href === '#' ? 'default' : 'pointer', opacity: item.href === '#' ? 0.6 : 1 }}
-      >
-        <span>{item.icon}</span>
-        {item.label}
-        {item.badge && <span className={styles.navBadge}>{item.badge}</span>}
-      </button>
+      <div key={item.href + item.label} style={{ display: 'flex', flexDirection: 'column' }}>
+        <button
+          className={`${styles.navItem} ${isActive ? styles.active : ''}`}
+          onClick={handleClick}
+          style={{ 
+            cursor: (item.href === '#' && !isGroup && !isTabItem) ? 'default' : 'pointer', 
+            opacity: (item.href === '#' && !isGroup && !isTabItem) ? 0.6 : 1,
+            paddingLeft: depth > 0 ? (depth * 16) + 10 : 10
+          }}
+        >
+          <span>{item.icon}</span>
+          <span style={{ flex: 1 }}>{item.label}</span>
+          {isGroup && (
+            <span className={`${styles.chevron} ${isExpanded ? styles.chevronOpen : ''}`} style={{ fontSize: 12 }}>›</span>
+          )}
+          {item.badge && <span className={styles.navBadge}>{item.badge}</span>}
+        </button>
+        {isGroup && isExpanded && (
+          <div className={styles.navGroupChildren}>
+            {renderNav(item.subItems!, depth + 1)}
+          </div>
+        )}
+      </div>
     )
   })
 
@@ -168,21 +208,34 @@ export default function Sidebar({ activeTab, onTabChange, onLogout, showDashboar
           <>
             <div className={styles.navLabel} style={{ marginTop: 12 }}>SISTEMA</div>
             {renderNav(sistemaNav)}
-            <div className={styles.navLabel} style={{ marginTop: 12 }}>ADMINISTRAÇÃO</div>
-            {renderNav(adminNav)}
-          </>
-        )}
-        {minimal && sectorNavTitle !== 'ADMINISTRAÇÃO' && sectorNavTitle !== 'CADASTRAR' && (
-          <>
-            <div className={styles.navLabel} style={{ marginTop: 24 }}>ADMINISTRAÇÃO</div>
-            {renderNav(adminNav)}
           </>
         )}
       </nav>
 
       <div className={styles.footer}>
-        <div className={styles.userBlock}>
-          <div className={styles.userInfo} onClick={() => router.push('/perfil')} style={{ cursor: 'pointer' }}>
+        <div className={styles.configWrap}>
+          <button 
+            className={`${styles.navItem} ${styles.configBtn} ${showConfigMenu ? styles.active : ''}`}
+            onClick={(e) => { e.stopPropagation(); setShowConfigMenu(!showConfigMenu) }}
+          >
+            <span>
+              <Ico>
+                <circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+              </Ico>
+            </span>
+            Configurações
+          </button>
+
+          {showConfigMenu && (
+            <div className={styles.configBubble} onClick={(e) => e.stopPropagation()}>
+              <div className={styles.bubbleTitle}>CADASTRAR</div>
+              {renderNav(cadastrarNav)}
+            </div>
+          )}
+        </div>
+
+        <div className={styles.userBlock} style={{ marginTop: '4px' }}>
+          <div className={styles.userInfo} onClick={() => setProfileOpen(true)} style={{ cursor: 'pointer' }}>
             <div className={styles.avatar}>{initials}</div>
             <div>
               <div className={styles.userName}>{sess?.user || 'NGP'}</div>
@@ -193,6 +246,7 @@ export default function Sidebar({ activeTab, onTabChange, onLogout, showDashboar
         </div>
       </div>
     </aside>
+    <ProfileModal isOpen={profileOpen} onClose={() => setProfileOpen(false)} />
     </>
   )
 }

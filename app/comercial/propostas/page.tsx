@@ -1,14 +1,18 @@
 'use client'
 import React from 'react'
 import Sidebar from '@/components/Sidebar'
+import NGPLoading from '@/components/NGPLoading'
 import styles from '../comercial.module.css'
+import PropostasForm from './PropostasForm'
 import { getSession } from '@/lib/auth'
 import { useRouter } from 'next/navigation'
 import { useEffect, useState } from 'react'
+import { comercialNav } from '../comercial-nav'
 
 export default function PropostasPage() {
   const router = useRouter()
   const [sess, setSess] = useState<ReturnType<typeof getSession> | null>(null)
+
 
   useEffect(() => {
     const s = getSession()
@@ -24,30 +28,16 @@ export default function PropostasPage() {
       <Sidebar
         minimal={true}
         sectorNavTitle="COMERCIAL"
-        sectorNav={[
-          { icon: <div />, label: 'Gestão', href: '/comercial/gestao' },
-          { icon: <div />, label: 'Pipeline', href: '/comercial/pipeline' },
-          { icon: <div />, label: 'Propostas', href: '/comercial/propostas' },
-          { icon: <div />, label: 'Contratos', href: '/comercial/contratos' },
-          { icon: <div />, label: 'Metas e KPIs', href: '/comercial/kpis' },
-        ]}
+        sectorNav={comercialNav}
+        onTabChange={(tab) => {
+          if (tab === 'fields') router.push('/comercial/pipeline?tab=fields')
+          else if (tab === 'kanban') router.push('/comercial/pipeline?tab=kanban')
+          else if (tab === 'new_pipeline') router.push('/comercial/pipeline?action=new_pipeline')
+        }}
       />
-      <main className={styles.main}>
-        <div className={styles.content}>
-          <header className={styles.header}>
-            <div className={styles.eyebrow}>Setor Comercial</div>
-            <h1 className={styles.title}>Propostas</h1>
-            <p className={styles.subtitle}>Criação e gestão de propostas comerciais.</p>
-          </header>
-          <div className={styles.grid}>
-            <div className={styles.card}>
-              <div className={styles.cardBody}>
-                <h3 className={styles.cardTitle}>Nova Proposta</h3>
-                <p className={styles.cardDesc}>Gerar um novo documento de proposta para cliente.</p>
-              </div>
-              <div className={styles.cardArrow}>→</div>
-            </div>
-          </div>
+      <main className={styles.main} style={{ padding: 0, alignItems: 'stretch', overflowY: 'hidden' }}>
+        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
+          <PropostasForm />
         </div>
       </main>
     </div>

@@ -2,7 +2,8 @@
 import { useEffect, useState, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import { getSession } from '@/lib/auth'
-import { SURL, ANON } from '@/lib/constants'
+import { SURL } from '@/lib/constants'
+import { efHeaders } from '@/lib/api'
 import Sidebar from '@/components/Sidebar'
 import styles from './lixeira.module.css'
 
@@ -98,7 +99,6 @@ function groupRecords(records: DeletedRecord[]): DeletedGroup[] {
   return Object.values(groups).sort((a, b) => b.deletedAt.localeCompare(a.deletedAt))
 }
 
-const efHeaders = { 'Content-Type': 'application/json', apikey: ANON, Authorization: `Bearer ${ANON}` }
 
 // ── Ícones ────────────────────────────────────────────────────────────────────
 
@@ -106,6 +106,14 @@ const IcoRelogio = () => (
   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
     strokeLinecap="round" strokeLinejoin="round" width={15} height={15}>
     <circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>
+  </svg>
+)
+
+const IcoTabela = () => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
+    strokeLinecap="round" strokeLinejoin="round" width={15} height={15}>
+    <rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/>
+    <line x1="3" y1="15" x2="21" y2="15"/><line x1="9" y1="3" x2="9" y2="21"/>
   </svg>
 )
 
@@ -124,6 +132,7 @@ const IcoLixeira = () => (
 export default function LixeiraPage() {
   const router = useRouter()
   const [sess, setSess] = useState<ReturnType<typeof getSession> | null>(null)
+  const [isAdmin, setIsAdmin] = useState(false)
   const [groups, setGroups]   = useState<DeletedGroup[]>([])
   const [loading, setLoading] = useState(true)
   const [actionKey, setActionKey] = useState<string | null>(null)
@@ -133,6 +142,7 @@ export default function LixeiraPage() {
     const s = getSession()
     if (!s || s.auth !== '1') { router.replace('/login'); return }
     if (s.role !== 'ngp' && s.role !== 'admin') { router.replace('/cliente'); return }
+    setIsAdmin(s.role === 'admin')
     setSess(s)
   }, [router])
 
@@ -142,7 +152,7 @@ export default function LixeiraPage() {
     setLoading(true)
     try {
       const res  = await fetch(`${SURL}/functions/v1/admin-ponto-lixeira`, {
-        method: 'POST', headers: efHeaders,
+        method: 'POST', headers: efHeaders(),
         body: JSON.stringify({ session_token: s.session }),
       })
       const data = await res.json()
@@ -173,7 +183,7 @@ export default function LixeiraPage() {
     setActionKey(group.key)
     try {
       const res  = await fetch(`${SURL}/functions/v1/admin-ponto-restore`, {
-        method: 'POST', headers: efHeaders,
+        method: 'POST', headers: efHeaders(),
         body: JSON.stringify({ session_token: s.session, record_ids: group.recordIds }),
       })
       const data = await res.json()
@@ -193,7 +203,7 @@ export default function LixeiraPage() {
     setActionKey(group.key)
     try {
       const res  = await fetch(`${SURL}/functions/v1/admin-ponto-purge`, {
-        method: 'POST', headers: efHeaders,
+        method: 'POST', headers: efHeaders(),
         body: JSON.stringify({ session_token: s.session, record_ids: group.recordIds }),
       })
       const data = await res.json()
@@ -210,7 +220,8 @@ export default function LixeiraPage() {
 
   const sectorNav = [
     { icon: <IcoRelogio />, label: 'Ponto Eletrônico', href: '/pessoas' },
-    { icon: <IcoLixeira />, label: 'Lixeira', href: '/pessoas/lixeira' },
+    { icon: <IcoTabela />,  label: 'Registros de Ponto', href: '/pessoas/registros' },
+    ...(isAdmin ? [{ icon: <IcoLixeira />, label: 'Lixeira', href: '/pessoas/lixeira' }] : []),
   ]
 
   return (

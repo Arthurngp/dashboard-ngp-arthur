@@ -2,14 +2,14 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import { getSession } from '@/lib/auth'
-import { SURL, ANON } from '@/lib/constants'
+import { SURL } from '@/lib/constants'
+import { efHeaders } from '@/lib/api'
 import Sidebar from '@/components/Sidebar'
 import styles from './contas.module.css'
 
 interface MetaAccount { id: string; name: string; account_status: number; currency: string }
 interface Cliente { id: string; username: string; nome: string; meta_account_id: string | null; foto_url: string | null }
 
-const efHeaders = { 'Content-Type': 'application/json', apikey: ANON, Authorization: `Bearer ${ANON}` }
 
 const IcoAd = () => (
   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" width={15} height={15}>
@@ -46,8 +46,8 @@ export default function ContasPage() {
     setLoading(true)
     try {
       const [cr, ar] = await Promise.all([
-        fetch(`${SURL}/functions/v1/get-ngp-data`, { method: 'POST', headers: efHeaders, body: JSON.stringify({ session_token: s.session }) }),
-        fetch(`${SURL}/functions/v1/discover-meta-accounts`, { method: 'POST', headers: efHeaders, body: JSON.stringify({ session_token: s.session }) }),
+        fetch(`${SURL}/functions/v1/get-ngp-data`, { method: 'POST', headers: efHeaders(), body: JSON.stringify({ session_token: s.session }) }),
+        fetch(`${SURL}/functions/v1/discover-meta-accounts`, { method: 'POST', headers: efHeaders(), body: JSON.stringify({ session_token: s.session }) }),
       ])
       const cd = await cr.json(); const ad = await ar.json()
       if (cd.clientes) setClientes(cd.clientes)
@@ -64,7 +64,7 @@ export default function ContasPage() {
     setLinking(clienteId)
     try {
       const res = await fetch(`${SURL}/functions/v1/link-client-account`, {
-        method: 'POST', headers: efHeaders,
+        method: 'POST', headers: efHeaders(),
         body: JSON.stringify({ session_token: s.session, cliente_id: clienteId, meta_account_id: metaAccountId }),
       })
       if (res.ok) setClientes(prev => prev.map(c => c.id === clienteId ? { ...c, meta_account_id: metaAccountId } : c))
@@ -75,14 +75,9 @@ export default function ContasPage() {
 
   if (!sess) return null
 
-  const sectorNav = [
-    { icon: <IcoAd />,    label: 'Contas de Anúncio',  href: '/admin/contas' },
-    { icon: <IcoUsers />, label: 'Usuários NGP Space',  href: '/admin/usuarios' },
-  ]
-
   return (
     <div className={styles.layout}>
-      <Sidebar showDashboardNav={false} minimal sectorNav={sectorNav} sectorNavTitle="CADASTRAR" />
+      <Sidebar showDashboardNav={false} minimal />
       <main className={styles.main}>
         <div className={styles.content}>
           <header className={styles.header}>

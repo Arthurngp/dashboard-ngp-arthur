@@ -1,7 +1,9 @@
+// @ts-nocheck
+import { serve } from 'https://deno.land/std@0.177.0/http/server.ts'
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { handleCors, json } from '../_shared/cors.ts'
 
-Deno.serve(async (req) => {
+serve(async (req) => {
   const cors = handleCors(req)
   if (cors) return cors
 
@@ -57,20 +59,25 @@ Deno.serve(async (req) => {
 
     // CREATE — criar novo lead
     if (action === 'create') {
-      const { pipeline_id, stage_id, company_name, contact_name, email, phone, estimated_value, notes, source } = params
+      const { pipeline_id, stage_id, company_name, contact_name, email, phone, estimated_value, notes, source, custom_data } = params
       if (!pipeline_id)    return json(req, { error: 'pipeline_id obrigatório.' }, 400)
       if (!stage_id)       return json(req, { error: 'stage_id obrigatório.' }, 400)
       if (!company_name?.trim()) return json(req, { error: 'company_name obrigatório.' }, 400)
 
-      // Próxima posição no stage
-      const { data: existing } = await sb
+      // Abre espaço no topo (posição 0)
+      const { data: stageLeads } = await sb
         .from('crm_leads')
-        .select('position')
+        .select('id, position')
         .eq('stage_id', stage_id)
-        .order('position', { ascending: false })
-        .limit(1)
+        .order('position', { ascending: true })
 
-      const nextPosition = existing && existing.length > 0 ? existing[0].position + 1 : 0
+      if (stageLeads && stageLeads.length > 0) {
+        await Promise.all(
+          stageLeads.map((l: any) =>
+            sb.from('crm_leads').update({ position: l.position + 1 }).eq('id', l.id)
+          )
+        )
+      }
 
       const { data, error } = await sb
         .from('crm_leads')
@@ -84,7 +91,8 @@ Deno.serve(async (req) => {
           estimated_value: estimated_value || 0,
           notes:  notes?.trim() || null,
           source: source?.trim() || null,
-          position: nextPosition,
+          position: 0,
+          custom_data: custom_data || {},
         })
         .select()
         .single()
@@ -95,7 +103,7 @@ Deno.serve(async (req) => {
 
     // UPDATE — editar campos do lead
     if (action === 'update') {
-      const { lead_id, company_name, contact_name, email, phone, estimated_value, notes, source, status } = params
+      const { lead_id, company_name, contact_name, email, phone, estimated_value, notes, source, status, custom_data } = params
       if (!lead_id) return json(req, { error: 'lead_id obrigatório.' }, 400)
 
       const updates: Record<string, unknown> = {}
@@ -107,6 +115,7 @@ Deno.serve(async (req) => {
       if (notes         !== undefined) updates.notes           = notes?.trim() || null
       if (source        !== undefined) updates.source          = source?.trim() || null
       if (status        !== undefined) updates.status          = status
+      if (custom_data   !== undefined) updates.custom_data     = custom_data
 
       const { data, error } = await sb
         .from('crm_leads')
@@ -149,7 +158,7 @@ Deno.serve(async (req) => {
 
         if (oldStageLeads) {
           await Promise.all(
-            oldStageLeads.map((l, index) =>
+            oldStageLeads.map((l: any, index: number) =>
               sb.from('crm_leads').update({ position: index }).eq('id', l.id)
             )
           )
@@ -165,7 +174,7 @@ Deno.serve(async (req) => {
 
         if (newStageLeads) {
           await Promise.all(
-            newStageLeads.map((l) =>
+            newStageLeads.map((l: any) =>
               sb.from('crm_leads').update({ position: l.position + 1 }).eq('id', l.id)
             )
           )
@@ -183,7 +192,7 @@ Deno.serve(async (req) => {
           const reordered = [...stageLeads]
           reordered.splice(new_position, 0, { id: lead_id, position: new_position })
           await Promise.all(
-            reordered.map((l, index) =>
+            reordered.map((l: any, index: number) =>
               sb.from('crm_leads').update({ position: index }).eq('id', l.id)
             )
           )
@@ -231,7 +240,7 @@ Deno.serve(async (req) => {
 
         if (remaining) {
           await Promise.all(
-            remaining.map((l, index) =>
+            remaining.map((l: any, index: number) =>
               sb.from('crm_leads').update({ position: index }).eq('id', l.id)
             )
           )

@@ -136,7 +136,13 @@
   background: rgba(204,20,20,0.2);
   color: #fff;
   font-weight: 600;
-  border-left: 3px solid var(--red);
+}
+
+.navGroupChildren {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: 2px;
 }
 
 .footer {
@@ -187,4 +193,57 @@
   }
   .hamburger { display: none; }
   .overlay { display: none !important; }
+}
+
+.configWrap {
+  position: relative;
+  padding: 0 10px;
+}
+
+.configBtn {
+  justify-content: flex-start;
+  color: rgba(255,255,255,0.7);
+  font-weight: 500;
+  padding: 10px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.03);
+}
+.configBtn:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: #fff;
+}
+.configBtn.active {
+  background: var(--red);
+  color: #fff;
+}
+
+.configBubble {
+  position: absolute;
+  bottom: -40px;
+  left: calc(100% + 14px);
+  width: 220px;
+  background: var(--dark2, #1c1c1e);
+  border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 12px;
+  padding: 12px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  box-shadow: 0 10px 40px rgba(0,0,0,0.5);
+  animation: slideRight 0.15s ease-out;
+  z-index: 201;
+}
+
+.bubbleTitle {
+  font-size: 10px;
+  font-weight: 600;
+  color: rgba(255,255,255,0.4);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  padding: 0 8px 6px;
+}
+
+@keyframes slideRight {
+  from { opacity: 0; transform: translateX(-10px); }
+  to { opacity: 1; transform: translateX(0); }
 }

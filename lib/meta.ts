@@ -1,5 +1,6 @@
-import { SURL, ANON } from './constants'
+import { SURL } from './constants'
 import { getSession } from './auth'
+import { efHeaders } from './api'
 
 export async function metaCall(
   endpoint: string,
@@ -11,10 +12,7 @@ export async function metaCall(
 
   const res = await fetch(`${SURL}/functions/v1/meta-proxy`, {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      apikey: ANON,
-    },
+    headers: efHeaders(),
     body: JSON.stringify({
       session_token: sess.session,
       endpoint,

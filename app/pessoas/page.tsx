@@ -2,28 +2,38 @@
 import { useEffect, useState, useRef, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import { getSession } from '@/lib/auth'
-import { SURL, ANON } from '@/lib/constants'
+import { SURL } from '@/lib/constants'
+import { efHeaders } from '@/lib/api'
 import Sidebar from '@/components/Sidebar'
+import NGPLoading from '@/components/NGPLoading'
 import styles from './pessoas.module.css'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 interface PontoRecord {
   id: string
-  tipo_registro: 'entrada' | 'saida_almoco' | 'retorno_almoco' | 'saida' | 'extra'
+  tipo_registro: 'entrada' | 'saida_almoco' | 'retorno_almoco' | 'saida' | 'extra_entrada' | 'extra_saida' | 'extra'
   created_at: string
   usuario_id?: string
   usuario_nome?: string
 }
 
+interface ExtraPair {
+  entrada: string | null
+  saida: string | null
+}
+
 interface DayRow {
+  uniqueKey: string
   dateStr: string
   dateLabel: string
   entrada: string | null
   saidaAlmoco: string | null
   retornoAlmoco: string | null
   saida: string | null
+  extras: ExtraPair[]
   totalMins: number
+  extrasMins: number
   status: 'complete' | 'overtime' | 'below' | 'incomplete' | 'empty'
   recordIds: string[]
   usuarioId?: string
@@ -55,38 +65,45 @@ function fmtMins(mins: number): string {
   return `${h}h${m.toString().padStart(2, '00')}m`
 }
 
-function calcBalance(records: PontoRecord[]): { totalMins: number; status: DayRow['status'] } {
-  const get = (t: string) => records.find(r => r.tipo_registro === t)
-  const ms  = (r: PontoRecord) => new Date(r.created_at).getTime()
-
-  const entrada  = get('entrada')
-  const saidaAlm = get('saida_almoco')
-  const retAlm   = get('retorno_almoco')
-  const saida    = get('saida')
-
-  if (!entrada) return { totalMins: 0, status: 'empty' }
-
+function calcBalance(records: PontoRecord[]): { totalMins: number; status: DayRow['status']; extrasMins: number } {
+  const sorted = [...records].sort((a, b) => a.created_at.localeCompare(b.created_at))
+  const ms = (iso: string) => new Date(iso).getTime()
+  
   let totalMs = 0
-  if (saida) {
-    if (saidaAlm && retAlm) {
-      totalMs = (ms(saidaAlm) - ms(entrada)) + (ms(saida) - ms(retAlm))
-    } else {
-      totalMs = ms(saida) - ms(entrada)
+  
+  // Logic: Pair any entry-type with its immediate next exit-type
+  // Entries: entrada, retorno_almoco, extra_entrada
+  // Exits: saida_almoco, saida, extra_saida
+  const isEntry = (t: string) => ['entrada', 'retorno_almoco', 'extra_entrada'].includes(t)
+  const isExit = (t: string) => ['saida_almoco', 'saida', 'extra_saida'].includes(t)
+
+  let entryTime: number | null = null
+
+  for (const r of sorted) {
+    if (isEntry(r.tipo_registro)) {
+      entryTime = ms(r.created_at)
+    } else if (isExit(r.tipo_registro) && entryTime) {
+      totalMs += (ms(r.created_at) - entryTime)
+      entryTime = null
     }
-  } else if (saidaAlm) {
-    totalMs = ms(saidaAlm) - ms(entrada)
   }
 
   const totalMins = Math.floor(totalMs / 60000)
   const TARGET    = 8 * 60
+  const extrasMins = Math.max(0, totalMins - TARGET)
+
+  const hasEntrada = records.some(r => r.tipo_registro === 'entrada')
+  const hasSaida   = records.some(r => r.tipo_registro === 'saida')
+
+  if (!hasEntrada) return { totalMins: 0, status: 'empty', extrasMins: 0 }
 
   let status: DayRow['status']
-  if (!saida)                        status = 'incomplete'
+  if (!hasSaida)                     status = 'incomplete'
   else if (totalMins >= TARGET + 20) status = 'overtime'
   else if (totalMins >= TARGET - 15) status = 'complete'
   else                               status = 'below'
 
-  return { totalMins, status }
+  return { totalMins, status, extrasMins }
 }
 
 const DAYS   = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb']
@@ -113,7 +130,7 @@ function groupByDay(records: PontoRecord[]): DayRow[] {
     .map(([key, dayRecords]) => {
       dayRecords.sort((a, b) => a.created_at.localeCompare(b.created_at))
       const get = (t: string) => dayRecords.find(r => r.tipo_registro === t)
-      const { totalMins, status } = calcBalance(dayRecords)
+      const { totalMins, status, extrasMins } = calcBalance(dayRecords)
 
       const [, dateStr] = key.split('__')
       const [y, mo, d] = dateStr.split('-').map(Number)
@@ -123,14 +140,29 @@ function groupByDay(records: PontoRecord[]): DayRow[] {
       const firstRec = dayRecords[0]
       const usuarioNome = firstRec.usuario_nome || undefined
 
+      // Agrupa extras em pares (entrada → saída)
+      const extraEntradas = dayRecords.filter(r => r.tipo_registro === 'extra_entrada')
+      const extraSaidas   = dayRecords.filter(r => r.tipo_registro === 'extra_saida')
+      const extras: ExtraPair[] = []
+      const maxPairs = Math.max(extraEntradas.length, extraSaidas.length)
+      for (let i = 0; i < maxPairs; i++) {
+        extras.push({
+          entrada: extraEntradas[i] ? toLocalTime(extraEntradas[i].created_at) : null,
+          saida:   extraSaidas[i]   ? toLocalTime(extraSaidas[i].created_at)   : null,
+        })
+      }
+
       return {
+        uniqueKey: key,
         dateStr,
         dateLabel:    dayLabel,
         entrada:      get('entrada')        ? toLocalTime(get('entrada')!.created_at)        : null,
         saidaAlmoco:  get('saida_almoco')   ? toLocalTime(get('saida_almoco')!.created_at)   : null,
         retornoAlmoco:get('retorno_almoco') ? toLocalTime(get('retorno_almoco')!.created_at) : null,
         saida:        get('saida')          ? toLocalTime(get('saida')!.created_at)          : null,
+        extras,
         totalMins,
+        extrasMins,
         status,
         recordIds: dayRecords.map(r => r.id),
         usuarioId: firstRec.usuario_id,
@@ -146,8 +178,10 @@ function getNextAction(records: PontoRecord[]): NextAction | null {
     entrada:        { tipo: 'saida_almoco',   label: 'Saída para Almoço', color: '#f59e0b' },
     saida_almoco:   { tipo: 'retorno_almoco', label: 'Retorno do Almoço', color: '#3b82f6' },
     retorno_almoco: { tipo: 'saida',          label: 'Registrar Saída',   color: '#9B1540' },
-    saida:          { tipo: 'extra',          label: 'Ponto Extra',       color: '#7c3aed' },
-    extra:          { tipo: 'extra',          label: 'Ponto Extra',       color: '#7c3aed' },
+    saida:          { tipo: 'extra_entrada',  label: 'Entrada Extra',     color: '#7c3aed' },
+    extra_entrada:  { tipo: 'extra_saida',    label: 'Saída Extra',       color: '#6d28d9' },
+    extra_saida:    { tipo: 'extra_entrada',  label: 'Entrada Extra',     color: '#7c3aed' },
+    extra:          { tipo: 'extra_entrada',  label: 'Entrada Extra',     color: '#7c3aed' },
   }
   return map[last] ?? null
 }
@@ -172,10 +206,11 @@ const TIPO_LABEL: Record<string, string> = {
   saida_almoco:   'Saída Almoço',
   retorno_almoco: 'Retorno Almoço',
   saida:          'Saída',
+  extra_entrada:  'Entrada Extra',
+  extra_saida:    'Saída Extra',
   extra:          'Extra',
 }
 
-const efHeaders = { 'Content-Type': 'application/json', apikey: ANON, Authorization: `Bearer ${ANON}` }
 
 // ── Ícones inline ─────────────────────────────────────────────────────────────
 
@@ -259,7 +294,7 @@ export default function PessoasPage() {
     if (!s) return
     try {
       const res  = await fetch(`${SURL}/functions/v1/get-ponto-now`, {
-        method: 'POST', headers: efHeaders,
+        method: 'POST', headers: efHeaders(),
         body: JSON.stringify({ session_token: s.session }),
       })
       const data = await res.json()
@@ -276,7 +311,7 @@ export default function PessoasPage() {
     setLoadingMes(true)
     try {
       const res  = await fetch(`${SURL}/functions/v1/get-ponto-mes`, {
-        method: 'POST', headers: efHeaders,
+        method: 'POST', headers: efHeaders(),
         body: JSON.stringify({ session_token: s.session, mes, ano, admin_all: adminMode ?? false }),
       })
       const data = await res.json()
@@ -296,6 +331,9 @@ export default function PessoasPage() {
     if (!sess) return
     fetchMes(selMes, selAno, isAdmin && viewAll)
   }, [selMes, selAno, viewAll, isAdmin]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Success animation state
+  const [showSuccess, setShowSuccess] = useState(false)
 
   // Tick do relógio
   useEffect(() => {
@@ -324,7 +362,7 @@ export default function PessoasPage() {
     setPontoMsg(null)
     try {
       const res  = await fetch(`${SURL}/functions/v1/registrar-ponto`, {
-        method: 'POST', headers: efHeaders,
+        method: 'POST', headers: efHeaders(),
         body: JSON.stringify({ session_token: s.session }),
       })
       const data = await res.json()
@@ -334,6 +372,11 @@ export default function PessoasPage() {
         setTodayRecords(data.today_records || [])
         const rec   = data.record
         const label = TIPO_LABEL[rec.tipo_registro] || rec.tipo_registro
+        
+        // Ativa animação de sucesso
+        setShowSuccess(true)
+        setTimeout(() => setShowSuccess(false), 2500)
+        
         setPontoMsg({ type: 'ok', text: `${label} registrado às ${toLocalTime(rec.created_at)}` })
         setTimeout(() => setPontoMsg(null), 4000)
         const d = new Date()
@@ -356,7 +399,7 @@ export default function PessoasPage() {
     setDeletingRow(row.dateStr)
     try {
       const res  = await fetch(`${SURL}/functions/v1/admin-ponto-delete`, {
-        method: 'POST', headers: efHeaders,
+        method: 'POST', headers: efHeaders(),
         body: JSON.stringify({ session_token: s.session, record_ids: row.recordIds }),
       })
       const data = await res.json()
@@ -398,6 +441,7 @@ export default function PessoasPage() {
   return (
     <div className={styles.layout}>
       <Sidebar showDashboardNav={false} minimal sectorNav={sectorNav} sectorNavTitle="PESSOAS" />
+      <NGPLoading loading={loadingPonto} success={showSuccess} />
 
       <main className={styles.main}>
         <div className={styles.content}>
@@ -432,7 +476,43 @@ export default function PessoasPage() {
                   </div>
                 )
               })}
+              {/* Pontos Extras em pares (Entrada → Saída) */}
+              {(() => {
+                const extraEntradas = todayRecords.filter(r => r.tipo_registro === 'extra_entrada')
+                const extraSaidas   = todayRecords.filter(r => r.tipo_registro === 'extra_saida')
+                const maxPairs = Math.max(extraEntradas.length, extraSaidas.length)
+                const pairs = []
+                for (let i = 0; i < maxPairs; i++) {
+                  pairs.push(
+                    <div key={`extra-e-${i}`} className={styles.todayItem}>
+                      <span className={styles.todayLabel}>Extra {i + 1} (E)</span>
+                      <span className={`${styles.todayValue} ${extraEntradas[i] ? styles.todayValueSet : ''}`}>
+                        {extraEntradas[i] ? toLocalTime(extraEntradas[i].created_at) : '--:--'}
+                      </span>
+                    </div>,
+                    <div key={`extra-s-${i}`} className={styles.todayItem}>
+                      <span className={styles.todayLabel}>Extra {i + 1} (S)</span>
+                      <span className={`${styles.todayValue} ${extraSaidas[i] ? styles.todayValueSet : ''}`}>
+                        {extraSaidas[i] ? toLocalTime(extraSaidas[i].created_at) : '--:--'}
+                      </span>
+                    </div>
+                  )
+                }
+                return pairs
+              })()}
             </div>
+
+
+            {loadingPonto && (
+              <div className={styles.loadingOverlay}>
+                <div className={styles.lettersContainer}>
+                  <span className={styles.animLetterN}>N</span>
+                  <span className={styles.animLetterG}>G</span>
+                  <span className={styles.animLetterP}>P</span>
+                </div>
+                <div className={styles.loadingText}>Carregando...</div>
+              </div>
+            )}
 
             <div className={styles.pontoActionArea}>
               {todayMins > 0 && (
@@ -526,22 +606,41 @@ export default function PessoasPage() {
                       <th>S. Almoço</th>
                       <th>R. Almoço</th>
                       <th>Saída</th>
+                      <th>Extra (E/S)</th>
                       <th>Total</th>
+                      <th>H. Extras</th>
                       <th>Status</th>
                       {isAdmin && <th className={styles.thAcoes}>Ações</th>}
                     </tr>
                   </thead>
                   <tbody>
                     {dayRows.map(row => (
-                      <tr key={row.dateStr}>
+                      <tr key={row.uniqueKey}>
                         <td className={styles.tdUsuario}>{row.usuarioNome || sess.username || sess.user}</td>
                         <td className={styles.tdDate}>{row.dateLabel}</td>
                         <td>{row.entrada      || <span className={styles.tdEmpty}>--:--</span>}</td>
                         <td>{row.saidaAlmoco  || <span className={styles.tdEmpty}>--:--</span>}</td>
                         <td>{row.retornoAlmoco|| <span className={styles.tdEmpty}>--:--</span>}</td>
                         <td>{row.saida        || <span className={styles.tdEmpty}>--:--</span>}</td>
+                        <td className={styles.tdExtraCol}>
+                          {row.extras.length > 0 ? (
+                            <div className={styles.extraPairs}>
+                              {row.extras.map((pair, i) => (
+                                <div key={i} className={styles.extraPair}>
+                                  <span className={styles.extraLabel}>#{i + 1}</span>
+                                  <span>{pair.entrada || '--:--'}</span>
+                                  <span className={styles.extraArrow}>→</span>
+                                  <span>{pair.saida || '--:--'}</span>
+                                </div>
+                              ))}
+                            </div>
+                          ) : <span className={styles.tdEmpty}>--:--</span>}
+                        </td>
                         <td className={styles.tdTotal}>
                           {row.totalMins > 0 ? fmtMins(row.totalMins) : <span className={styles.tdEmpty}>--</span>}
+                        </td>
+                        <td className={styles.tdTotal}>
+                          {row.extrasMins > 0 ? fmtMins(row.extrasMins) : <span className={styles.tdEmpty}>--</span>}
                         </td>
                         <td>
                           <span

@@ -58,8 +58,8 @@ body{font-family:'Sora',sans-serif;background:var(--bg);color:var(--text);min-he
   </div>
 
   <div class="tabs">
-    <button class="tab-btn active" id="tab-cliente" onclick="setTab('cliente')">👤 Cliente</button>
-    <button class="tab-btn"        id="tab-ngp"     onclick="setTab('ngp')">🚀 NGP</button>
+    <button class="tab-btn"             id="tab-cliente" onclick="setTab('cliente')">👤 Cliente</button>
+    <button class="tab-btn active"                     id="tab-ngp"     onclick="setTab('ngp')">🚀 NGP</button>
   </div>
 
   <div class="card">
@@ -93,7 +93,8 @@ body{font-family:'Sora',sans-serif;background:var(--bg);color:var(--text);min-he
 // ✅ SEGURO — apenas anon key exposta, service key escondida na Edge Function
 var SURL = 'https://uqukfjtwsuffeunikiwz.supabase.co';
 var ANON = 'sb_publishable_8Be9xpxGtJDsM8AGtcDwmQ_Z_WPhYQ_';
-var tab  = 'cliente';
+var tab  = 'ngp';
+setTab('ngp');
 
 function setTab(t) {
   tab = t;

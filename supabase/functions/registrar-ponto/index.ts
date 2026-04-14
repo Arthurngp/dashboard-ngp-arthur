@@ -1,5 +1,5 @@
-import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2"
+import { serve } from "std/http/server"
+import { createClient } from "supabase"
 import { handleCors, json } from "../_shared/cors.ts"
 
 const BRASILIA_OFFSET_MS = -3 * 60 * 60 * 1000
@@ -13,13 +13,14 @@ function toBrasiliaDateStr(utcDate: Date): string {
 function getNextTipo(lastTipo: string | null): string {
   if (!lastTipo) return 'entrada'
   const seq: Record<string, string> = {
-    entrada:        'saida_almoco',
-    saida_almoco:   'retorno_almoco',
-    retorno_almoco: 'saida',
-    saida:          'extra',
-    extra:          'extra',
+    entrada:         'saida_almoco',
+    saida_almoco:    'retorno_almoco',
+    retorno_almoco:  'saida',
+    saida:           'extra_entrada',
+    extra_entrada:   'extra_saida',
+    extra_saida:     'extra_entrada',
   }
-  return seq[lastTipo] ?? 'extra'
+  return seq[lastTipo] ?? 'extra_entrada'
 }
 
 async function sha256hex(text: string): Promise<string> {

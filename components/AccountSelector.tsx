@@ -1,7 +1,8 @@
 'use client'
 import { useState, useEffect } from 'react'
 import { getSession, setSession } from '@/lib/auth'
-import { SURL, ANON } from '@/lib/constants'
+import { SURL } from '@/lib/constants'
+import { efHeaders } from '@/lib/api'
 import styles from './AccountSelector.module.css'
 
 interface Cliente {
@@ -29,10 +30,7 @@ export default function AccountSelector() {
 
       const res = await fetch(`${SURL}/functions/v1/get-ngp-data`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          apikey: ANON
-        },
+        headers: efHeaders(),
         body: JSON.stringify({ session_token: sess.session })
       })
 

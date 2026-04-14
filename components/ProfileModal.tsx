@@ -1,12 +1,16 @@
 'use client'
 import { useState, useRef, useEffect } from 'react'
-import { useRouter } from 'next/navigation'
 import { getSession } from '@/lib/auth'
 import { SURL, ANON } from '@/lib/constants'
-import styles from './perfil.module.css'
+import { efHeaders } from '@/lib/api'
+import styles from './ProfileModal.module.css'
 
-export default function PerfilPage() {
-  const router = useRouter()
+interface Props {
+  isOpen: boolean
+  onClose: () => void
+}
+
+export default function ProfileModal({ isOpen, onClose }: Props) {
   const [sess, setSess] = useState<ReturnType<typeof getSession>>(null)
   const [nome, setNome]         = useState('')
   const [username, setUsername] = useState('')
@@ -29,17 +33,30 @@ export default function PerfilPage() {
   const fileRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
-    const s = getSession()
-    if (!s || s.auth !== '1') { router.replace('/login'); return }
-    setSess(s)
-    setNome(s.user || '')
-    setUsername(s.username || '')
-    setRole(s.role || '')
-    setFotoUrl(s.foto || '')
-    if (s.foto) setAvatarSrc(s.foto)
-  }, [router])
+    if (isOpen) {
+      const s = getSession()
+      if (s) {
+        setSess(s)
+        setNome(s.user || '')
+        setUsername(s.username || '')
+        setRole(s.role || '')
+        setFotoUrl(s.foto || '')
+        if (s.foto) setAvatarSrc(s.foto)
+      }
+    } else {
+        // Reset state on close
+        setSenhaAtual('')
+        setSenhaNova('')
+        setSenhaConf('')
+        setMsgFoto(null)
+        setMsgNome(null)
+        setMsgSenha(null)
+    }
+  }, [isOpen])
 
-  function showMsg(setter: typeof setMsgFoto, text: string, ok: boolean) {
+  if (!isOpen) return null
+
+  function showMsg(setter: React.Dispatch<React.SetStateAction<{text:string;ok:boolean}|null>>, text: string, ok: boolean) {
     setter({ text, ok })
     setTimeout(() => setter(null), 5000)
   }
@@ -56,7 +73,7 @@ export default function PerfilPage() {
       showMsg(setMsgFoto, 'A imagem deve ter no máximo 2MB.', false); return
     }
 
-    // Preview imediato
+    // Preview
     const reader = new FileReader()
     reader.onload = ev => setAvatarSrc(ev.target?.result as string)
     reader.readAsDataURL(file)
@@ -78,7 +95,7 @@ export default function PerfilPage() {
 
       const saveRes = await fetch(`${SURL}/functions/v1/update-profile`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', apikey: ANON },
+        headers: efHeaders(),
         body: JSON.stringify({ foto_url: publicUrl }),
       })
       setProgress(100)
@@ -105,7 +122,7 @@ export default function PerfilPage() {
     try {
       const res = await fetch(`${SURL}/functions/v1/update-profile`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', apikey: ANON },
+        headers: efHeaders(),
         body: JSON.stringify({ nome: novoNome }),
       })
       const data = await res.json()
@@ -128,7 +145,7 @@ export default function PerfilPage() {
     try {
       const res = await fetch(`${SURL}/functions/v1/update-profile`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', apikey: ANON },
+        headers: efHeaders(),
         body: JSON.stringify({ senha_atual: senhaAtual, senha_nova: senhaNova }),
       })
       const data = await res.json()
@@ -144,87 +161,81 @@ export default function PerfilPage() {
     }
   }
 
-  function goBack() {
-    router.push(role === 'ngp' ? '/dashboard' : '/cliente')
-  }
-
   const initials = nome ? nome.slice(0, 2).toUpperCase() : '?'
 
-  if (!sess) return null
-
   return (
-    <div className={styles.wrap}>
-      <div className={styles.topBar}>
-        <button className={styles.btnBack} onClick={goBack}>← Voltar</button>
-        <span className={styles.topTitle}>Meu Perfil</span>
-      </div>
+    <div className={styles.overlay} onMouseDown={onClose}>
+      <div className={styles.modal} onMouseDown={e => e.stopPropagation()}>
+        <div className={styles.topBar}>
+          <span className={styles.topTitle}>Meu Perfil</span>
+          <button className={styles.btnClose} onClick={onClose}>✕</button>
+        </div>
 
-      <div className={styles.page}>
-
-        {/* Foto & Info */}
-        <div className={styles.card}>
-          <div className={styles.cardTitle}>Informações da conta</div>
-          <div className={styles.avatarRow}>
-            <div className={styles.avatarWrap}>
-              <div className={styles.avatarCircle} onClick={() => fileRef.current?.click()}>
-                {avatarSrc
-                  ? <img src={avatarSrc} alt="avatar" onError={() => setAvatarSrc('')} />
-                  : <span>{initials}</span>}
-                <div className={styles.avatarOverlay}>📷</div>
+        <div className={styles.page}>
+          {/* Foto & Info */}
+          <div className={styles.card}>
+            <div className={styles.cardTitle}>Informações da conta</div>
+            <div className={styles.avatarRow}>
+              <div className={styles.avatarWrap}>
+                <div className={styles.avatarCircle} onClick={() => fileRef.current?.click()}>
+                  {avatarSrc
+                    ? <img src={avatarSrc} alt="avatar" />
+                    : <span>{initials}</span>}
+                  <div className={styles.avatarOverlay}>📷</div>
+                </div>
+                <input ref={fileRef} type="file" accept="image/png,image/jpeg,image/webp" style={{ display: 'none' }} onChange={handleFileSelect} />
               </div>
-              <input ref={fileRef} type="file" accept="image/png,image/jpeg,image/webp" style={{ display: 'none' }} onChange={handleFileSelect} />
+              <div className={styles.avatarInfo}>
+                <div className={styles.uname}>{nome || '—'}</div>
+                <div className={styles.uslug}>@{username || '—'}</div>
+                <span className={`${styles.roleBadge} ${role === 'admin' || role === 'ngp' ? styles.roleNgp : styles.roleCliente}`}>
+                  {role === 'admin' || role === 'ngp' ? '⚙ NGP Admin' : '👤 Cliente'}
+                </span>
+                <button className={styles.btnUpload} onClick={() => fileRef.current?.click()}>📷 Alterar foto</button>
+              </div>
             </div>
-            <div className={styles.avatarInfo}>
-              <div className={styles.uname}>{nome || '—'}</div>
-              <div className={styles.uslug}>@{username || '—'}</div>
-              <span className={`${styles.roleBadge} ${role === 'ngp' ? styles.roleNgp : styles.roleCliente}`}>
-                {role === 'ngp' ? '⚙ NGP Admin' : '👤 Cliente'}
-              </span>
-              <button className={styles.btnUpload} onClick={() => fileRef.current?.click()}>📷 Alterar foto</button>
+            {progress !== null && (
+              <div className={styles.progressBar}>
+                <div className={styles.progressFill} style={{ width: `${progress}%` }} />
+              </div>
+            )}
+            {msgFoto && <div className={`${styles.msg} ${msgFoto.ok ? styles.ok : styles.err}`}>{msgFoto.text}</div>}
+          </div>
+
+          {/* Alterar nome */}
+          <div className={styles.card}>
+            <div className={styles.cardTitle}>Alterar nome</div>
+            <div className={styles.formGroup}>
+              <label>Nome de exibição</label>
+              <input type="text" placeholder="Seu nome completo" maxLength={60} value={nome} onChange={e => setNome(e.target.value)} autoComplete="off" />
             </div>
+            <button className={styles.btnSave} onClick={saveNome} disabled={loadingNome}>
+              {loadingNome ? 'Salvando...' : 'Salvar nome'}
+            </button>
+            {msgNome && <div className={`${styles.msg} ${msgNome.ok ? styles.ok : styles.err}`}>{msgNome.text}</div>}
           </div>
-          {progress !== null && (
-            <div className={styles.progressBar}>
-              <div className={styles.progressFill} style={{ width: `${progress}%` }} />
+
+          {/* Alterar senha */}
+          <div className={styles.card}>
+            <div className={styles.cardTitle}>Alterar senha</div>
+            <div className={styles.formGroup}>
+              <label>Senha atual</label>
+              <input type="password" placeholder="••••••••" value={senhaAtual} onChange={e => setSenhaAtual(e.target.value)} autoComplete="current-password" />
             </div>
-          )}
-          {msgFoto && <div className={`${styles.msg} ${msgFoto.ok ? styles.ok : styles.err}`}>{msgFoto.text}</div>}
+            <div className={styles.formGroup}>
+              <label>Nova senha</label>
+              <input type="password" placeholder="Mínimo 6 caracteres" value={senhaNova} onChange={e => setSenhaNova(e.target.value)} autoComplete="new-password" />
+            </div>
+            <div className={styles.formGroup}>
+              <label>Confirmar nova senha</label>
+              <input type="password" placeholder="Repita a nova senha" value={senhaConf} onChange={e => setSenhaConf(e.target.value)} autoComplete="new-password" />
+            </div>
+            <button className={styles.btnSave} onClick={saveSenha} disabled={loadingSenha}>
+              {loadingSenha ? 'Alterando...' : 'Alterar senha'}
+            </button>
+            {msgSenha && <div className={`${styles.msg} ${msgSenha.ok ? styles.ok : styles.err}`}>{msgSenha.text}</div>}
+          </div>
         </div>
-
-        {/* Alterar nome */}
-        <div className={styles.card}>
-          <div className={styles.cardTitle}>Alterar nome</div>
-          <div className={styles.formGroup}>
-            <label>Nome de exibição</label>
-            <input type="text" placeholder="Seu nome completo" maxLength={60} value={nome} onChange={e => setNome(e.target.value)} autoComplete="off" />
-          </div>
-          <button className={styles.btnSave} onClick={saveNome} disabled={loadingNome}>
-            {loadingNome ? 'Salvando...' : 'Salvar nome'}
-          </button>
-          {msgNome && <div className={`${styles.msg} ${msgNome.ok ? styles.ok : styles.err}`}>{msgNome.text}</div>}
-        </div>
-
-        {/* Alterar senha */}
-        <div className={styles.card}>
-          <div className={styles.cardTitle}>Alterar senha</div>
-          <div className={styles.formGroup}>
-            <label>Senha atual</label>
-            <input type="password" placeholder="••••••••" value={senhaAtual} onChange={e => setSenhaAtual(e.target.value)} autoComplete="current-password" />
-          </div>
-          <div className={styles.formGroup}>
-            <label>Nova senha</label>
-            <input type="password" placeholder="Mínimo 6 caracteres" value={senhaNova} onChange={e => setSenhaNova(e.target.value)} autoComplete="new-password" />
-          </div>
-          <div className={styles.formGroup}>
-            <label>Confirmar nova senha</label>
-            <input type="password" placeholder="Repita a nova senha" value={senhaConf} onChange={e => setSenhaConf(e.target.value)} autoComplete="new-password" />
-          </div>
-          <button className={styles.btnSave} onClick={saveSenha} disabled={loadingSenha}>
-            {loadingSenha ? 'Alterando...' : 'Alterar senha'}
-          </button>
-          {msgSenha && <div className={`${styles.msg} ${msgSenha.ok ? styles.ok : styles.err}`}>{msgSenha.text}</div>}
-        </div>
-
       </div>
     </div>
   )
