@@ -19,12 +19,11 @@ interface Props {
   onTabChange?: (tab: string) => void
   /** Override do logout (ex: dashboard usa sua própria lógica) */
   onLogout?: () => void
-  /** Oculta a seção de navegação do dashboard (usado na página de setores) */
+  /** Mantido por compatibilidade com telas antigas */
   showDashboardNav?: boolean
-  /** Modo minimal: oculta SISTEMA e ADMINISTRAÇÃO, SETORES fechado por padrão.
-   *  Use em setores como Pessoas para ter nav própria abaixo. */
+  /** Mantido por compatibilidade com telas antigas */
   minimal?: boolean
-  /** Itens de navegação próprios do setor (aparece abaixo de SETORES no minimal mode) */
+  /** Itens de navegação próprios do setor (aparece abaixo do menu padrão) */
   sectorNav?: NavItem[]
   /** Título da seção de nav do setor */
   sectorNavTitle?: string
@@ -57,29 +56,92 @@ const ngpNav: NavItem[] = [
 ]
 
 const sistemaNav: NavItem[] = [
+  { icon: <Ico><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87"/><path d="M16 3.13a4 4 0 010 7.75"/></Ico>, label: 'Trocar conta', href: '/dashboard' },
   { icon: <Ico><path d="M10 13a5 5 0 007.54.54l3-3a5 5 0 00-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 00-7.54-.54l-3 3a5 5 0 007.07 7.07l1.71-1.71"/></Ico>, label: 'UTM Builder', href: '/utm-builder' },
   { icon: <Ico><circle cx="12" cy="12" r="10"/><path d="M12 8v4l3 3"/></Ico>, label: 'Análise IA',  href: '/ia-analise' },
 ]
 
 const cadastrarNav: NavItem[] = [
   { icon: <Ico><path d="M10 13a5 5 0 007.54.54l3-3a5 5 0 00-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 00-7.54-.54l-3 3a5 5 0 007.07 7.07l1.71-1.71"/></Ico>, label: 'Contas de Anúncio', href: '/admin/contas' },
+  { icon: <Ico><path d="M21 8v13H3V8"/><path d="M1 3h22v5H1z"/><path d="M10 12h4"/></Ico>, label: 'Clientes Arquivados', href: '/admin/clientes-arquivados' },
   { icon: <Ico><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75"/></Ico>, label: 'Usuários NGP Space', href: '/admin/usuarios' },
 ]
 
-const setoresNav: NavItem[] = [
-  { icon: <Ico><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></Ico>, label: 'Relatórios e Dados', href: '/dashboard' },
-  { icon: <Ico><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 000 7h5a3.5 3.5 0 010 7H6"/></Ico>, label: 'Financeiro', href: 'https://financeiro.grupongp.com.br' },
-  { icon: <Ico><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75"/></Ico>, label: 'Pessoas', href: '/pessoas' },
-  { icon: <Ico><path d="M21 16V8a2 2 0 00-1-1.73l-7-4a2 2 0 00-2 0l-7 4A2 2 0 003 8v8a2 2 0 001 1.73l7 4a2 2 0 002 0l7-4A2 2 0 0021 16z"/></Ico>, label: 'Comercial', href: '/comercial' },
-  { icon: <Ico><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="2"/></Ico>, label: 'Trackeamento', href: '#' },
-]
+function getSetoresNavItems(): NavItem[] {
+  return [
+    { icon: <Ico><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></Ico>, label: 'Relatórios e Dados', href: '/dashboard' },
+    { icon: <Ico><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 000 7h5a3.5 3.5 0 010 7H6"/></Ico>, label: 'Financeiro', href: 'https://financeiro.grupongp.com.br' },
+    { icon: <Ico><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87"/><path d="M16 3.13a4 4 0 010 7.75"/></Ico>, label: 'Pessoas', href: '/pessoas' },
+    { icon: <Ico><path d="M21 16V8a2 2 0 00-1-1.73l-7-4a2 2 0 00-2 0l-7 4A2 2 0 003 8v8a2 2 0 001 1.73l7 4a2 2 0 002 0l7-4A2 2 0 0021 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></Ico>, label: 'Comercial', href: '/comercial' },
+    { icon: <Ico><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="2"/></Ico>, label: 'Trackeamento', href: '#', badge: 'breve' },
+  ]
+}
 
-export default function Sidebar({ activeTab, onTabChange, onLogout, showDashboardNav = true, minimal = false, sectorNav, sectorNavTitle }: Props) {
+function getAutoSectorNav(pathname: string, role?: string): { title: string; nav: NavItem[] } | null {
+  if (pathname === '/setores') {
+    return {
+      title: 'SETORES',
+      nav: getSetoresNavItems(),
+    }
+  }
+
+  if (pathname.startsWith('/comercial')) {
+    return {
+      title: 'COMERCIAL',
+      nav: [
+        { icon: <Ico><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></Ico>, label: 'Gestão', href: '/comercial/gestao' },
+        {
+          icon: <Ico><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></Ico>,
+          label: 'Pipeline',
+          href: '/comercial/pipeline',
+          subItems: [
+            { icon: <span style={{ width: 15 }} />, label: 'Meus Funis', href: '/comercial/pipeline?tab=kanban' },
+            { icon: <span style={{ width: 15 }} />, label: 'Cadastrar Campos', href: '/comercial/pipeline?tab=fields' },
+            { icon: <span style={{ width: 15 }} />, label: 'Novo Funil', href: '/comercial/pipeline?action=new_pipeline' },
+          ],
+        },
+        { icon: <Ico><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></Ico>, label: 'Propostas', href: '/comercial/propostas' },
+        { icon: <Ico><path d="M20 14.66V20a2 2 0 01-2 2H4a2 2 0 01-2-2V6a2 2 0 012-2h5.34"/><polygon points="18 2 22 6 12 16 8 16 8 12 18 2"/></Ico>, label: 'Contratos', href: '/comercial/contratos' },
+        { icon: <Ico><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></Ico>, label: 'Metas e KPIs', href: '/comercial/kpis' },
+      ],
+    }
+  }
+
+  if (pathname.startsWith('/pessoas')) {
+    return {
+      title: 'PESSOAS',
+      nav: [
+        { icon: <Ico><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></Ico>, label: 'Ponto Eletrônico', href: '/pessoas' },
+        { icon: <Ico><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="3" y1="15" x2="21" y2="15"/><line x1="9" y1="3" x2="9" y2="21"/></Ico>, label: 'Registros de Ponto', href: '/pessoas/registros' },
+        ...(role === 'admin' ? [{ icon: <Ico><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4h6v2"/></Ico>, label: 'Lixeira', href: '/pessoas/lixeira' }] : []),
+      ],
+    }
+  }
+
+  return null
+}
+
+function SidebarInner({ activeTab, onTabChange, onLogout, showDashboardNav = true, minimal = false, sectorNav, sectorNavTitle }: Props) {
   const router   = useRouter()
   const pathname = usePathname()
   const sess     = getSession()
-  const [setoresOpen, setSetoresOpen] = useState(!showDashboardNav)
-  const [sectorNavOpen, setSectorNavOpen] = useState(true)
+  const autoSector = getAutoSectorNav(pathname, sess?.role)
+  const resolvedSectorNav = sectorNav || autoSector?.nav || []
+  const resolvedSectorTitle = sectorNavTitle || autoSector?.title || 'SETORES'
+  const isSetoresHome = pathname === '/setores'
+  const isAdminSection = sectorNavTitle === 'ADMINISTRAÇÃO'
+  const isSectorContext = isSetoresHome || !!autoSector || (!!sectorNav && !isAdminSection)
+  const showTopSetores = pathname.startsWith('/dashboard') || pathname.startsWith('/relatorio')
+  const showCollapsedSetores = !isSetoresHome && isSectorContext
+  const showBaseNav = !isSetoresHome && !isSectorContext
+  const collapsedSetoresNav: NavItem[] = [
+    {
+      icon: <Ico><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></Ico>,
+      label: 'Setores',
+      href: '#',
+      subItems: getSetoresNavItems(),
+    },
+  ]
   const [mobileOpen, setMobileOpen]   = useState(false)
   const [profileOpen, setProfileOpen] = useState(false)
   const [showConfigMenu, setShowConfigMenu] = useState(false)
@@ -116,13 +178,24 @@ export default function Sidebar({ activeTab, onTabChange, onLogout, showDashboar
     const isGroup   = !!item.subItems && item.subItems.length > 0
     const isExpanded = expandedGroups[item.label] || false
     
+    const isDashboardRoute = item.href.split('?')[0] === '/dashboard'
     const isActive  = isTabItem
       ? activeTab === item.tab
-      : pathname === item.href.split('?')[0] && item.href !== '#'
+      : pathname === item.href.split('?')[0] && item.href !== '#' && !isDashboardRoute
 
     function handleClick() {
       if (isGroup) {
         setExpandedGroups(prev => ({ ...prev, [item.label]: !prev[item.label] }))
+        return
+      }
+      if (item.label === 'Trocar conta') {
+        sessionStorage.removeItem('ngp_viewing_account')
+        sessionStorage.removeItem('ngp_viewing_name')
+        sessionStorage.removeItem('ngp_viewing_username')
+        sessionStorage.removeItem('ngp_viewing_id')
+        sessionStorage.removeItem('ngp_ia_metrics')
+        sessionStorage.removeItem('ngp_ia_period')
+        window.location.assign('/dashboard')
         return
       }
       if (isTabItem && item.tab) { handleNav(() => onTabChange(item.tab!)); return }
@@ -177,37 +250,46 @@ export default function Sidebar({ activeTab, onTabChange, onLogout, showDashboar
       <button className={styles.logoBtn} onClick={() => handleNav(() => router.push('/setores'))}>
         <div className={styles.logoMark}><LogoIcon /></div>
         <div>
-          <div className={styles.logoText}>NGP <span>Space</span></div>
-          <div className={styles.roleLabel}>Sistema Geral</div>
+          <div className={styles.logoText}>NGP <span>Dashboard</span></div>
+          <div className={styles.roleLabel}>{sess?.role === 'ngp' || sess?.role === 'admin' ? `👤 ${sess?.user || 'NGP'}` : sess?.user || 'NGP'}</div>
         </div>
       </button>
 
       <nav className={styles.nav}>
-        <button
-          className={styles.navLabelBtn}
-          style={{ marginTop: 0 }}
-          onClick={() => setSetoresOpen(o => !o)}
-        >
-          <span>SETORES</span>
-          <span className={`${styles.chevron} ${setoresOpen ? styles.chevronOpen : ''}`}>›</span>
-        </button>
-        {setoresOpen && renderNav(setoresNav)}
-
-        {/* Nav própria do setor (minimal mode) */}
-        {minimal && sectorNav && sectorNav.length > 0 && (
+        {showTopSetores && (
           <>
-            <button className={styles.navLabelBtn} style={{ marginTop: 12 }} onClick={() => setSectorNavOpen(o => !o)}>
-              <span>{sectorNavTitle || 'MENU'}</span>
-              <span className={`${styles.chevron} ${sectorNavOpen ? styles.chevronOpen : ''}`}>›</span>
-            </button>
-            {sectorNavOpen && renderNav(sectorNav)}
+            <div className={styles.navLabel} style={{ marginTop: 0 }}>SETORES</div>
+            {renderNav(collapsedSetoresNav)}
           </>
         )}
 
-        {!minimal && (
+        {showBaseNav && (
           <>
+            <div className={styles.navLabel} style={{ marginTop: 0 }}>VISÃO GERAL</div>
+            {renderNav(ngpNav)}
+
+            <div className={styles.navLabel} style={{ marginTop: 12 }}>PLATAFORMAS</div>
+            {renderNav([
+              { icon: <Ico fill="#1877f2" stroke="none"><circle cx="12" cy="12" r="10"/><path d="M16 8h-2a2 2 0 00-2 2v2h4l-.5 4H12v8h-4v-8H6v-4h2v-2a6 6 0 016-6h2v4z" fill="#fff"/></Ico>, label: 'Meta Ads', href: '/dashboard' },
+              { icon: <Ico><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35" /></Ico>, label: 'Google Ads', href: '#', badge: 'breve' },
+            ])}
+
             <div className={styles.navLabel} style={{ marginTop: 12 }}>SISTEMA</div>
             {renderNav(sistemaNav)}
+          </>
+        )}
+
+        {!showTopSetores && showCollapsedSetores && (
+          <>
+            <div className={styles.navLabel} style={{ marginTop: 12 }}>SETORES</div>
+            {renderNav(collapsedSetoresNav)}
+          </>
+        )}
+
+        {resolvedSectorNav.length > 0 && (
+          <>
+            <div className={styles.navLabel} style={{ marginTop: isSetoresHome ? 0 : 12 }}>{resolvedSectorTitle}</div>
+            {renderNav(resolvedSectorNav)}
           </>
         )}
       </nav>
@@ -250,3 +332,6 @@ export default function Sidebar({ activeTab, onTabChange, onLogout, showDashboar
     </>
   )
 }
+
+const Sidebar = React.memo(SidebarInner)
+export default Sidebar

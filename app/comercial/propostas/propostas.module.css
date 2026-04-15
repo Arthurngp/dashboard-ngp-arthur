@@ -247,6 +247,24 @@
   font-family: 'JetBrains Mono', monospace;
   outline: none;
 }
+.itemTextarea {
+  width: 100%;
+  min-height: 74px;
+  resize: vertical;
+  background: #fafafa;
+  border: 1px solid #f4f4f5;
+  border-radius: 10px;
+  color: #18181b;
+  font-size: 11px;
+  line-height: 1.45;
+  padding: 10px 12px;
+  outline: none;
+}
+.itemTextarea:focus {
+  border-color: #f43f5e;
+  background: #fff;
+  box-shadow: 0 0 0 2px rgba(244, 63, 94, 0.08);
+}
 .itemBorderT {
   border-top: 1px solid #f4f4f5;
   padding-top: 4px;
@@ -303,6 +321,7 @@
   transition: all 0.2s;
 }
 .btnSecondary:hover { background-color: #27272a; color: #fff; }
+.btnSecondary:disabled { opacity: 0.55; cursor: wait; }
 
 /* Preview View Area */
 .previewMain {
@@ -331,6 +350,17 @@
   box-shadow: 0 25px 50px -12px rgba(0,0,0,0.25);
   position: relative;
   overflow: hidden;
+}
+.pdfExporting {
+  box-shadow: none !important;
+  transform: none !important;
+  animation: none !important;
+  -webkit-print-color-adjust: exact;
+  print-color-adjust: exact;
+}
+.pdfExporting * {
+  -webkit-print-color-adjust: exact;
+  print-color-adjust: exact;
 }
 
 .pdfWatermarkTop {
@@ -383,6 +413,16 @@
 .pdfTh { padding: 16px 0; border-bottom: 1px solid #e2e8f0; font-size: 9px; font-weight: 900; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.1em; }
 .pdfTd { padding: 20px 0; border-bottom: 1px solid #f1f5f9; }
 .pdfTdDesc { font-size: 14px; font-weight: 900; color: #1e293b; text-transform: uppercase; letter-spacing: -0.02em; }
+.pdfTdScope {
+  margin: 8px 0 0;
+  max-width: 390px;
+  color: #64748b;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1.45;
+  text-transform: none;
+  letter-spacing: 0;
+}
 .pdfTdNum { font-size: 14px; font-weight: bold; color: #64748b; font-family: 'JetBrains Mono', monospace;}
 .pdfTdTotal { font-size: 14px; font-weight: 900; color: #0f172a; font-family: 'JetBrains Mono', monospace;}
 

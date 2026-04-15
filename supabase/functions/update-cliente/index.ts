@@ -6,7 +6,7 @@ Deno.serve(async (req) => {
   if (cors) return cors;
 
   try {
-    const { session_token, id, username, nome, meta_account_id, foto_base64, foto_mime } = await req.json();
+    const { session_token, id, username, nome, meta_account_id, investimento_autorizado_mensal, foto_base64, foto_mime } = await req.json();
 
     if (!session_token) {
       return json(req, { error: 'Sessão inválida.' }, 401);
@@ -39,12 +39,22 @@ Deno.serve(async (req) => {
       .eq('id', sessao.usuario_id)
       .single();
 
-    if (!usuario || usuario.role !== 'ngp') {
+    if (!usuario || (usuario.role !== 'ngp' && usuario.role !== 'admin')) {
       return json(req, { error: 'Acesso negado.' }, 403);
     }
 
-    const updateData: Record<string, string | null> = { nome: nome.trim() };
+    const updateData: Record<string, string | number | null> = { nome: nome.trim() };
     updateData.meta_account_id = meta_account_id ? meta_account_id.trim() : null;
+
+    if (investimento_autorizado_mensal === '' || investimento_autorizado_mensal === null || investimento_autorizado_mensal === undefined) {
+      updateData.investimento_autorizado_mensal = null;
+    } else {
+      const investimento = Number(investimento_autorizado_mensal);
+      if (!Number.isFinite(investimento) || investimento < 0) {
+        return json(req, { error: 'Investimento autorizado inválido.' }, 400);
+      }
+      updateData.investimento_autorizado_mensal = Math.round(investimento * 100) / 100;
+    }
 
     // Upload de foto se fornecida
     let fotoUrl: string | null = null;

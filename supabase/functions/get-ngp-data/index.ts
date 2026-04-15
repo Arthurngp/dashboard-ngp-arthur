@@ -29,22 +29,23 @@ serve(async (req) => {
       return json(req, { error: 'Sessão expirada.' }, 401)
     }
 
-    // Verifica se é NGP
+    // Verifica se é NGP ou Admin
     const { data: usuario } = await sb
       .from('usuarios')
       .select('role')
       .eq('id', sessao.usuario_id)
       .single()
 
-    if (!usuario || usuario.role !== 'ngp') {
+    if (!usuario || (usuario.role !== 'ngp' && usuario.role !== 'admin')) {
       return json(req, { error: 'Acesso negado.' }, 403)
     }
 
     // Busca todos os clientes
     const { data: clientes } = await sb
       .from('usuarios')
-      .select('id, username, nome, meta_account_id, foto_url')
+      .select('id, username, nome, meta_account_id, foto_url, investimento_autorizado_mensal')
       .eq('role', 'cliente')
+      .is('archived_at', null)
 
     return json(req, { clientes: clientes || [] })
 

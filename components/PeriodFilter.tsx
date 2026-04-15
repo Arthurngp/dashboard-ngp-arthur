@@ -1,5 +1,5 @@
 'use client'
-import { useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import styles from './PeriodFilter.module.css'
 import { DateParam } from '@/types'
 
@@ -29,6 +29,117 @@ const CMP_PRESETS = [
 
 const fmt = (d: Date) => d.toISOString().slice(0, 10)
 const fmtBr = (iso: string) => iso.split('-').reverse().join('/')
+const MONTHS_PT = ['jan.', 'fev.', 'mar.', 'abr.', 'mai.', 'jun.', 'jul.', 'ago.', 'set.', 'out.', 'nov.', 'dez.']
+const WEEKDAYS_PT = ['D', 'S', 'T', 'Q', 'Q', 'S', 'S']
+
+function parseIsoDate(iso: string) {
+  if (!iso) return null
+  const [y, m, d] = iso.split('-').map(Number)
+  if (!y || !m || !d) return null
+  return new Date(y, m - 1, d)
+}
+
+function sameDay(a: Date, b: Date) {
+  return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate()
+}
+
+function DatePickerField({
+  value,
+  onChange,
+  ariaLabel,
+}: {
+  value: string
+  onChange: (next: string) => void
+  ariaLabel: string
+}) {
+  const rootRef = useRef<HTMLDivElement>(null)
+  const [open, setOpen] = useState(false)
+  const initial = parseIsoDate(value) || new Date()
+  const [viewMonth, setViewMonth] = useState(new Date(initial.getFullYear(), initial.getMonth(), 1))
+
+  useEffect(() => {
+    function onOutsideClick(ev: MouseEvent) {
+      if (!rootRef.current?.contains(ev.target as Node)) setOpen(false)
+    }
+    document.addEventListener('mousedown', onOutsideClick)
+    return () => document.removeEventListener('mousedown', onOutsideClick)
+  }, [])
+
+  useEffect(() => {
+    if (!open) return
+    const dt = parseIsoDate(value)
+    if (dt) setViewMonth(new Date(dt.getFullYear(), dt.getMonth(), 1))
+  }, [open, value])
+
+  const weeks = useMemo(() => {
+    const first = new Date(viewMonth.getFullYear(), viewMonth.getMonth(), 1)
+    const start = new Date(first)
+    start.setDate(first.getDate() - first.getDay())
+    const days: Date[] = []
+    for (let i = 0; i < 42; i++) {
+      const d = new Date(start)
+      d.setDate(start.getDate() + i)
+      days.push(d)
+    }
+    return days
+  }, [viewMonth])
+
+  const selected = parseIsoDate(value)
+
+  function pickDay(d: Date) {
+    onChange(fmt(d))
+    setOpen(false)
+  }
+
+  return (
+    <div className={styles.calendarField} ref={rootRef}>
+      <button type="button" className={styles.calendarInput} onClick={() => setOpen(v => !v)} aria-label={ariaLabel}>
+        <span className={value ? styles.calendarValue : styles.calendarPlaceholder}>
+          {value ? fmtBr(value) : 'DD/MM/YYYY'}
+        </span>
+        <svg className={styles.calendarIcon} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <rect x="3" y="4" width="18" height="17" rx="2" />
+          <line x1="16" y1="2" x2="16" y2="6" />
+          <line x1="8" y1="2" x2="8" y2="6" />
+          <line x1="3" y1="10" x2="21" y2="10" />
+        </svg>
+      </button>
+
+      {open && (
+        <div className={styles.calendarPop}>
+          <div className={styles.calendarHead}>
+            <div className={styles.calendarMonth}>{`${MONTHS_PT[viewMonth.getMonth()]} de ${viewMonth.getFullYear()}`}</div>
+            <div className={styles.calendarNav}>
+              <button type="button" className={styles.calendarNavBtn} onClick={() => setViewMonth(new Date(viewMonth.getFullYear(), viewMonth.getMonth() - 1, 1))}>‹</button>
+              <button type="button" className={styles.calendarNavBtn} onClick={() => setViewMonth(new Date(viewMonth.getFullYear(), viewMonth.getMonth() + 1, 1))}>›</button>
+            </div>
+          </div>
+
+          <div className={styles.calendarWeekdays}>
+            {WEEKDAYS_PT.map((d, idx) => <span key={`${d}-${idx}`}>{d}</span>)}
+          </div>
+
+          <div className={styles.calendarGrid}>
+            {weeks.map((d, idx) => {
+              const isCurrentMonth = d.getMonth() === viewMonth.getMonth()
+              const isSelected = !!selected && sameDay(d, selected)
+              return (
+                <button
+                  key={idx}
+                  type="button"
+                  className={`${styles.calendarDay} ${isCurrentMonth ? '' : styles.calendarDayMuted} ${isSelected ? styles.calendarDaySelected : ''}`}
+                  onClick={() => pickDay(d)}
+                >
+                  {d.getDate()}
+                </button>
+              )
+            })}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
 
 /** Calcula o período anterior equivalente ao preset/range fornecido */
 function computePrevPeriod(
@@ -183,9 +294,9 @@ export default function PeriodFilter({ onApply }: Props) {
 
       {period === 'custom' && (
         <div className={styles.customWrap}>
-          <input type="date" className={styles.dateInput} value={since} onChange={e => setSince(e.target.value)} />
+          <DatePickerField value={since} onChange={setSince} ariaLabel="Data inicial" />
           <span className={styles.sep}>até</span>
-          <input type="date" className={styles.dateInput} value={until} onChange={e => setUntil(e.target.value)} />
+          <DatePickerField value={until} onChange={setUntil} ariaLabel="Data final" />
           <button className={styles.applyBtn} onClick={applyCustomMain}>Aplicar</button>
         </div>
       )}
@@ -197,7 +308,7 @@ export default function PeriodFilter({ onApply }: Props) {
         ⟷ {compareEnabled ? 'Comparando' : 'Comparar'}
       </button>
 
-      {compareEnabled && (
+        {compareEnabled && (
         <div className={styles.cmpSection}>
           <span className={styles.cmpVs}>vs.</span>
           <select className={styles.select} value={cmpPeriod} onChange={e => handleCmpChange(e.target.value)}>
@@ -205,9 +316,9 @@ export default function PeriodFilter({ onApply }: Props) {
           </select>
           {cmpPeriod === 'custom' && (
             <div className={styles.customWrap}>
-              <input type="date" className={styles.dateInput} value={cmpSince} onChange={e => setCmpSince(e.target.value)} />
+              <DatePickerField value={cmpSince} onChange={setCmpSince} ariaLabel="Comparação inicial" />
               <span className={styles.sep}>até</span>
-              <input type="date" className={styles.dateInput} value={cmpUntil} onChange={e => setCmpUntil(e.target.value)} />
+              <DatePickerField value={cmpUntil} onChange={setCmpUntil} ariaLabel="Comparação final" />
               <button className={styles.applyBtn} onClick={applyCustomCmp}>Aplicar</button>
             </div>
           )}
