@@ -6,6 +6,7 @@ import { crmCall } from '@/lib/crm-api';
 import s from './propostas.module.css';
 
 export default function PropostasForm() {
+  const proposalRef = useRef<HTMLDivElement>(null);
   const [formData, setFormData] = useState({
     numeroProposta: `NGP-${new Date().getFullYear()}-${Math.floor(Math.random() * 9000) + 1000}`,
     dataEmissao: new Date().toISOString().split('T')[0],
@@ -24,7 +25,7 @@ export default function PropostasForm() {
     tempoResposta: '',
     taxaConversao: '',
     crmAtual: '',
-    itens: [{ id: 1, descricao: '', vlr_un: 0, qtd: 1 }],
+    itens: [{ id: 1, descricao: '', escopo: '', vlr_un: 0, qtd: 1 }],
     prazoContrato: '',
     condicaoPagamento: 'À vista',
     inicioPrevisto: '',
@@ -36,7 +37,7 @@ export default function PropostasForm() {
   const handleAddItem = () => {
     setFormData(prev => ({
       ...prev,
-      itens: [...prev.itens, { id: Date.now(), descricao: '', vlr_un: 0, qtd: 1 }]
+      itens: [...prev.itens, { id: Date.now(), descricao: '', escopo: '', vlr_un: 0, qtd: 1 }]
     }));
   };
 
@@ -56,58 +57,98 @@ export default function PropostasForm() {
   };
 
   const [saving, setSaving] = useState(false);
+  const [exportingPdf, setExportingPdf] = useState(false);
+  const [saveMsg, setSaveMsg] = useState<{ type: 'ok' | 'err'; text: string } | null>(null);
+
+  const validateForm = (): string | null => {
+    if (!formData.clienteNome.trim()) return 'Preencha o nome do cliente.'
+    if (!formData.responsavel.trim()) return 'Preencha o responsável.'
+    const invalidItems = formData.itens.filter(i => !i.descricao.trim() || i.vlr_un <= 0 || i.qtd <= 0)
+    if (invalidItems.length > 0) return 'Todos os itens precisam de descrição, valor e quantidade válidos.'
+    if (total <= 0) return 'O valor total deve ser maior que zero.'
+    return null
+  }
 
   const handleSave = async () => {
+    const validationErr = validateForm()
+    if (validationErr) { setSaveMsg({ type: 'err', text: validationErr }); setTimeout(() => setSaveMsg(null), 4000); return }
+
     setSaving(true);
+    setSaveMsg(null);
     try {
-      /* In the original, it used supabase.from('propostas').insert()
-         But in our dashboard, we must use Edge Functions. We assume 'crm-manage-proposta' exists or similar 
-         or just write it directly via Supabase if the user requests. Here we use efCall wrapper we adapted.
-         Wait, crmCall('crm-save-proposta', { action: 'create', ... })
-      */
       const dataToSave = {
-        cliente_nome: formData.clienteNome || 'Cliente Independente',
+        cliente_nome: formData.clienteNome.trim(),
         valor_total: total,
         status: 'pendente',
         data_emissao: formData.dataEmissao,
-        responsavel: formData.responsavel,
+        responsavel: formData.responsavel.trim(),
         conteudo_json: formData
       };
-      
-      const payload = { action: 'create', ...dataToSave };
-      
-      // If the backend has a specific endpoint, call it:
-      const res = await crmCall('crm-manage-proposta', payload).catch(async () => {
-        // Fallback gracefully since Edge function might not exist yet,
-        // we'll simulate the backend save or warn user.
-        alert('A API de propostas será conectada em breve. Layout 100% copiado!');
-      });
-      
-      if (res && res.error) throw new Error(res.error);
-      if (res && !res.error) alert('Proposta salva com sucesso no pipeline comercial!');
-    } catch (err: any) {
-      console.error(err);
-      alert(err.message || 'Erro ao salvar a proposta.');
+
+      const res = await crmCall('crm-manage-proposta', { action: 'create', ...dataToSave });
+
+      if (res.error) {
+        setSaveMsg({ type: 'err', text: res.error });
+      } else {
+        setSaveMsg({ type: 'ok', text: 'Proposta salva com sucesso!' });
+      }
+    } catch {
+      setSaveMsg({ type: 'err', text: 'Erro de conexão. A API de propostas pode não estar disponível ainda.' });
     } finally {
       setSaving(false);
+      setTimeout(() => setSaveMsg(null), 5000);
     }
   };
 
   const generatePDF = async () => {
+    const element = proposalRef.current;
+    if (!element) return;
+
+    setExportingPdf(true);
+    element.classList.add(s.pdfExporting);
+
     try {
+      await document.fonts?.ready;
+      await new Promise(resolve => requestAnimationFrame(resolve));
       // @ts-ignore
       const html2pdf = (await import('html2pdf.js')).default;
-      const element = document.getElementById('proposta-template');
+      const safeClient = (formData.clienteNome || 'cliente').replace(/[^\w\d-]+/g, '_');
+      const safeProposal = formData.numeroProposta.replace(/[^\w\d-]+/g, '_');
       const opt = {
-        margin: 10,
-        filename: `Proposta_${formData.numeroProposta}_${formData.clienteNome}.pdf`,
-        image: { type: 'jpeg', quality: 0.98 },
-        html2canvas: { scale: 2, useCORS: true, logging: false },
-        jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' }
+        margin: 0,
+        filename: `Proposta_${safeProposal}_${safeClient}.pdf`,
+        image: { type: 'png', quality: 1 },
+        pagebreak: {
+          mode: ['css', 'legacy'],
+          avoid: ['tr', `.${s.pdfBoxGrey}`, `.${s.pdfDiagBox}`, `.${s.pdfTotalBox}`],
+        },
+        html2canvas: {
+          scale: Math.min(3, window.devicePixelRatio || 2),
+          useCORS: true,
+          allowTaint: true,
+          logging: false,
+          backgroundColor: '#ffffff',
+          scrollX: 0,
+          scrollY: 0,
+          windowWidth: element.scrollWidth,
+          windowHeight: element.scrollHeight,
+          onclone: (doc: Document) => {
+            const cloned = doc.getElementById('proposta-template');
+            if (!cloned) return;
+            cloned.style.width = `${element.offsetWidth}px`;
+            cloned.style.minHeight = `${element.scrollHeight}px`;
+            cloned.style.boxShadow = 'none';
+            cloned.style.transform = 'none';
+          },
+        },
+        jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait', compress: true },
       };
-      html2pdf().from(element).set(opt).save();
+      await html2pdf().from(element).set(opt).save();
     } catch(err) {
       console.error(err);
+    } finally {
+      element.classList.remove(s.pdfExporting);
+      setExportingPdf(false);
     }
   };
 
@@ -145,7 +186,15 @@ export default function PropostasForm() {
               </div>
               <div className={s.inputGroup}>
                 <label className={s.label}>Data Emissão</label>
-                <input type="date" value={formData.dataEmissao} onChange={e => setFormData({...formData, dataEmissao: e.target.value})} className={s.input} />
+                <div className="ngp-date-field ngp-date-field--full">
+                  <input type="date" value={formData.dataEmissao} onChange={e => setFormData({...formData, dataEmissao: e.target.value})} className="ngp-date-input" />
+                  <svg className="ngp-date-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                    <rect x="3" y="4" width="18" height="17" rx="2" />
+                    <line x1="16" y1="2" x2="16" y2="6" />
+                    <line x1="8" y1="2" x2="8" y2="6" />
+                    <line x1="3" y1="10" x2="21" y2="10" />
+                  </svg>
+                </div>
               </div>
               <div className={s.inputGroup}>
                 <label className={s.label}>Validade (Dias)</label>
@@ -246,6 +295,16 @@ export default function PropostasForm() {
                     <label className={s.itemLabel}>Entrega Proposta</label>
                     <input type="text" value={item.descricao} onChange={e => updateItem(item.id, 'descricao', e.target.value)} className={s.itemInputTrans} placeholder="Ex: Auditoria de Tráfego e Tagging" />
                   </div>
+                  <div className={s.inputGroup}>
+                    <label className={s.itemLabel}>Escopo / descrição do serviço</label>
+                    <textarea
+                      value={item.escopo || ''}
+                      onChange={e => updateItem(item.id, 'escopo', e.target.value)}
+                      className={s.itemTextarea}
+                      placeholder="Ex: análise de campanhas, revisão de pixel, eventos, UTMs e recomendações práticas..."
+                      rows={3}
+                    />
+                  </div>
                   <div className={`${s.grid2} ${s.itemBorderT}`}>
                     <div className={s.inputGroup}>
                       <label className={s.itemLabel}>Valor Unitário</label>
@@ -286,7 +345,12 @@ export default function PropostasForm() {
         
         {/* Painel de Ações Corporativas */}
         <div className={s.actionPanel}>
-           <button 
+           {saveMsg && (
+             <div style={{ padding: '8px 12px', borderRadius: 8, fontSize: 13, fontWeight: 600, background: saveMsg.type === 'ok' ? 'rgba(22,163,74,.12)' : 'rgba(220,38,38,.12)', color: saveMsg.type === 'ok' ? '#16a34a' : '#dc2626', border: `1px solid ${saveMsg.type === 'ok' ? 'rgba(22,163,74,.25)' : 'rgba(220,38,38,.25)'}` }}>
+               {saveMsg.text}
+             </div>
+           )}
+           <button
              onClick={handleSave}
              disabled={saving}
              className={s.btnPrimary}
@@ -297,8 +361,9 @@ export default function PropostasForm() {
            <button 
              onClick={generatePDF}
              className={s.btnSecondary}
+             disabled={exportingPdf}
            >
-             <Download size={16} /> Exportar Relatório PDF
+             <Download size={16} /> {exportingPdf ? 'Gerando PDF...' : 'Exportar Relatório PDF'}
            </button>
         </div>
       </aside>
@@ -308,7 +373,7 @@ export default function PropostasForm() {
         <div className={s.previewScaler}>
             
             {/* O TEMPLATE A4 */}
-            <div id="proposta-template" className={s.pdfTemplate}>
+            <div id="proposta-template" ref={proposalRef} className={s.pdfTemplate}>
                
                <div className={s.pdfWatermarkTop} />
                <div className={s.pdfWatermarkBottom} />
@@ -317,7 +382,7 @@ export default function PropostasForm() {
                   {/* Header PDF */}
                   <div className={s.pdfHeader}>
                     <div>
-                      <img src="/ngp-logo.png" alt="NGP Logo" className={s.pdfLogo} />
+                      <img src="/logo-ngp-proposta.png" alt="NGP Logo" className={s.pdfLogo} />
                       <h1 className={s.pdfTitle}>Proposta<br/>Comercial</h1>
                       <div className={s.pdfDescBox}>
                         <span className={s.pdfLine} />
@@ -410,7 +475,10 @@ export default function PropostasForm() {
                       <tbody>
                         {formData.itens.map(item => (
                           <tr key={item.id}>
-                            <td className={`${s.pdfTd} ${s.pdfTdDesc}`}>{item.descricao || '---'}</td>
+                            <td className={`${s.pdfTd} ${s.pdfTdDesc}`}>
+                              <div>{item.descricao || '---'}</div>
+                              {item.escopo && <p className={s.pdfTdScope}>{item.escopo}</p>}
+                            </td>
                             <td className={`${s.pdfTd} ${s.pdfTdNum}`} style={{textAlign:'center'}}>{item.qtd}</td>
                             <td className={`${s.pdfTd} ${s.pdfTdNum}`} style={{textAlign:'right'}}>{new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(item.vlr_un)}</td>
                             <td className={`${s.pdfTd} ${s.pdfTdTotal}`} style={{textAlign:'right'}}>{new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(item.vlr_un * item.qtd)}</td>

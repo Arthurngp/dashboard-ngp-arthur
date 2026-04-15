@@ -57,7 +57,7 @@ Deno.serve(async (req) => {
       .eq('id', sessao.usuario_id)
       .single();
 
-    if (!usuario || usuario.role !== 'ngp') {
+    if (!usuario || (usuario.role !== 'ngp' && usuario.role !== 'admin')) {
       return json(req, { error: 'Acesso negado.' }, 403);
     }
 

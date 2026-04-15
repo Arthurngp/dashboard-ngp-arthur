@@ -50,13 +50,20 @@ const ALL_METRICS = [
   { id: 'revenue',       label: 'Receita',     section: '💰 Financeiro' },
   { id: 'roas',          label: 'ROAS',        section: '💰 Financeiro' },
   { id: 'avgCpc',        label: 'CPC médio',   section: '💰 Financeiro' },
+  { id: 'cpm',           label: 'CPM',         section: '💰 Financeiro' },
+  { id: 'costPerResult', label: 'Custo por resultado', section: '💰 Financeiro' },
   { id: 'conversations', label: 'Conversas',   section: '🎯 Resultados' },
   { id: 'leads',         label: 'Leads',       section: '🎯 Resultados' },
   { id: 'purchases',     label: 'Compras',     section: '🎯 Resultados' },
   { id: 'result',        label: 'Resultado',   section: '🎯 Resultados' },
+  { id: 'cpl',           label: 'Custo por lead', section: '🎯 Resultados' },
+  { id: 'cpa',           label: 'Custo por compra', section: '🎯 Resultados' },
+  { id: 'conversionRate', label: 'Taxa de conversão', section: '🎯 Resultados' },
   { id: 'impressions',   label: 'Impressões',  section: '📣 Alcance' },
   { id: 'clicks',        label: 'Cliques',     section: '📣 Alcance' },
   { id: 'ctr',           label: 'CTR médio',   section: '📣 Alcance' },
+  { id: 'reach',         label: 'Alcance',     section: '📣 Alcance' },
+  { id: 'frequency',     label: 'Frequência',  section: '📣 Alcance' },
   { id: 'count',         label: 'Campanhas',   section: '📣 Alcance' },
 ]
 const DEFAULT_METRICS = ALL_METRICS.map(m => m.id)
@@ -74,6 +81,55 @@ const BG_COLORS = [
 
 function fmtDate(iso: string) {
   try { return new Date(iso).toLocaleDateString('pt-BR') } catch { return iso }
+}
+
+function getPeriodBudgetFactor(dp: DateParam): number {
+  if (dp.time_range) {
+    try {
+      const range = JSON.parse(dp.time_range) as { since?: string; until?: string }
+      if (range.since && range.until) {
+        const since = new Date(`${range.since}T00:00:00`)
+        const until = new Date(`${range.until}T00:00:00`)
+        const days = Math.max(1, Math.round((until.getTime() - since.getTime()) / 86400000) + 1)
+        return days / 30
+      }
+    } catch {}
+  }
+
+  const now = new Date()
+  const daysInMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate()
+
+  switch (dp.date_preset) {
+    case 'today':
+    case 'yesterday':
+      return 1 / 30
+    case 'last_7d':
+      return 7 / 30
+    case 'last_90d':
+      return 90 / 30
+    case 'this_month':
+      return now.getDate() / daysInMonth
+    case 'last_month':
+    case 'last_30d':
+    default:
+      return 1
+  }
+}
+
+function pctChange(curr: number, prev: number) {
+  if (prev <= 0) return null
+  return ((curr - prev) / prev) * 100
+}
+
+function formatSignedPct(curr: number, prev: number) {
+  const delta = pctChange(curr, prev)
+  if (delta === null || !isFinite(delta)) return null
+  const sign = delta > 0 ? '+' : ''
+  return `${sign}${delta.toFixed(1)}%`
+}
+
+function getCampaignResult(c: Campaign) {
+  return c.conversations || c.leads || c.purchases || 0
 }
 
 export default function DashboardPage() {
@@ -657,6 +713,24 @@ export default function DashboardPage() {
     setModalLoading(false)
   }
 
+  async function archiveClient(id: string) {
+    setModalLoading(true); setModalError('')
+    try {
+      const res = await fetch(`${SURL}/functions/v1/archive-cliente`, {
+        method: 'POST',
+        headers: efHeaders(),
+        body: JSON.stringify({ session_token: sess?.session, action: 'archive', id }),
+      })
+      const json = await res.json()
+      if (!res.ok) throw new Error(json.error || 'Erro ao arquivar')
+      await loadClients()
+      setModalOpen(false); setModalEdit(null)
+    } catch (e: unknown) {
+      setModalError(e instanceof Error ? e.message : 'Erro ao arquivar')
+    }
+    setModalLoading(false)
+  }
+
   function selectAccount(c: Cliente) {
     const v: Viewing = { account: c.meta_account_id || '', name: c.nome, username: c.username, id: c.id }
     sessionStorage.setItem('ngp_viewing_account',  v.account)
@@ -723,8 +797,10 @@ export default function DashboardPage() {
     : campaigns
 
   const tSpend = metricsBase.reduce((s, c) => s + c.spend, 0)
+  const totalPeriodSpend = campaigns.reduce((s, c) => s + c.spend, 0)
   const tImp   = metricsBase.reduce((s, c) => s + c.impressions, 0)
   const tClk   = metricsBase.reduce((s, c) => s + c.clicks, 0)
+  const tReach = metricsBase.reduce((s, c) => s + c.reach, 0)
   const tConv  = metricsBase.reduce((s, c) => s + c.conversations, 0)
   const tLeads = metricsBase.reduce((s, c) => s + c.leads, 0)
   const tPur   = metricsBase.reduce((s, c) => s + c.purchases, 0)
@@ -732,13 +808,21 @@ export default function DashboardPage() {
   const avgCtr = tImp > 0 ? (tClk / tImp * 100) : 0
   const totRoas = tSpend > 0 ? (tRev / tSpend) : 0
   const avgCpc  = tClk > 0 ? (tSpend / tClk) : 0
+  const cpm      = tImp > 0 ? (tSpend / tImp * 1000) : 0
   const totRes  = tConv || tLeads || tPur
+  const resultLabel = tConv > 0 ? 'Conversas' : tLeads > 0 ? 'Leads' : tPur > 0 ? 'Compras' : 'Resultados'
+  const costPerResult = totRes > 0 ? (tSpend / totRes) : 0
+  const cpl = tLeads > 0 ? (tSpend / tLeads) : 0
+  const cpa = tPur > 0 ? (tSpend / tPur) : 0
+  const conversionRate = tClk > 0 ? (totRes / tClk * 100) : 0
+  const frequency = tReach > 0 ? (tImp / tReach) : 0
 
   // ── Prev-period derived ───────────────────────────────────────────────────
   const hasCmp  = prevCampaigns.length > 0
   const pSpend  = prevCampaigns.reduce((s, c) => s + c.spend, 0)
   const pImp    = prevCampaigns.reduce((s, c) => s + c.impressions, 0)
   const pClk    = prevCampaigns.reduce((s, c) => s + c.clicks, 0)
+  const pReach  = prevCampaigns.reduce((s, c) => s + c.reach, 0)
   const pConv   = prevCampaigns.reduce((s, c) => s + c.conversations, 0)
   const pLeads  = prevCampaigns.reduce((s, c) => s + c.leads, 0)
   const pPur    = prevCampaigns.reduce((s, c) => s + c.purchases, 0)
@@ -746,7 +830,13 @@ export default function DashboardPage() {
   const pRoas   = pSpend > 0 ? (pRev / pSpend) : 0
   const pCpc    = (pSpend > 0 && pClk > 0) ? (pSpend / pClk) : 0
   const pCtr    = pImp > 0 ? (pClk / pImp * 100) : 0
+  const pCpm    = pImp > 0 ? (pSpend / pImp * 1000) : 0
   const pRes    = pConv || pLeads || pPur
+  const pCostPerResult = pRes > 0 ? (pSpend / pRes) : 0
+  const pCpl    = pLeads > 0 ? (pSpend / pLeads) : 0
+  const pCpa    = pPur > 0 ? (pSpend / pPur) : 0
+  const pConversionRate = pClk > 0 ? (pRes / pClk * 100) : 0
+  const pFrequency = pReach > 0 ? (pImp / pReach) : 0
 
   const filtered = campaigns.filter(c => {
     const q = tableSearch.toLowerCase()
@@ -777,6 +867,367 @@ export default function DashboardPage() {
       (c.meta_account_id || '').includes(search)
     )
     .sort((a, b) => a.nome.localeCompare(b.nome, 'pt-BR', { sensitivity: 'base' }))
+
+  const currentClient = viewing ? clients.find(c => c.id === viewing.id) : null
+  const monthlyAuthorized = Number(currentClient?.investimento_autorizado_mensal || 0)
+  const budgetFactor = getPeriodBudgetFactor(period)
+  const authorizedForPeriod = monthlyAuthorized > 0 ? monthlyAuthorized * budgetFactor : 0
+  const budgetBalance = authorizedForPeriod - totalPeriodSpend
+  const budgetUsage = authorizedForPeriod > 0 ? (totalPeriodSpend / authorizedForPeriod) * 100 : 0
+  const hasBudget = monthlyAuthorized > 0
+  const budgetOver = hasBudget && budgetBalance < 0
+
+  const campaignsBySpend = [...metricsBase].sort((a, b) => b.spend - a.spend)
+  const campaignsWithSpend = campaignsBySpend.filter(c => c.spend > 0)
+  const topCampaign = campaignsBySpend[0]
+  const top1Share = tSpend > 0 && topCampaign ? (topCampaign.spend / tSpend) * 100 : 0
+  const top3Share = tSpend > 0 ? campaignsBySpend.slice(0, 3).reduce((s, c) => s + c.spend, 0) / tSpend * 100 : 0
+
+  const campaignOpportunity = [...campaignsWithSpend].sort((a, b) => {
+    const aResult = getCampaignResult(a)
+    const bResult = getCampaignResult(b)
+    const aScore = aResult > 0 ? (aResult / a.spend) : (a.clicks / a.spend)
+    const bScore = bResult > 0 ? (bResult / b.spend) : (b.clicks / b.spend)
+    return bScore - aScore || b.spend - a.spend
+  })[0]
+
+  const campaignWaste = [...campaignsWithSpend].sort((a, b) => {
+    const aResult = getCampaignResult(a)
+    const bResult = getCampaignResult(b)
+    if (aResult === 0 && bResult > 0) return -1
+    if (bResult === 0 && aResult > 0) return 1
+    const aScore = aResult > 0 ? (aResult / a.spend) : 0
+    const bScore = bResult > 0 ? (bResult / b.spend) : 0
+    return aScore - bScore || b.spend - a.spend
+  })[0]
+
+  const allAds = Object.values(adsMap).flat()
+  const loadedAds = allAds.filter(a => a.spend > 0 || a.clicks > 0 || a.impressions > 0)
+  const bestAd = [...loadedAds].filter(a => a.clicks > 0).sort((a, b) => {
+    const aScore = a.spend > 0 ? (a.clicks / a.spend) : a.clicks
+    const bScore = b.spend > 0 ? (b.clicks / b.spend) : b.clicks
+    return bScore - aScore || b.ctr - a.ctr
+  })[0]
+  const worstAd = [...loadedAds].sort((a, b) => {
+    const aHasClicks = a.clicks > 0
+    const bHasClicks = b.clicks > 0
+    if (!aHasClicks && bHasClicks) return -1
+    if (!bHasClicks && aHasClicks) return 1
+    const aScore = a.spend > 0 ? (a.clicks / a.spend) : 0
+    const bScore = b.spend > 0 ? (b.clicks / b.spend) : 0
+    return aScore - bScore || b.spend - a.spend
+  })[0]
+
+  const spendDelta = formatSignedPct(tSpend, pSpend)
+  const resultDelta = formatSignedPct(totRes, pRes)
+  const ctrDelta = formatSignedPct(avgCtr, pCtr)
+  const cpcDelta = formatSignedPct(avgCpc, pCpc)
+  const freqDelta = formatSignedPct(frequency, pFrequency)
+
+  const diagnosisHeadline = (() => {
+    if (hasCmp && pSpend > 0 && pRes > 0 && tSpend > pSpend && totRes < pRes) {
+      return 'O gasto subiu enquanto o retorno caiu. Vale olhar a qualidade dos conjuntos e pausas.'
+    }
+    if (hasCmp && pCtr > 0 && pCpc > 0 && avgCtr < pCtr && avgCpc > pCpc) {
+      return 'O clique ficou mais caro e o CTR caiu. O criativo ou a segmentação pode estar cansando.'
+    }
+    if (top1Share >= 45 || top3Share >= 75) {
+      return 'A verba está concentrada em poucas campanhas. Há risco de dependência demais em um núcleo só.'
+    }
+    if (campaignOpportunity && getCampaignResult(campaignOpportunity) > 0) {
+      return 'Já existe uma campanha com boa eficiência para escalar com mais segurança.'
+    }
+    return 'O período está estável, mas ainda dá para enxergar onde a verba rende mais e onde está travando.'
+  })()
+
+  const diagnosisCards = [
+    {
+      title: 'Melhor oportunidade',
+      value: campaignOpportunity
+        ? campaignOpportunity.name
+        : 'Sem sinal claro',
+      detail: campaignOpportunity
+        ? `${getCampaignResult(campaignOpportunity) > 0 ? fmtN(getCampaignResult(campaignOpportunity)) + ' resultado(s)' : fmtN(campaignOpportunity.clicks) + ' cliques'} · R$ ${fmt(campaignOpportunity.spend)}`
+        : 'Nenhuma campanha com volume suficiente para destacar uma oportunidade.',
+      tone: 'good' as const,
+    },
+    {
+      title: 'Maior desperdício',
+      value: campaignWaste
+        ? campaignWaste.name
+        : 'Sem desperdício visível',
+      detail: campaignWaste
+        ? `${campaignWaste.spend > 0 ? `R$ ${fmt(campaignWaste.spend)} gastos` : 'Sem gasto'} · ${getCampaignResult(campaignWaste) > 0 ? `${fmtN(getCampaignResult(campaignWaste))} resultado(s)` : 'sem resultado'}`
+        : 'Nenhuma campanha com gasto relevante e retorno ruim apareceu neste recorte.',
+      tone: 'danger' as const,
+    },
+    {
+      title: 'Concentração de verba',
+      value: topCampaign ? `${top1Share.toFixed(1)}% na #1` : 'Sem dados',
+      detail: topCampaign
+        ? `${topCampaign.name} lidera o período. Top 3 concentram ${top3Share.toFixed(1)}% do gasto total.`
+        : 'Ainda não há campanhas carregadas para medir concentração.',
+      tone: top3Share >= 75 ? 'danger' as const : top3Share >= 55 ? 'warn' as const : 'good' as const,
+    },
+    {
+      title: 'Atenção imediata',
+      value: hasCmp && spendDelta && resultDelta && spendDelta.startsWith('+') && resultDelta.startsWith('-')
+        ? 'Gasto subiu e retorno caiu'
+        : hasCmp && ctrDelta && cpcDelta && ctrDelta.startsWith('-') && cpcDelta.startsWith('+')
+          ? 'CTR caiu e CPC subiu'
+          : frequency > 3
+            ? 'Frequência alta'
+            : 'Sem alerta crítico',
+      detail: hasCmp && spendDelta && resultDelta && spendDelta.startsWith('+') && resultDelta.startsWith('-')
+        ? `Gasto ${spendDelta} vs período anterior, enquanto o resultado variou ${resultDelta}.`
+        : hasCmp && ctrDelta && cpcDelta && ctrDelta.startsWith('-') && cpcDelta.startsWith('+')
+          ? `CTR variou ${ctrDelta} e CPC ${cpcDelta}.`
+          : frequency > 3
+            ? `Frequência média em ${frequency.toFixed(2)}x. Pode haver saturação de audiência.`
+            : `CTR ${avgCtr.toFixed(2)}% · CPC R$ ${fmt(avgCpc)} · conversão ${conversionRate.toFixed(2)}%`,
+      tone: hasCmp && spendDelta && resultDelta && spendDelta.startsWith('+') && resultDelta.startsWith('-')
+        ? 'danger' as const
+        : hasCmp && ctrDelta && cpcDelta && ctrDelta.startsWith('-') && cpcDelta.startsWith('+')
+          ? 'warn' as const
+          : frequency > 3
+            ? 'warn' as const
+            : 'good' as const,
+    },
+  ]
+
+  useEffect(() => {
+    if (!viewing || screen !== 'dashboard') return
+
+    const aiMetricsPackage = {
+      schema_version: 2,
+      source: 'dashboard_meta_ads',
+      generated_at: new Date().toISOString(),
+      cliente: {
+        id: viewing.id || null,
+        nome: viewing.name,
+        username: viewing.username,
+        meta_account_id: viewing.account,
+      },
+      periodo: {
+        label: periodLabel,
+        parametro: period,
+        comparacao_label: cmpLabel || null,
+        comparacao_parametro: cmpPeriodParam || null,
+      },
+      resumo: {
+        investimento: Number(tSpend.toFixed(2)),
+        receita: Number(tRev.toFixed(2)),
+        roas: Number(totRoas.toFixed(4)),
+        cpc_medio: Number(avgCpc.toFixed(4)),
+        cpm: Number(cpm.toFixed(4)),
+        custo_por_resultado: Number(costPerResult.toFixed(4)),
+        rotulo_resultado: resultLabel,
+        resultados: totRes,
+        conversas: tConv,
+        leads: tLeads,
+        compras: tPur,
+        impressoes: tImp,
+        cliques: tClk,
+        ctr: Number(avgCtr.toFixed(4)),
+        alcance: tReach,
+        frequencia: Number(frequency.toFixed(4)),
+        taxa_conversao: Number(conversionRate.toFixed(4)),
+        campanhas: campaigns.length,
+        campanhas_no_recorte: metricsBase.length,
+        investimento_autorizado_mensal: Number(monthlyAuthorized.toFixed(2)),
+        investimento_autorizado_periodo: Number(authorizedForPeriod.toFixed(2)),
+        saldo_investimento: Number(budgetBalance.toFixed(2)),
+        uso_investimento_percentual: Number(budgetUsage.toFixed(4)),
+      },
+      comparativo: hasCmp ? {
+        investimento_anterior: Number(pSpend.toFixed(2)),
+        resultados_anteriores: pRes,
+        ctr_anterior: Number(pCtr.toFixed(4)),
+        cpc_anterior: Number(pCpc.toFixed(4)),
+        frequencia_anterior: Number(pFrequency.toFixed(4)),
+        variacao_investimento: spendDelta,
+        variacao_resultados: resultDelta,
+        variacao_ctr: ctrDelta,
+        variacao_cpc: cpcDelta,
+        variacao_frequencia: freqDelta,
+      } : null,
+      diagnostico: {
+        headline: diagnosisHeadline,
+        sinais: diagnosisCards.map(card => ({
+          titulo: card.title,
+          valor: card.value,
+          detalhe: card.detail,
+          tom: card.tone,
+        })),
+      },
+      campanhas: campaignsBySpend.slice(0, 20).map((c, index) => {
+        const result = getCampaignResult(c)
+        return {
+          posicao_gasto: index + 1,
+          id: c.id,
+          nome: c.name,
+          status: c.status,
+          investimento: Number(c.spend.toFixed(2)),
+          participacao_gasto_percentual: tSpend > 0 ? Number((c.spend / tSpend * 100).toFixed(2)) : 0,
+          impressoes: c.impressions,
+          cliques: c.clicks,
+          ctr: Number(c.ctr.toFixed(4)),
+          cpc: Number(c.cpc.toFixed(4)),
+          alcance: c.reach,
+          conversas: c.conversations,
+          leads: c.leads,
+          compras: c.purchases,
+          resultados: result,
+          custo_por_resultado: result > 0 ? Number((c.spend / result).toFixed(4)) : null,
+          roas: Number(c.roas.toFixed(4)),
+          receita: Number(c.purchaseValue.toFixed(2)),
+        }
+      }),
+      criativos: loadedAds
+        .slice()
+        .sort((a, b) => b.spend - a.spend)
+        .slice(0, 20)
+        .map((ad, index) => ({
+          posicao_gasto: index + 1,
+          id: ad.id,
+          nome: ad.name,
+          status: ad.status,
+          investimento: Number(ad.spend.toFixed(2)),
+          impressoes: ad.impressions,
+          cliques: ad.clicks,
+          ctr: Number(ad.ctr.toFixed(4)),
+          cpc: ad.clicks > 0 ? Number((ad.spend / ad.clicks).toFixed(4)) : null,
+        })),
+      filtros: {
+        campanhas_filtradas: selectedCampIds.size > 0 ? Array.from(selectedCampIds) : [],
+      },
+    }
+
+    sessionStorage.setItem('ngp_ia_metrics', JSON.stringify(aiMetricsPackage))
+    sessionStorage.setItem('ngp_ia_period', periodLabel)
+  }, [
+    viewing, screen, periodLabel, period, cmpLabel, cmpPeriodParam,
+    tSpend, tRev, totRoas, avgCpc, cpm, costPerResult, resultLabel, totRes,
+    tConv, tLeads, tPur, tImp, tClk, avgCtr, tReach, frequency, conversionRate,
+    campaigns, metricsBase.length, monthlyAuthorized, authorizedForPeriod, budgetBalance, budgetUsage,
+    hasCmp, pSpend, pRes, pCtr, pCpc, pFrequency, spendDelta, resultDelta, ctrDelta, cpcDelta, freqDelta,
+    diagnosisHeadline, diagnosisCards, campaignsBySpend, loadedAds, selectedCampIds,
+  ])
+
+  const diagnosisPanel = (
+    <div style={{
+      background: 'linear-gradient(180deg, #fff 0%, #fff7f7 100%)',
+      border: '1px solid #F2D6D6',
+      borderRadius: 12,
+      padding: 18,
+      marginTop: 20,
+      boxShadow: '0 1px 2px rgba(0,0,0,.03)',
+    }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginBottom: 12, flexWrap: 'wrap' }}>
+        <div>
+          <div style={{ fontSize: 11, fontWeight: 800, color: '#CC1414', textTransform: 'uppercase', letterSpacing: '.08em' }}>Diagnóstico do período</div>
+          <div style={{ fontSize: 14, color: '#6E6E73', marginTop: 4 }}>{diagnosisHeadline}</div>
+        </div>
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          {[
+            { label: 'CTR', value: `${avgCtr.toFixed(2)}%`, delta: ctrDelta },
+            { label: 'CPC', value: `R$ ${fmt(avgCpc)}`, delta: cpcDelta },
+            { label: 'Frequência', value: `${frequency.toFixed(2)}x`, delta: freqDelta },
+            { label: resultLabel, value: fmtN(totRes), delta: resultDelta },
+          ].map(signal => (
+            <div key={signal.label} style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 8,
+              padding: '8px 10px',
+              borderRadius: 8,
+              background: '#fff',
+              border: '1px solid #EFE7E7',
+            }}>
+              <span style={{ fontSize: 10, color: '#8E8E93', fontWeight: 700, textTransform: 'uppercase' }}>{signal.label}</span>
+              <span style={{ fontSize: 13, fontWeight: 800, color: '#111' }}>{signal.value}</span>
+              {signal.delta && (
+                <span style={{
+                  fontSize: 10,
+                  fontWeight: 700,
+                  padding: '2px 5px',
+                  borderRadius: 6,
+                  background: signal.delta.startsWith('+') ? '#dcfce7' : '#fee2e2',
+                  color: signal.delta.startsWith('+') ? '#15803d' : '#dc2626',
+                }}>
+                  {signal.delta}
+                </span>
+              )}
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 10 }}>
+        {diagnosisCards.map(card => (
+          <div key={card.title} style={{
+            background: '#fff',
+            border: card.tone === 'danger' ? '1px solid #F3B0B0' : card.tone === 'warn' ? '1px solid #F2D38F' : '1px solid #D7E8D7',
+            borderRadius: 10,
+            padding: 14,
+            minHeight: 124,
+          }}>
+            <div style={{ fontSize: 10, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '.08em', color: card.tone === 'danger' ? '#CC1414' : card.tone === 'warn' ? '#B45309' : '#15803d' }}>
+              {card.title}
+            </div>
+            <div style={{ fontSize: 15, fontWeight: 800, color: '#111', lineHeight: 1.2, marginTop: 8 }}>
+              {card.value}
+            </div>
+            <div style={{ fontSize: 12, color: '#6E6E73', marginTop: 8, lineHeight: 1.45 }}>
+              {card.detail}
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <div style={{
+        marginTop: 12,
+        borderRadius: 10,
+        border: '1px solid #F0E1E1',
+        background: '#fff',
+        padding: '12px 14px',
+      }}>
+        <div style={{ fontSize: 11, fontWeight: 800, color: '#6E6E73', textTransform: 'uppercase', letterSpacing: '.08em', marginBottom: 8 }}>
+          Leitura de criativos
+        </div>
+        {loadedAds.length > 0 ? (
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 10 }}>
+            <div style={{ fontSize: 12, color: '#6E6E73', lineHeight: 1.45 }}>
+              <strong style={{ color: '#111' }}>Melhor criativo:</strong>{' '}
+              {bestAd ? `${bestAd.name} · ${bestAd.ctr.toFixed(2)}% CTR · R$ ${fmt(bestAd.spend)}` : 'Sem destaque claro.'}
+            </div>
+            <div style={{ fontSize: 12, color: '#6E6E73', lineHeight: 1.45 }}>
+              <strong style={{ color: '#111' }}>Criativo de atenção:</strong>{' '}
+              {worstAd ? `${worstAd.name} · ${worstAd.clicks} clique(s) · R$ ${fmt(worstAd.spend)}` : 'Sem criativo problemático carregado.'}
+            </div>
+          </div>
+        ) : (
+          <div style={{ fontSize: 12, color: '#6E6E73', lineHeight: 1.45 }}>
+            Os anúncios ainda não foram carregados nesta conta/período. Ao abrir a aba <strong style={{ color: '#111' }}>Campanhas</strong> e expandir conjuntos, a análise de criativos fica mais rica.
+          </div>
+        )}
+      </div>
+
+      <div style={{
+        display: 'flex',
+        gap: 10,
+        flexWrap: 'wrap',
+        marginTop: 12,
+        paddingTop: 12,
+        borderTop: '1px solid #F1E5E5',
+      }}>
+        <span style={{ fontSize: 11, fontWeight: 700, color: '#6E6E73' }}>Sinais rápidos:</span>
+        <span style={{ fontSize: 11, color: '#6E6E73' }}>CPM R$ {fmt(cpm)} · custo por resultado R$ {fmt(costPerResult)}</span>
+        <span style={{ fontSize: 11, color: '#6E6E73' }}>CPL R$ {fmt(cpl)} · CPA R$ {fmt(cpa)}</span>
+        <span style={{ fontSize: 11, color: '#6E6E73' }}>Conversão {conversionRate.toFixed(2)}% · Frequência {frequency.toFixed(2)}x</span>
+      </div>
+    </div>
+  )
 
   if (!sess || !mounted) return null
 
@@ -837,7 +1288,7 @@ export default function DashboardPage() {
         }
       </div>
 
-      {modalOpen && <AccountModal data={modalEdit || {}} loading={modalLoading} error={modalError} onSave={saveClient} onDelete={deleteClient} onClose={() => { setModalOpen(false); setModalEdit(null); setModalError('') }} />}
+      {modalOpen && <AccountModal data={modalEdit || {}} loading={modalLoading} error={modalError} userRole={sess?.role} onSave={saveClient} onArchive={archiveClient} onDelete={deleteClient} onClose={() => { setModalOpen(false); setModalEdit(null); setModalError('') }} />}
     </div>
   )
 
@@ -863,6 +1314,74 @@ export default function DashboardPage() {
           <PeriodFilter onApply={onPeriodApply} />
           <AccountSelector />
           <button className={styles.btnBack} onClick={backToSelect}>← Sair</button>
+        </div>
+
+        <div style={{
+          margin: '14px 18px 0',
+          background: '#fff',
+          border: '1px solid #E5E5EA',
+          borderRadius: 10,
+          boxShadow: '0 1px 2px rgba(0,0,0,.04)',
+          padding: '14px 16px',
+          display: 'grid',
+          gridTemplateColumns: 'minmax(180px, 1.2fr) repeat(3, minmax(130px, .7fr)) auto',
+          gap: 14,
+          alignItems: 'center',
+        }}>
+          <div>
+            <div style={{ fontSize: 11, fontWeight: 700, color: '#6E6E73', textTransform: 'uppercase', letterSpacing: '.05em', marginBottom: 4 }}>Investimento autorizado</div>
+            <div style={{ fontSize: 20, fontWeight: 800, color: hasBudget ? '#111' : '#AEAEB2' }}>
+              {hasBudget ? `R$ ${fmt(monthlyAuthorized)}` : 'Não definido'}
+            </div>
+            <div style={{ fontSize: 11, color: '#8E8E93', marginTop: 3 }}>
+              {hasBudget ? `Mensal · comparação ${periodLabel.toLowerCase()}` : 'Defina no cadastro da conta'}
+            </div>
+          </div>
+
+          <div>
+            <div style={{ fontSize: 11, fontWeight: 700, color: '#6E6E73', textTransform: 'uppercase', letterSpacing: '.05em', marginBottom: 4 }}>Autorizado no período</div>
+            <div style={{ fontSize: 17, fontWeight: 800, color: hasBudget ? '#111' : '#AEAEB2' }}>
+              {hasBudget ? `R$ ${fmt(authorizedForPeriod)}` : '—'}
+            </div>
+          </div>
+
+          <div>
+            <div style={{ fontSize: 11, fontWeight: 700, color: '#6E6E73', textTransform: 'uppercase', letterSpacing: '.05em', marginBottom: 4 }}>Utilizado</div>
+            <div style={{ fontSize: 17, fontWeight: 800, color: '#111' }}>R$ {fmt(totalPeriodSpend)}</div>
+          </div>
+
+          <div>
+            <div style={{ fontSize: 11, fontWeight: 700, color: '#6E6E73', textTransform: 'uppercase', letterSpacing: '.05em', marginBottom: 4 }}>Saldo</div>
+            <div style={{ fontSize: 17, fontWeight: 800, color: !hasBudget ? '#AEAEB2' : budgetOver ? '#dc2626' : '#16a34a' }}>
+              {hasBudget ? `${budgetBalance >= 0 ? '+' : '-'}R$ ${fmt(Math.abs(budgetBalance))}` : '—'}
+            </div>
+          </div>
+
+          <div style={{ minWidth: 150 }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, marginBottom: 8 }}>
+              <span style={{ fontSize: 11, fontWeight: 700, color: '#6E6E73', textTransform: 'uppercase', letterSpacing: '.05em' }}>Uso</span>
+              <span style={{ fontSize: 12, fontWeight: 800, color: !hasBudget ? '#AEAEB2' : budgetOver ? '#dc2626' : '#16a34a' }}>
+                {hasBudget ? `${Math.round(budgetUsage)}%` : '—'}
+              </span>
+            </div>
+            <div style={{ height: 8, background: '#F5F5F7', borderRadius: 99, overflow: 'hidden' }}>
+              <div style={{
+                height: '100%',
+                width: `${hasBudget ? Math.min(100, budgetUsage) : 0}%`,
+                background: budgetOver ? '#dc2626' : '#16a34a',
+                borderRadius: 99,
+                transition: 'width .25s ease',
+              }} />
+            </div>
+            {currentClient && (
+              <button
+                onClick={() => { setModalEdit(currentClient); setModalOpen(true); setModalError('') }}
+                style={{ marginTop: 8, background: 'none', border: 'none', color: '#CC1414', fontSize: 11, fontWeight: 700, cursor: 'pointer', padding: 0, fontFamily: 'inherit' }}
+              >
+                {hasBudget ? 'Editar valor' : 'Definir valor'}
+              </button>
+            )}
+          </div>
         </div>
 
         <div className={styles.tabs}>
@@ -1018,18 +1537,25 @@ export default function DashboardPage() {
                 { id: 'spend',   label: 'Investido', value: `R$ ${fmt(tSpend)}`, currRaw: tSpend,   prevRaw: hasCmp ? pSpend : undefined, prev: hasCmp ? `R$ ${fmt(pSpend)}` : undefined },
                 { id: 'revenue', label: 'Receita',   value: `R$ ${fmt(tRev)}`,   currRaw: tRev,     prevRaw: hasCmp ? pRev   : undefined, prev: hasCmp ? `R$ ${fmt(pRev)}`   : undefined },
                 { id: 'roas',    label: 'ROAS',      value: `${totRoas.toFixed(2)}x`, accent: true, currRaw: totRoas, prevRaw: hasCmp ? pRoas : undefined, prev: hasCmp ? `${pRoas.toFixed(2)}x` : undefined },
-                { id: 'avgCpc',  label: 'CPC médio', value: `R$ ${fmt(avgCpc)}`, currRaw: avgCpc,   prevRaw: hasCmp ? pCpc   : undefined, prev: hasCmp ? `R$ ${fmt(pCpc)}`   : undefined },
+                { id: 'avgCpc',  label: 'CPC médio', value: `R$ ${fmt(avgCpc)}`, currRaw: avgCpc,   prevRaw: hasCmp ? pCpc   : undefined, prev: hasCmp ? `R$ ${fmt(pCpc)}`   : undefined, lowerIsBetter: true },
+                { id: 'cpm',     label: 'CPM',       value: `R$ ${fmt(cpm)}`,    currRaw: cpm,      prevRaw: hasCmp ? pCpm   : undefined, prev: hasCmp ? `R$ ${fmt(pCpm)}`   : undefined, lowerIsBetter: true },
+                { id: 'costPerResult', label: 'Custo por resultado', value: `R$ ${fmt(costPerResult)}`, currRaw: costPerResult, prevRaw: hasCmp ? pCostPerResult : undefined, prev: hasCmp ? `R$ ${fmt(pCostPerResult)}` : undefined, lowerIsBetter: true },
               ].filter(it => vm.includes(it.id))
               const resItems = [
                 { id: 'conversations', label: 'Conversas', value: fmtN(tConv),  currRaw: tConv,  prevRaw: hasCmp ? pConv  : undefined, prev: hasCmp ? fmtN(pConv)  : undefined },
                 { id: 'leads',         label: 'Leads',     value: fmtN(tLeads), currRaw: tLeads, prevRaw: hasCmp ? pLeads : undefined, prev: hasCmp ? fmtN(pLeads) : undefined },
                 { id: 'purchases',     label: 'Compras',   value: fmtN(tPur),   currRaw: tPur,   prevRaw: hasCmp ? pPur   : undefined, prev: hasCmp ? fmtN(pPur)   : undefined },
                 { id: 'result',        label: 'Resultado', value: fmtN(totRes), accent: totRes > 0, currRaw: totRes, prevRaw: hasCmp ? pRes : undefined, prev: hasCmp ? fmtN(pRes) : undefined },
+                { id: 'cpl',           label: 'Custo por lead', value: `R$ ${fmt(cpl)}`, currRaw: cpl, prevRaw: hasCmp ? pCpl : undefined, prev: hasCmp ? `R$ ${fmt(pCpl)}` : undefined, lowerIsBetter: true },
+                { id: 'cpa',           label: 'Custo por compra', value: `R$ ${fmt(cpa)}`, currRaw: cpa, prevRaw: hasCmp ? pCpa : undefined, prev: hasCmp ? `R$ ${fmt(pCpa)}` : undefined, lowerIsBetter: true },
+                { id: 'conversionRate', label: 'Taxa de conversão', value: `${conversionRate.toFixed(2)}%`, currRaw: conversionRate, prevRaw: hasCmp ? pConversionRate : undefined, prev: hasCmp ? `${pConversionRate.toFixed(2)}%` : undefined },
               ].filter(it => vm.includes(it.id))
               const alcItems = [
                 { id: 'impressions', label: 'Impressões', value: fmtI(tImp), currRaw: tImp, prevRaw: hasCmp ? pImp : undefined, prev: hasCmp ? fmtI(pImp) : undefined },
                 { id: 'clicks',      label: 'Cliques',    value: fmtN(tClk), currRaw: tClk, prevRaw: hasCmp ? pClk : undefined, prev: hasCmp ? fmtN(pClk) : undefined },
                 { id: 'ctr',         label: 'CTR médio',  value: `${avgCtr.toFixed(2)}%`, currRaw: avgCtr, prevRaw: hasCmp ? pCtr : undefined, prev: hasCmp ? `${pCtr.toFixed(2)}%` : undefined },
+                { id: 'reach',       label: 'Alcance',    value: fmtI(tReach), currRaw: tReach, prevRaw: hasCmp ? pReach : undefined, prev: hasCmp ? fmtI(pReach) : undefined },
+                { id: 'frequency',   label: 'Frequência', value: `${frequency.toFixed(2)}x`, currRaw: frequency, prevRaw: hasCmp ? pFrequency : undefined, prev: hasCmp ? `${pFrequency.toFixed(2)}x` : undefined },
                 { id: 'count',       label: 'Campanhas',  value: String(campaigns.length) },
               ].filter(it => vm.includes(it.id))
               return (
@@ -1105,6 +1631,8 @@ export default function DashboardPage() {
                 </table>
               </div>
             </div>
+
+            {diagnosisPanel}
           </>}
 
           {/* ── PLATAFORMAS ───────────────────────────────────────────── */}
@@ -1681,7 +2209,7 @@ export default function DashboardPage() {
         </div>
       </div>
 
-      {modalOpen && <AccountModal data={modalEdit || {}} loading={modalLoading} error={modalError} onSave={saveClient} onDelete={deleteClient} onClose={() => { setModalOpen(false); setModalEdit(null); setModalError('') }} />}
+      {modalOpen && <AccountModal data={modalEdit || {}} loading={modalLoading} error={modalError} userRole={sess?.role} onSave={saveClient} onArchive={archiveClient} onDelete={deleteClient} onClose={() => { setModalOpen(false); setModalEdit(null); setModalError('') }} />}
       {metricsModalOpen && <MetricsModal visible={visibleMetrics} onToggle={toggleMetric} onReset={resetMetrics} onClose={() => setMetricsModalOpen(false)} />}
     </div>
   )
@@ -1692,7 +2220,7 @@ export default function DashboardPage() {
 function KpiSection({ title, cmpLabel, items }: {
   title: string
   cmpLabel?: string
-  items: { label: string; value: string; accent?: boolean; currRaw?: number; prevRaw?: number; prev?: string }[]
+  items: { label: string; value: string; accent?: boolean; lowerIsBetter?: boolean; currRaw?: number; prevRaw?: number; prev?: string }[]
 }) {
   return (
     <div style={{ background: '#fff', border: '1px solid #E5E5EA', borderRadius: 10, padding: '16px 20px', flex: 1, minWidth: 220 }}>
@@ -1703,7 +2231,9 @@ function KpiSection({ title, cmpLabel, items }: {
           const delta = hasCmp && it.prevRaw! > 0
             ? ((it.currRaw! - it.prevRaw!) / it.prevRaw! * 100)
             : null
-          const isUp = delta !== null && delta >= 0
+          const isGood = delta !== null
+            ? (it.lowerIsBetter ? delta <= 0 : delta >= 0)
+            : null
           return (
             <div key={it.label}>
               <div style={{ fontSize: 10, color: '#AEAEB2', fontWeight: 600, textTransform: 'uppercase' as const, letterSpacing: '.05em', marginBottom: 4 }}>{it.label}</div>
@@ -1712,11 +2242,11 @@ function KpiSection({ title, cmpLabel, items }: {
                 {delta !== null && Math.abs(delta) >= 0.1 && (
                   <span style={{
                     fontSize: 11, fontWeight: 700, padding: '2px 6px', borderRadius: 6,
-                    background: isUp ? '#dcfce7' : '#fee2e2',
-                    color: isUp ? '#16a34a' : '#dc2626',
+                    background: isGood ? '#dcfce7' : '#fee2e2',
+                    color: isGood ? '#16a34a' : '#dc2626',
                     lineHeight: 1.4, whiteSpace: 'nowrap' as const,
                   }}>
-                    {isUp ? '▲' : '▼'} {Math.abs(delta).toFixed(1)}%
+                    {delta >= 0 ? '▲' : '▼'} {Math.abs(delta).toFixed(1)}%
                   </span>
                 )}
               </div>
@@ -1813,20 +2343,25 @@ function MetricsModal({ visible, onToggle, onReset, onClose }: {
 }
 
 // ─── Account Modal ─────────────────────────────────────────────────────────────
-function AccountModal({ data, loading, error, onSave, onDelete, onClose }: {
+function AccountModal({ data, loading, error, userRole, onSave, onArchive, onDelete, onClose }: {
   data: Partial<Cliente>; loading: boolean; error: string
+  userRole?: 'admin' | 'ngp' | 'cliente'
   onSave: (d: Partial<Cliente> & { foto_base64?: string; foto_mime?: string }) => void
+  onArchive: (id: string) => void
   onDelete: (id: string) => void
   onClose: () => void
 }) {
   const [form, setForm] = useState<Partial<Cliente>>(data)
   const [senha, setSenha] = useState('')
-  const [confirmDelete, setConfirmDelete] = useState(false)
+  const [confirmArchive, setConfirmArchive] = useState(false)
+  const [confirmDeleteStep, setConfirmDeleteStep] = useState<0 | 1 | 2>(0)
   const [fotoPreview, setFotoPreview] = useState<string>(data.foto_url || '')
   const [fotoBase64, setFotoBase64] = useState<string>('')
   const [fotoMime, setFotoMime] = useState<string>('')
   const [cropSrc, setCropSrc] = useState<string>('')   // imagem bruta p/ o cropper
   const isEdit = !!data.id
+  const canDelete = userRole === 'admin'
+  const canArchive = isEdit && (userRole === 'admin' || userRole === 'ngp')
   const up = (k: keyof Cliente, v: string) => setForm(p => ({ ...p, [k]: v }))
 
   function handleFotoChange(e: React.ChangeEvent<HTMLInputElement>) {
@@ -1868,22 +2403,51 @@ function AccountModal({ data, loading, error, onSave, onDelete, onClose }: {
         {/* Header */}
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20 }}>
           <div style={{ fontSize: 16, fontWeight: 700 }}>{isEdit ? 'Editar conta' : 'Nova conta'}</div>
-          {isEdit && !confirmDelete && (
-            <button onClick={() => setConfirmDelete(true)} style={{ background: 'none', border: '1px solid #fee2e2', borderRadius: 7, padding: '4px 10px', fontSize: 12, color: '#dc2626', cursor: 'pointer', fontWeight: 600 }}>
-              🗑 Excluir
-            </button>
+          {isEdit && !confirmArchive && confirmDeleteStep === 0 && (
+            <div style={{ display: 'flex', gap: 8 }}>
+              {canArchive && (
+                <button onClick={() => setConfirmArchive(true)} style={{ background: 'none', border: '1px solid #E5E5EA', borderRadius: 7, padding: '4px 10px', fontSize: 12, color: '#6E6E73', cursor: 'pointer', fontWeight: 600 }}>
+                  Arquivar
+                </button>
+              )}
+              {canDelete && (
+                <button onClick={() => setConfirmDeleteStep(1)} style={{ background: 'none', border: '1px solid #fee2e2', borderRadius: 7, padding: '4px 10px', fontSize: 12, color: '#dc2626', cursor: 'pointer', fontWeight: 600 }}>
+                  🗑 Excluir
+                </button>
+              )}
+            </div>
           )}
         </div>
 
-        {/* Confirm delete */}
-        {confirmDelete && (
-          <div style={{ background: '#FFF3F3', border: '1px solid rgba(204,20,20,.3)', borderRadius: 10, padding: '14px 16px', marginBottom: 16 }}>
-            <div style={{ fontSize: 13, fontWeight: 600, color: '#CC1414', marginBottom: 10 }}>Tem certeza que deseja excluir esta conta?</div>
-            <div style={{ fontSize: 12, color: '#6E6E73', marginBottom: 14 }}>Esta ação não pode ser desfeita. Todos os dados desta conta serão removidos.</div>
+        {/* Confirm archive */}
+        {confirmArchive && (
+          <div style={{ background: '#F8F8FA', border: '1px solid #E5E5EA', borderRadius: 10, padding: '14px 16px', marginBottom: 16 }}>
+            <div style={{ fontSize: 13, fontWeight: 700, color: '#111', marginBottom: 10 }}>Arquivar esta conta?</div>
+            <div style={{ fontSize: 12, color: '#6E6E73', marginBottom: 14 }}>Ela sairá da seleção principal, mas os dados serão preservados em Configurações &gt; Clientes Arquivados.</div>
             <div style={{ display: 'flex', gap: 8 }}>
-              <button onClick={() => setConfirmDelete(false)} style={{ flex: 1, padding: '8px', background: '#F5F5F7', border: '1px solid #E5E5EA', borderRadius: 7, cursor: 'pointer', fontSize: 12, fontWeight: 600 }}>Cancelar</button>
-              <button onClick={() => onDelete(data.id!)} disabled={loading} style={{ flex: 1, padding: '8px', background: '#CC1414', color: '#fff', border: 'none', borderRadius: 7, cursor: 'pointer', fontSize: 12, fontWeight: 700, opacity: loading ? 0.7 : 1 }}>
-                {loading ? 'Excluindo...' : 'Sim, excluir'}
+              <button onClick={() => setConfirmArchive(false)} style={{ flex: 1, padding: '8px', background: '#F5F5F7', border: '1px solid #E5E5EA', borderRadius: 7, cursor: 'pointer', fontSize: 12, fontWeight: 600 }}>Cancelar</button>
+              <button onClick={() => onArchive(data.id!)} disabled={loading} style={{ flex: 1, padding: '8px', background: '#111', color: '#fff', border: 'none', borderRadius: 7, cursor: 'pointer', fontSize: 12, fontWeight: 700, opacity: loading ? 0.7 : 1 }}>
+                {loading ? 'Arquivando...' : 'Sim, arquivar'}
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Confirm delete */}
+        {confirmDeleteStep > 0 && (
+          <div style={{ background: '#FFF3F3', border: '1px solid rgba(204,20,20,.3)', borderRadius: 10, padding: '14px 16px', marginBottom: 16 }}>
+            <div style={{ fontSize: 13, fontWeight: 700, color: '#CC1414', marginBottom: 10 }}>
+              {confirmDeleteStep === 1 ? 'Tem certeza que deseja excluir esta conta?' : 'Tem certeza mesmo?'}
+            </div>
+            <div style={{ fontSize: 12, color: '#6E6E73', marginBottom: 14 }}>
+              {confirmDeleteStep === 1
+                ? 'Você perderá os dados desta conta. Se a intenção for só esconder da lista, use Arquivar.'
+                : 'Esta ação é permanente e não pode ser desfeita. Os dados serão removidos de vez.'}
+            </div>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button onClick={() => setConfirmDeleteStep(0)} style={{ flex: 1, padding: '8px', background: '#F5F5F7', border: '1px solid #E5E5EA', borderRadius: 7, cursor: 'pointer', fontSize: 12, fontWeight: 600 }}>Cancelar</button>
+              <button onClick={() => confirmDeleteStep === 1 ? setConfirmDeleteStep(2) : onDelete(data.id!)} disabled={loading} style={{ flex: 1, padding: '8px', background: '#CC1414', color: '#fff', border: 'none', borderRadius: 7, cursor: 'pointer', fontSize: 12, fontWeight: 700, opacity: loading ? 0.7 : 1 }}>
+                {loading ? 'Excluindo...' : confirmDeleteStep === 1 ? 'Continuar' : 'Sim, excluir de vez'}
               </button>
             </div>
           </div>
@@ -1928,6 +2492,22 @@ function AccountModal({ data, loading, error, onSave, onDelete, onClose }: {
           </div>
         ))}
 
+        {isEdit && (
+          <div style={{ marginBottom: 14 }}>
+            <label style={{ display: 'block', fontSize: 11, fontWeight: 600, color: '#6E6E73', textTransform: 'uppercase' as const, letterSpacing: '.05em', marginBottom: 6 }}>Investimento autorizado mensal</label>
+            <input
+              type="number"
+              min="0"
+              step="0.01"
+              value={String(form.investimento_autorizado_mensal || '')}
+              placeholder="1000,00"
+              onChange={e => up('investimento_autorizado_mensal', e.target.value)}
+              style={{ width: '100%', background: '#F5F5F7', border: '1px solid #E5E5EA', borderRadius: 8, padding: '10px 13px', fontSize: 13, outline: 'none', boxSizing: 'border-box' as const }}
+            />
+            <div style={{ fontSize: 10, color: '#AEAEB2', marginTop: 4 }}>Valor total autorizado por mês para esta conta.</div>
+          </div>
+        )}
+
         {!isEdit && (
           <div style={{ marginBottom: 14 }}>
             <label style={{ display: 'block', fontSize: 11, fontWeight: 600, color: '#6E6E73', textTransform: 'uppercase' as const, letterSpacing: '.05em', marginBottom: 6 }}>Senha</label>
@@ -1938,7 +2518,7 @@ function AccountModal({ data, loading, error, onSave, onDelete, onClose }: {
 
         <div style={{ display: 'flex', gap: 10, marginTop: 8 }}>
           <button onClick={onClose} style={{ flex: 1, padding: 11, background: '#F5F5F7', border: '1px solid #E5E5EA', borderRadius: 8, cursor: 'pointer', fontSize: 13, fontWeight: 600 }}>Cancelar</button>
-          <button onClick={handleSave} disabled={loading || confirmDelete} style={{ flex: 1, padding: 11, background: '#CC1414', color: '#fff', border: 'none', borderRadius: 8, cursor: 'pointer', fontSize: 13, fontWeight: 600, opacity: (loading || confirmDelete) ? 0.5 : 1 }}>
+          <button onClick={handleSave} disabled={loading || confirmArchive || confirmDeleteStep > 0} style={{ flex: 1, padding: 11, background: '#CC1414', color: '#fff', border: 'none', borderRadius: 8, cursor: 'pointer', fontSize: 13, fontWeight: 600, opacity: (loading || confirmArchive || confirmDeleteStep > 0) ? 0.5 : 1 }}>
             {loading ? 'Salvando...' : 'Salvar'}
           </button>
         </div>

@@ -26,7 +26,7 @@ export default function AccountSelector() {
   async function loadAccounts() {
     try {
       const sess = getSession()
-      if (!sess?.session || sess.role !== 'ngp') return
+      if (!sess?.session || (sess.role !== 'ngp' && sess.role !== 'admin')) return
 
       const res = await fetch(`${SURL}/functions/v1/get-ngp-data`, {
         method: 'POST',

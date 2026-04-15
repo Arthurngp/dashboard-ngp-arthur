@@ -28,7 +28,7 @@ function LoginContent() {
   const router  = useRouter()
   const params  = useSearchParams()
   const [mounted, setMounted]       = useState(false)
-  const [tab, setTab]               = useState<'cliente' | 'ngp'>('cliente')
+  const [tab, setTab]               = useState<'cliente' | 'ngp'>('ngp')
   const [user, setUser]             = useState('')
   const [pass, setPass]             = useState('')
   const [error, setError]           = useState('')

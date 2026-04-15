@@ -22,7 +22,7 @@ import { CSS } from '@dnd-kit/utilities'
 const fmt = (v: number) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(v || 0)
 
 // ─── Lead Card (sortable) ─────────────────────────────────────────────────────
-function LeadCard({ lead, onEdit, overlay }: { lead: CrmLead; onEdit: (l: CrmLead) => void; overlay?: boolean }) {
+const LeadCard = React.memo(function LeadCard({ lead, onEdit, overlay }: { lead: CrmLead; onEdit: (l: CrmLead) => void; overlay?: boolean }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: lead.id })
   const style = { transform: CSS.Transform.toString(transform), transition }
   return (
@@ -39,10 +39,10 @@ function LeadCard({ lead, onEdit, overlay }: { lead: CrmLead; onEdit: (l: CrmLea
       </div>
     </div>
   )
-}
+})
 
 // ─── Droppable Column ─────────────────────────────────────────────────────────
-function KanbanColumn({ stage, leads, onEdit }: { stage: CrmStage; leads: CrmLead[]; onEdit: (l: CrmLead) => void }) {
+const KanbanColumn = React.memo(function KanbanColumn({ stage, leads, onEdit }: { stage: CrmStage; leads: CrmLead[]; onEdit: (l: CrmLead) => void }) {
   const { setNodeRef, isOver } = useDroppable({ id: stage.id })
   return (
     <div className={`${styles.column} ${isOver ? styles.columnOver : ''}`}>
@@ -59,7 +59,7 @@ function KanbanColumn({ stage, leads, onEdit }: { stage: CrmStage; leads: CrmLea
       </div>
     </div>
   )
-}
+})
 
 // ─── Sortable Stage Row ─────────────────────────────────────────────────────
 function SortableStageRow({ se, leadsCount, onDelete, onChangeName, onChangeColor, saving }: { se: any, leadsCount: number, onDelete: () => void, onChangeName: (v: string) => void, onChangeColor: (v: string) => void, saving: boolean }) {
@@ -392,11 +392,11 @@ function PipelineContent() {
     setViewMode('fields')
   }
 
-  function openEditLead(lead: CrmLead) {
+  const openEditLead = useCallback((lead: CrmLead) => {
     setEditLead(lead)
     setEditLeadCustomFields(lead.custom_data || {})
     setShowEditLead(true)
-  }
+  }, [])
 
   // ── Sync URL Params ───────────────────────────────────────────────────────
   useEffect(() => {
@@ -440,8 +440,9 @@ function PipelineContent() {
 
   // ── Actions: Lead ─────────────────────────────────────────────────────────
   async function createLead() {
-    if (!fLead.company_name.trim() || !fLead.stage_id || !activePipelineId) return
-    
+    if (saving || !fLead.company_name.trim() || !fLead.stage_id || !activePipelineId) return
+    setSaving(true)
+
     // Update Otimista
     const tempId = 'temp-' + Date.now()
     const optimisticLead: CrmLead = {
@@ -462,31 +463,44 @@ function PipelineContent() {
       updated_at: new Date().toISOString()
     }
     
+    // Guarda cópia do form para restaurar em caso de erro
+    const formBackup = { ...fLead, custom_data: { ...fLead.custom_data } }
+
     setLeads(prev => [
       ...prev.map(l => l.stage_id === fLead.stage_id ? { ...l, position: l.position + 1 } : l),
       optimisticLead
     ])
     setShowNewLead(false)
-    const resetForm = () => setFLead({ company_name: '', contact_name: '', email: '', phone: '', estimated_value: '', stage_id: stages[0]?.id || '', notes: '', source: '', custom_data: {} })
-    resetForm()
+    setFLead({ company_name: '', contact_name: '', email: '', phone: '', estimated_value: '', stage_id: stages[0]?.id || '', notes: '', source: '', custom_data: {} })
 
-    const data = await crmCall('crm-manage-leads', {
-      action: 'create', pipeline_id: activePipelineId,
-      stage_id: optimisticLead.stage_id, company_name: optimisticLead.company_name,
-      contact_name: optimisticLead.contact_name, email: optimisticLead.email, phone: optimisticLead.phone,
-      estimated_value: optimisticLead.estimated_value,
-      notes: optimisticLead.notes, source: optimisticLead.source, custom_data: optimisticLead.custom_data
-    })
-    
-    if (data.error) {
-      showErr(data.error)
+    try {
+      const data = await crmCall('crm-manage-leads', {
+        action: 'create', pipeline_id: activePipelineId,
+        stage_id: optimisticLead.stage_id, company_name: optimisticLead.company_name,
+        contact_name: optimisticLead.contact_name, email: optimisticLead.email, phone: optimisticLead.phone,
+        estimated_value: optimisticLead.estimated_value,
+        notes: optimisticLead.notes, source: optimisticLead.source, custom_data: optimisticLead.custom_data
+      })
+
+      if (data.error) {
+        showErr(data.error)
+        setLeads(prev => prev.filter(l => l.id !== tempId))
+        setFLead(formBackup)
+        setShowNewLead(true)
+        return
+      }
+
+      // Substitui o lead otimista pelo real vindo do banco
+      setLeads(prev => prev.map(l => l.id === tempId ? data.lead : l))
+      showToast('Lead criado!')
+    } catch {
+      showErr('Erro de conexão ao criar lead.')
       setLeads(prev => prev.filter(l => l.id !== tempId))
-      return
+      setFLead(formBackup)
+      setShowNewLead(true)
+    } finally {
+      setSaving(false)
     }
-    
-    // Substitui o lead otimista pelo real vindo do banco
-    setLeads(prev => prev.map(l => l.id === tempId ? data.lead : l))
-    showToast('Lead criado!')
   }
 
   async function updateLead() {
@@ -643,6 +657,8 @@ function PipelineContent() {
 
   // ── Drag and Drop ─────────────────────────────────────────────────────────
   function handleDragStart(event: DragStartEvent) {
+    // Fecha modal de edição para evitar conflito de estado durante drag
+    if (showEditLead) { setShowEditLead(false); setEditLead(null) }
     setActiveLeadId(event.active.id as string)
   }
 
@@ -947,8 +963,8 @@ function PipelineContent() {
               <input placeholder="Nome da empresa" value={fLead.company_name} onChange={e => setFLead(f => ({ ...f, company_name: e.target.value }))} autoFocus />
             </div>
             <div className={styles.field}>
-              <label>Etapa</label>
-              <select value={fLead.stage_id} onChange={e => setFLead(f => ({ ...f, stage_id: e.target.value }))}>
+              <label>Etapa *</label>
+              <select value={fLead.stage_id} onChange={e => setFLead(f => ({ ...f, stage_id: e.target.value }))} required>
                 <option value="">Selecione...</option>
                 {stages.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
               </select>
@@ -995,7 +1011,7 @@ function PipelineContent() {
 
             <div className={styles.modalActions}>
               <button className={`${styles.btn} ${styles.btnGhost}`} onClick={() => setShowNewLead(false)}>Cancelar</button>
-              <button className={`${styles.btn} ${styles.btnPrimary}`} onClick={createLead} disabled={saving || !fLead.company_name.trim()}>
+              <button className={`${styles.btn} ${styles.btnPrimary}`} onClick={createLead} disabled={saving || !fLead.company_name.trim() || !fLead.stage_id}>
                 {saving ? 'Salvando...' : 'Criar Lead'}
               </button>
             </div>

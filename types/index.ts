@@ -16,6 +16,9 @@ export interface Cliente {
   nome: string
   meta_account_id?: string
   foto_url?: string
+  investimento_autorizado_mensal?: number | string | null
+  archived_at?: string | null
+  archived_by?: string | null
 }
 
 export interface Relatorio {
