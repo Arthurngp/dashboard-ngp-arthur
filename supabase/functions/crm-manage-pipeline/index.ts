@@ -1,4 +1,5 @@
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+// @ts-nocheck
+import { createClient } from 'supabase'
 import { handleCors, json } from '../_shared/cors.ts'
 
 Deno.serve(async (req) => {
@@ -39,17 +40,64 @@ Deno.serve(async (req) => {
 
     // ── ACTIONS ──────────────────────────────────────────────────────────────
 
-    // LIST — listar todos os funis ativos
-    if (action === 'list') {
-      const { data, error } = await sb
+    // GET_FULL_DATA — Agregador de dados para o dashboard inicial (evita múltiplos cold starts)
+    if (action === 'get_full_data') {
+      const { pipeline_id } = params
+
+      // 1. Busca todas as pipelines ativas
+      const { data: pipelines, error: errPip } = await sb
         .from('crm_pipelines')
         .select('*')
         .eq('is_active', true)
         .order('created_at', { ascending: true })
 
-      if (error) throw error
-      return json(req, { pipelines: data })
+      if (errPip) throw errPip
+
+      // 2. Define qual pipeline focar (a pedida ou a primeira do array)
+      const targetId = pipeline_id || (pipelines.length > 0 ? pipelines[0].id : null)
+
+      let stagesList = []
+      let leadsList = []
+      let fieldsList = []
+      let tasksList = []
+
+      if (targetId) {
+        // 3. Busca paralela de dados vinculados
+        const [resStages, resLeads, resFields, resTasks] = await Promise.all([
+          sb.from('crm_pipeline_stages').select('*').eq('pipeline_id', targetId).order('position', { ascending: true }),
+          sb.from('crm_leads').select('*').eq('pipeline_id', targetId).order('position', { ascending: true }),
+          sb.from('crm_pipeline_fields').select('*').eq('pipeline_id', targetId).order('position', { ascending: true }),
+          sb.from('crm_tasks')
+            .select('*, lead:crm_leads(company_name, stage_id)')
+            .eq('status', 'pendente')
+            .order('due_date', { ascending: true })
+        ])
+
+        if (resStages.error) throw resStages.error
+        if (resLeads.error) throw resLeads.error
+        if (resFields.error) throw resFields.error
+
+        stagesList = resStages.data || []
+        leadsList  = resLeads.data || []
+        fieldsList = resFields.data || []
+        tasksList  = (resTasks.data || []).map(t => ({
+          ...t,
+          lead_company_name: t.lead?.company_name,
+          lead_stage_id: t.lead?.stage_id
+        }))
+      }
+
+      return json(req, {
+        pipelines,
+        active_pipeline_id: targetId,
+        stages: stagesList,
+        leads: leadsList,
+        fields: fieldsList,
+        tasks: tasksList
+      })
     }
+
+    // LIST — listar todos os funis ativos
 
     // CREATE — criar novo funil com etapas default
     if (action === 'create') {

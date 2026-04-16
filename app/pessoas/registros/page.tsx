@@ -67,8 +67,26 @@ function calcBalance(records: PontoRecord[]): { totalMins: number; status: DayRo
   }
 
   const totalMins = Math.floor(totalMs / 60000)
-  const TARGET = 8 * 60
-  const extrasMins = Math.max(0, totalMins - TARGET)
+  
+  // Determine TARGET based on day of week (compensation for Saturdays)
+  // Seg-Qui: 9h (540m), Sex: 8h (480m)
+  const firstRec = records[0]
+  const date = firstRec ? new Date(new Date(firstRec.created_at).getTime() + BRT_OFFSET) : new Date()
+  const dayOfWeek = date.getUTCDay() // 0=Dom, 1=Seg, ..., 5=Sex, 6=Sáb
+  
+  let TARGET = 8 * 60
+  if (dayOfWeek >= 1 && dayOfWeek <= 4) { // Seg a Qui
+    TARGET = 9 * 60
+  } else if (dayOfWeek === 5) { // Sex
+    TARGET = 8 * 60
+  } else {
+    TARGET = 8 * 60 
+  }
+
+  // Tolerance Rule (Art. 58 CLT): variations of up to 10 min total/day are ignored.
+  // If surplus is <= 10, extra = 0. If > 10, extra = total surplus.
+  const diffMins = totalMins - TARGET
+  const extrasMins = diffMins > 10 ? diffMins : 0
   
   const hasEntrada = records.some(r => r.tipo_registro === 'entrada')
   const hasSaida   = records.some(r => r.tipo_registro === 'saida')
@@ -76,8 +94,8 @@ function calcBalance(records: PontoRecord[]): { totalMins: number; status: DayRo
   if (!hasEntrada) return { totalMins: 0, status: 'empty', extrasMins: 0 }
 
   const status: DayRow['status'] = !hasSaida ? 'incomplete'
-    : totalMins >= TARGET + 20 ? 'overtime'
-    : totalMins >= TARGET - 15 ? 'complete'
+    : totalMins > TARGET + 10 ? 'overtime'
+    : totalMins >= TARGET - 10 ? 'complete'
     : 'below'
   return { totalMins, status, extrasMins }
 }
@@ -350,7 +368,8 @@ export default function RegistrosPage() {
                       <th>S. Almoço</th>
                       <th>R. Almoço</th>
                       <th>Saída</th>
-                      <th>Extra (E/S)</th>
+                      <th>Extra Ent.</th>
+                      <th>Extra Saí.</th>
                       <th>Total</th>
                       <th>H. Extras</th>
                       <th>Status</th>
@@ -366,12 +385,10 @@ export default function RegistrosPage() {
                         <td>{row.retornoAlmoco || <span className={styles.empty2}>--:--</span>}</td>
                         <td>{row.saida         || <span className={styles.empty2}>--:--</span>}</td>
                         <td className={styles.tdExtraCol}>
-                          {row.extraEntrada ? (
-                            <div className={styles.extraPair}>
-                              <span>{row.extraEntrada}</span>
-                              {row.extraSaida && <span> → {row.extraSaida}</span>}
-                            </div>
-                          ) : <span className={styles.empty2}>--:--</span>}
+                          {row.extraEntrada || <span className={styles.empty2}>--:--</span>}
+                        </td>
+                        <td className={styles.tdExtraCol}>
+                          {row.extraSaida || <span className={styles.empty2}>--:--</span>}
                         </td>
                         <td className={styles.tdTotal}>
                           {row.totalMins > 0 ? fmtMins(row.totalMins) : <span className={styles.empty2}>--</span>}

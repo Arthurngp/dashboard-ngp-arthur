@@ -2,12 +2,13 @@
 import React, { useEffect, useState, useCallback, useRef } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { getSession } from '@/lib/auth'
-import { crmCall, CrmPipeline, CrmStage, CrmLead, CrmPipelineField } from '@/lib/crm-api'
+import { crmCall, CrmPipeline, CrmStage, CrmLead, CrmPipelineField, CrmTask } from '@/lib/crm-api'
 import Sidebar from '@/components/Sidebar'
 import NGPLoading from '@/components/NGPLoading'
 import { comercialNav } from '../comercial-nav'
 import styles from './pipeline.module.css'
 import { Suspense } from 'react'
+import LeadDetailPanel from './LeadDetailPanel'
 import {
   DndContext, DragEndEvent, DragOverEvent, DragStartEvent,
   DragOverlay, PointerSensor, useSensor, useSensors,
@@ -22,27 +23,55 @@ import { CSS } from '@dnd-kit/utilities'
 const fmt = (v: number) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(v || 0)
 
 // ─── Lead Card (sortable) ─────────────────────────────────────────────────────
-const LeadCard = React.memo(function LeadCard({ lead, onEdit, overlay }: { lead: CrmLead; onEdit: (l: CrmLead) => void; overlay?: boolean }) {
+const LeadCard = React.memo(function LeadCard({ lead, tasks, onEdit, overlay }: { lead: CrmLead; tasks?: CrmTask[]; onEdit: (l: CrmLead, targetTab?: 'dados'|'timeline'|'tarefas') => void; overlay?: boolean }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: lead.id })
   const style = { transform: CSS.Transform.toString(transform), transition }
+  
+  const pendingTasks = tasks?.filter(t => t.status === 'pendente') || []
+  const today = new Date().toDateString()
+  const overdueCount = pendingTasks.filter(t => new Date(t.due_date) < new Date(today)).length
+  const pendingCount = pendingTasks.length - overdueCount
+
   return (
     <div
       ref={setNodeRef} style={style} {...attributes} {...listeners}
       className={`${styles.leadCard} ${isDragging ? styles.leadCardDragging : ''} ${overlay ? styles.leadCardOverlay : ''}`}
+      onClick={(e) => {
+        // Only trigger edit if it wasn't a drag event (dnd-kit usually cancels click on drag)
+        if (!isDragging) onEdit(lead)
+      }}
     >
-      <div className={styles.leadCompany}>{lead.company_name}</div>
+      <div className={styles.leadHeader}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', overflow: 'hidden' }}>
+          <div className={styles.leadCompany} style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{lead.company_name}</div>
+          <div className={styles.leadBadges}>
+            {overdueCount > 0 && <span className={styles.leadBadgeOverdue} title={`${overdueCount} tarefa(s) precisando de atenção`} />}
+            {overdueCount === 0 && pendingCount > 0 && <span className={styles.leadBadgePending} title={`${pendingCount} tarefa(s) em dia`} />}
+          </div>
+        </div>
+        
+        <button 
+          className={styles.leadTaskBtn} 
+          onPointerDown={e => e.stopPropagation()} 
+          onClick={e => { e.stopPropagation(); onEdit(lead, 'tarefas') }}
+          title="Nova tarefa"
+        >
+          Nova Tarefa
+        </button>
+      </div>
       {lead.contact_name && <div className={styles.leadContact}>{lead.contact_name}</div>}
       <div className={styles.leadValue}>{fmt(lead.estimated_value)}</div>
+      
       <div className={styles.leadFooter}>
-        <span className={styles.leadContact} style={{ fontSize: 11 }}>{lead.source || ''}</span>
-        <button className={styles.leadEditBtn} onClick={e => { e.stopPropagation(); onEdit(lead) }}>editar ✎</button>
+        {/* Helper "editar" that appears when hovering the card */}
+        <span className={styles.leadEditLabel}>editar ✎</span>
       </div>
     </div>
   )
 })
 
 // ─── Droppable Column ─────────────────────────────────────────────────────────
-const KanbanColumn = React.memo(function KanbanColumn({ stage, leads, onEdit }: { stage: CrmStage; leads: CrmLead[]; onEdit: (l: CrmLead) => void }) {
+const KanbanColumn = React.memo(function KanbanColumn({ stage, leads, allTasks, onEdit }: { stage: CrmStage; leads: CrmLead[]; allTasks: CrmTask[]; onEdit: (l: CrmLead, targetTab?: 'dados'|'timeline'|'tarefas') => void }) {
   const { setNodeRef, isOver } = useDroppable({ id: stage.id })
   return (
     <div className={`${styles.column} ${isOver ? styles.columnOver : ''}`}>
@@ -53,7 +82,7 @@ const KanbanColumn = React.memo(function KanbanColumn({ stage, leads, onEdit }: 
       </div>
       <div ref={setNodeRef} className={styles.columnBody}>
         <SortableContext items={leads.map(l => l.id)} strategy={verticalListSortingStrategy}>
-          {leads.map(lead => <LeadCard key={lead.id} lead={lead} onEdit={onEdit} />)}
+          {leads.map(lead => <LeadCard key={lead.id} lead={lead} tasks={allTasks.filter(t => t.lead_id === lead.id)} onEdit={onEdit} />)}
         </SortableContext>
         {leads.length === 0 && <div className={styles.emptyColumn}>Nenhum lead</div>}
       </div>
@@ -92,6 +121,22 @@ function SortableStageRow({ se, leadsCount, onDelete, onChangeName, onChangeColo
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 const getBaseType = (type: string) => type.split(':')[0]
 const getFieldWidth = (type: string): 'full' | 'half' => type.includes(':half') ? 'half' : 'full'
+
+const CurrencyInput = ({ value, onChange, className }: { value: number | string; onChange: (v: number) => void; className?: string }) => {
+  const displayVal = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(Number(value) || 0)
+  return (
+    <input 
+      type="text" 
+      className={className}
+      value={displayVal} 
+      onChange={(e) => {
+        const numericStr = e.target.value.replace(/\D/g, '')
+        const floatValue = numericStr ? parseInt(numericStr, 10) / 100 : 0
+        onChange(floatValue)
+      }} 
+    />
+  )
+}
 
 // ─── Sortable Field Row ─────────────────────────────────────────────────────
 function SortableFieldRow({ 
@@ -261,6 +306,8 @@ function SortablePreviewField({ field }: { field: CrmPipelineField }) {
             : <option>Opções do Pipeline</option>
           }
         </select>
+      ) : baseType === 'currency' || baseType === 'system_estimated_value' ? (
+        <input disabled placeholder="R$ 0,00" style={{ background: '#ffffff', border: '1px solid #e2e8f0' }} />
       ) : (
         <input disabled placeholder="..." style={{ background: '#ffffff', border: '1px solid #e2e8f0' }} />
       )}
@@ -286,6 +333,7 @@ function PipelineContent() {
   const [stages, setStages]                     = useState<CrmStage[]>([])
   const [leads, setLeads]                       = useState<CrmLead[]>([])
   const [pipelineFields, setPipelineFields]     = useState<CrmPipelineField[]>([])
+  const [pipelineTasks, setPipelineTasks]       = useState<CrmTask[]>([])
   const [loading, setLoading]                   = useState(true)
   const [error, setError]                       = useState('')
   const [toast, setToast]                       = useState('')
@@ -313,6 +361,7 @@ function PipelineContent() {
   const [newFieldName, setNewFieldName] = useState('')
   const [newFieldType, setNewFieldType] = useState('text')
   const [newFieldOptions, setNewFieldOptions] = useState<string[]>([])
+  const [initialTab, setInitialTab] = useState<'dados'|'timeline'|'tarefas'>('dados')
   const [saving, setSaving] = useState(false)
 
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 8 } }))
@@ -333,41 +382,69 @@ function PipelineContent() {
     return data.pipelines || []
   }, [])
 
-  // ── Load stages + leads for active pipeline ───────────────────────────────
-  const loadPipelineData = useCallback(async (pipelineId: string) => {
+  // ── Load ALL pipeline data in a single consolidated call ──────────────────
+  const loadInitialData = useCallback(async (pipelineId?: string) => {
     setLoading(true)
+    setError('')
     try {
-      const [sData, lData, fData] = await Promise.all([
-        crmCall('crm-manage-stages', { action: 'list', pipeline_id: pipelineId }),
-        crmCall('crm-manage-leads',  { action: 'list', pipeline_id: pipelineId }),
-        crmCall('crm-manage-fields', { action: 'list', pipeline_id: pipelineId })
-      ])
-      if (sData.error) { setError(sData.error); return }
-      if (lData.error) { setError(lData.error); return }
-      if (fData.error) { setError(fData.error); return }
-      setStages(sData.stages || [])
-      setLeads(lData.leads   || [])
-      setPipelineFields(fData.fields || [])
+      const data = await crmCall('crm-manage-pipeline', { 
+        action: 'get_full_data', 
+        pipeline_id: pipelineId || null 
+      })
+      
+      if (data.error) {
+        // Fallback for case where Edge Function hasn't been deployed yet with the new action
+        if (data.error.includes('desconhecida')) {
+          const pls = await crmCall('crm-manage-pipeline', { action: 'list' })
+          if (pls.pipelines) {
+            setPipelines(pls.pipelines)
+            const firstId = pipelineId || (pls.pipelines.length > 0 ? pls.pipelines[0].id : null)
+            if (firstId) {
+              const [sData, lData, fData, tData] = await Promise.all([
+                crmCall('crm-manage-stages', { action: 'list', pipeline_id: firstId }),
+                crmCall('crm-manage-leads',  { action: 'list', pipeline_id: firstId }),
+                crmCall('crm-manage-fields', { action: 'list', pipeline_id: firstId }),
+                crmCall('crm-manage-tasks',  { action: 'list_team', status: 'pendente' })
+              ])
+              setStages(sData.stages || [])
+              setLeads(lData.leads || [])
+              setPipelineFields(fData.fields || [])
+              setPipelineTasks(tData.tasks || [])
+            }
+          }
+          return
+        }
+        setError(data.error)
+        return
+      }
+
+      setPipelines(data.pipelines || [])
+      setStages(data.stages || [])
+      setLeads(data.leads || [])
+      setPipelineFields(data.fields || [])
+      setPipelineTasks(data.tasks || [])
+      
+      if (data.active_pipeline_id) {
+        setActivePipelineId(data.active_pipeline_id)
+      }
+    } catch (e: any) {
+      setError('Erro de conexão ao carregar dados.')
     } finally {
       setLoading(false)
     }
   }, [])
 
-  // ── Initial load ──────────────────────────────────────────────────────────
+  // ── Initial load & Change Funnel ──────────────────────────────────────────
   useEffect(() => {
-    if (!sess) return
-    loadPipelines().then(pls => {
-      if (pls.length > 0) {
-        setActivePipelineId(pls[0].id)
-      } else {
-        setLoading(false)
-      }
-    })
-  }, [sess, loadPipelines])
+    if (sess) {
+      loadInitialData(tabParam === 'kanban' ? undefined : activePipelineId || undefined)
+    }
+  }, [sess, loadInitialData])
 
-  useEffect(() => {
-    if (activePipelineId) loadPipelineData(activePipelineId)
-  }, [activePipelineId, loadPipelineData])
+  const switchPipeline = (id: string) => {
+    setActivePipelineId(id)
+    loadInitialData(id)
+  }
 
   // Keep fieldEdits in sync when pipelineFields reload (e.g. after saving)
   useEffect(() => {
@@ -392,9 +469,10 @@ function PipelineContent() {
     setViewMode('fields')
   }
 
-  const openEditLead = useCallback((lead: CrmLead) => {
+  const openEditLead = useCallback((lead: CrmLead, targetTab?: 'dados'|'timeline'|'tarefas') => {
     setEditLead(lead)
     setEditLeadCustomFields(lead.custom_data || {})
+    setInitialTab(targetTab || 'dados')
     setShowEditLead(true)
   }, [])
 
@@ -413,9 +491,7 @@ function PipelineContent() {
     setSaving(false)
     if (data.error) { showErr(data.error); return }
     setPipelines(prev => [...prev, data.pipeline])
-    setActivePipelineId(data.pipeline.id)
-    setStages(data.stages)
-    setLeads([])
+    switchPipeline(data.pipeline.id)
     setFPipelineName(''); setFPipelineDesc('')
     setShowNewPipeline(false)
     showToast(`Funil "${data.pipeline.name}" criado!`)
@@ -431,7 +507,7 @@ function PipelineContent() {
     setPipelines(remaining)
     setShowDeletePipeline(false)
     if (remaining.length > 0) {
-      setActivePipelineId(remaining[0].id)
+      switchPipeline(remaining[0].id)
     } else {
       setActivePipelineId(null); setStages([]); setLeads([])
     }
@@ -560,7 +636,7 @@ function PipelineContent() {
     } finally {
       setSaving(false)
     }
-    await loadPipelineData(activePipelineId)
+    await loadInitialData(activePipelineId)
     setShowManageStages(false)
     showToast('Etapas atualizadas!')
   }
@@ -572,7 +648,7 @@ function PipelineContent() {
     const data = await crmCall('crm-manage-stages', { action: 'delete', stage_id: stageId })
     if (data.error) { showErr(data.error); return }
     setStageEdits(prev => prev.filter(s => s.id !== stageId))
-    if (activePipelineId) loadPipelineData(activePipelineId)
+    if (activePipelineId) loadInitialData(activePipelineId)
     showToast('Etapa excluída.')
   }
 
@@ -642,7 +718,7 @@ function PipelineContent() {
     } finally {
       setSaving(false)
     }
-    await loadPipelineData(activePipelineId)
+    await loadInitialData(activePipelineId)
     showToast('Arquitetura salva com sucesso!')
   }
 
@@ -651,7 +727,7 @@ function PipelineContent() {
     const data = await crmCall('crm-manage-fields', { action: 'delete', field_id: fieldId })
     if (data.error) { showErr(data.error); return }
     setFieldEdits(prev => prev.filter(f => f.id !== fieldId))
-    if (activePipelineId) loadPipelineData(activePipelineId)
+    if (activePipelineId) loadInitialData(activePipelineId)
     showToast('Campo excluído.')
   }
 
@@ -716,7 +792,7 @@ function PipelineContent() {
     if (data.error) {
       showErr(data.error)
       // Reverte recarregando do servidor
-      if (activePipelineId) loadPipelineData(activePipelineId)
+      if (activePipelineId) loadInitialData(activePipelineId)
     }
   }
 
@@ -738,7 +814,7 @@ function PipelineContent() {
           else setViewMode(tab as any)
         }}
       />
-      <NGPLoading loading={loading && pipelines.length === 0} />
+      {/* Loading removido */}
 
       <main className={styles.main}>
         <div className={styles.content}>
@@ -909,6 +985,7 @@ function PipelineContent() {
                   <KanbanColumn
                     key={stage.id}
                     stage={stage}
+                    allTasks={pipelineTasks}
                     leads={leads.filter(l => l.stage_id === stage.id).sort((a, b) => a.position - b.position)}
                     onEdit={openEditLead}
                   />
@@ -997,9 +1074,11 @@ function PipelineContent() {
                         <option value="">Selecione...</option>
                         {(field.options || []).map(o => <option key={o} value={o}>{o}</option>)}
                       </select>
+                    ) : bType === 'currency' || bType === 'system_estimated_value' ? (
+                      <CurrencyInput value={val} onChange={setVal} />
                     ) : (
                       <input 
-                        type={(bType === 'number' || bType === 'currency' || bType === 'system_estimated_value') ? 'number' : bType === 'date' ? 'date' : bType === 'email' ? 'email' : 'text'} 
+                        type={bType === 'number' ? 'number' : bType === 'date' ? 'date' : bType === 'email' ? 'email' : 'text'} 
                         value={val || ''} 
                         onChange={e => setVal(e.target.value)} 
                       />
@@ -1019,79 +1098,32 @@ function PipelineContent() {
         </div>
       )}
 
-      {/* ── Modal: Editar Lead ───────────────────────────────────────────── */}
+      {/* ── Drawer: Lead Detail Panel ─────────────────────────────────────── */}
       {showEditLead && editLead && (
-        <div className={styles.overlay} onClick={() => setShowEditLead(false)}>
-          <div className={styles.modal} onClick={e => e.stopPropagation()}>
-            <h2 className={styles.modalTitle}>Editar Lead</h2>
-            <div className={styles.field}>
-              <label>Empresa *</label>
-              <input value={editLead.company_name} onChange={e => setEditLead(l => l ? { ...l, company_name: e.target.value } : l)} />
-            </div>
-            <div className={styles.field}>
-              <label>Etapa</label>
-              <select value={editLead.stage_id} onChange={e => setEditLead(l => l ? { ...l, stage_id: e.target.value } : l)}>
-                {stages.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
-              </select>
-            </div>
-
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '24px 12px' }}>
-              {/* Campos Dinâmicos (exceto Etapa que já está no topo) */}
-              {pipelineFields.filter(f => getBaseType(f.type) !== 'system_stage_id').map(field => {
-                const bType = getBaseType(field.type)
-                const isHalf = getFieldWidth(field.type) === 'half' && bType !== 'longtext' && bType !== 'system_notes'
-                const isSys = bType.startsWith('system_')
-                const sysKey = isSys ? bType.replace('system_', '') : ''
-                const val = isSys ? (editLead as any)[sysKey] : (editLeadCustomFields[field.name] || '')
-
-                const setVal = (v: any) => {
-                  const finalVal = (sysKey === 'estimated_value') ? (parseFloat(v) || 0) : v
-                  if (isSys) {
-                    setEditLead(l => l ? { ...l, [sysKey]: finalVal } : l)
-                  } else {
-                    setEditLeadCustomFields(f => ({ ...f, [field.name]: v }))
-                  }
-                }
-
-                return (
-                  <div key={field.id} className={styles.field} style={{ flex: isHalf ? '0 0 calc(50% - 6px)' : '0 0 100%' }}>
-                    <label>{field.name}</label>
-                    {bType === 'longtext' || bType === 'system_notes' ? (
-                      <textarea value={val || ''} onChange={e => setVal(e.target.value)} />
-                    ) : bType === 'select' ? (
-                      <select value={val || ''} onChange={e => setVal(e.target.value)}>
-                        <option value="">Selecione...</option>
-                        {(field.options || []).map(o => <option key={o} value={o}>{o}</option>)}
-                      </select>
-                    ) : (
-                      <input 
-                        type={(bType === 'number' || bType === 'currency' || bType === 'system_estimated_value') ? 'number' : bType === 'date' ? 'date' : bType === 'email' ? 'email' : 'text'} 
-                        value={val || ''} 
-                        onChange={e => setVal(e.target.value)} 
-                      />
-                    )}
-                  </div>
-                )
-              })}
-
-              {!pipelineFields.some(f => getBaseType(f.type) === 'system_stage_id') && (
-                <div className={styles.field} style={{ flex: '0 0 calc(50% - 6px)' }}>
-                  {/* Etapa removida do meio se não existir campo sistema configurado */}
-                </div>
-              )}
-            </div>
-
-            <div className={styles.modalActionsSpread}>
-              <button className={`${styles.btn} ${styles.btnDanger} ${styles.btnSm}`} onClick={deleteLead} disabled={saving}>Excluir</button>
-              <div style={{ display: 'flex', gap: 8 }}>
-                <button className={`${styles.btn} ${styles.btnGhost}`} onClick={() => setShowEditLead(false)}>Cancelar</button>
-                <button className={`${styles.btn} ${styles.btnPrimary}`} onClick={updateLead} disabled={saving || !editLead?.company_name.trim()}>
-                  {saving ? 'Salvando...' : 'Salvar'}
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
+        <LeadDetailPanel
+          lead={editLead}
+          stages={stages}
+          pipelineFields={pipelineFields}
+          initialTab={initialTab}
+          open={showEditLead}
+          onClose={() => { 
+            setShowEditLead(false); setEditLead(null);
+            // Refresh tasks on close silently to update badges
+            crmCall('crm-manage-tasks', { action: 'list_team', status: 'pendente' }).then(res => {
+              if (!res.error && res.tasks) setPipelineTasks(res.tasks)
+            })
+          }}
+          onUpdate={(updated) => {
+            setLeads(prev => prev.map(l => l.id === updated.id ? updated : l))
+            setEditLead(updated)
+          }}
+          onDelete={(leadId) => {
+            setLeads(prev => prev.filter(l => l.id !== leadId))
+            setShowEditLead(false)
+            setEditLead(null)
+            showToast('Lead excluído.')
+          }}
+        />
       )}
 
       {/* ── Modal: Gerenciar Etapas ──────────────────────────────────────── */}

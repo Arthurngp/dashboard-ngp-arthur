@@ -1,7 +1,7 @@
 'use client'
-import React, { useState, useEffect } from 'react'
+import React, { Suspense, useState, useEffect } from 'react'
 import styles from './Sidebar.module.css'
-import { useRouter, usePathname } from 'next/navigation'
+import { useRouter, usePathname, useSearchParams } from 'next/navigation'
 import ProfileModal from './ProfileModal'
 import { clearSession, getSession } from '@/lib/auth'
 import { SURL } from '@/lib/constants'
@@ -124,6 +124,7 @@ function getAutoSectorNav(pathname: string, role?: string): { title: string; nav
 function SidebarInner({ activeTab, onTabChange, onLogout, showDashboardNav = true, minimal = false, sectorNav, sectorNavTitle }: Props) {
   const router   = useRouter()
   const pathname = usePathname()
+  const searchParams = useSearchParams()
   const sess     = getSession()
   const autoSector = getAutoSectorNav(pathname, sess?.role)
   const resolvedSectorNav = sectorNav || autoSector?.nav || []
@@ -153,6 +154,25 @@ function SidebarInner({ activeTab, onTabChange, onLogout, showDashboardNav = tru
     return () => document.removeEventListener('mousedown', handleClickOutside)
   }, [])
 
+  // Auto-expand groups when pathname matches
+  useEffect(() => {
+    const allNavs = [...collapsedSetoresNav, ...ngpNav, ...sistemaNav, ...cadastrarNav, ...resolvedSectorNav]
+    setExpandedGroups(prev => {
+      const next = { ...prev }
+      let changed = false
+      allNavs.forEach(item => {
+        if (item.subItems) {
+          const isMatch = pathname === item.href.split('?')[0] || item.subItems.some(sub => pathname === sub.href.split('?')[0])
+          if (isMatch && !next[item.label]) {
+            next[item.label] = true
+            changed = true
+          }
+        }
+      })
+      return changed ? next : prev
+    })
+  }, [pathname, resolvedSectorNav])
+
   // Fecha sidebar ao navegar
   const handleNav = (fn: () => void) => { fn(); setMobileOpen(false) }
 
@@ -179,9 +199,37 @@ function SidebarInner({ activeTab, onTabChange, onLogout, showDashboardNav = tru
     const isExpanded = expandedGroups[item.label] || false
     
     const isDashboardRoute = item.href.split('?')[0] === '/dashboard'
-    const isActive  = isTabItem
-      ? activeTab === item.tab
-      : pathname === item.href.split('?')[0] && item.href !== '#' && !isDashboardRoute
+    
+    // Check search params exactly if the href includes them
+    let isActive = false
+    if (isTabItem) {
+      isActive = activeTab === item.tab
+    } else {
+      const parts = item.href.split('?')
+      const hrefPath = parts[0]
+      const hrefQuery = parts[1] || ''
+      if (pathname === hrefPath && item.href !== '#' && !isDashboardRoute) {
+        if (!hrefQuery) {
+          // If the link has no query, only highlight if there's no query or it's the default
+          isActive = !searchParams.get('tab') && !searchParams.get('action')
+        } else {
+          // E.g. tab=kanban
+          const qParam = new URLSearchParams(hrefQuery)
+          let match = true
+          qParam.forEach((val, key) => {
+            if (searchParams.get(key) !== val) {
+              // Special case: /comercial/pipeline default is tab=kanban
+              if (key === 'tab' && val === 'kanban' && !searchParams.get('tab') && !searchParams.get('action')) {
+                // it is a match
+              } else {
+                match = false
+              }
+            }
+          })
+          isActive = match
+        }
+      }
+    }
 
     function handleClick() {
       if (isGroup) {
@@ -333,5 +381,12 @@ function SidebarInner({ activeTab, onTabChange, onLogout, showDashboardNav = tru
   )
 }
 
-const Sidebar = React.memo(SidebarInner)
-export default Sidebar
+const MemoSidebar = React.memo(SidebarInner)
+
+export default function Sidebar(props: Props) {
+  return (
+    <Suspense fallback={null}>
+      <MemoSidebar {...props} />
+    </Suspense>
+  )
+}

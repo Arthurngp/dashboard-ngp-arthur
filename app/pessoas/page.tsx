@@ -89,8 +89,28 @@ function calcBalance(records: PontoRecord[]): { totalMins: number; status: DayRo
   }
 
   const totalMins = Math.floor(totalMs / 60000)
-  const TARGET    = 8 * 60
-  const extrasMins = Math.max(0, totalMins - TARGET)
+  
+  // Determine TARGET based on day of week (compensation for Saturdays)
+  // Seg-Qui: 9h (540m), Sex: 8h (480m)
+  const firstRec = records[0]
+  const date = firstRec ? new Date(new Date(firstRec.created_at).getTime() + BRT_OFFSET) : new Date()
+  const dayOfWeek = date.getUTCDay() // 0=Dom, 1=Seg, ..., 5=Sex, 6=Sáb
+  
+  let TARGET = 8 * 60
+  if (dayOfWeek >= 1 && dayOfWeek <= 4) { // Seg a Qui
+    TARGET = 9 * 60
+  } else if (dayOfWeek === 5) { // Sex
+    TARGET = 8 * 60
+  } else if (dayOfWeek === 6 || dayOfWeek === 0) { // Fim de semana (se houver registro, meta é 0 ou 8? User não especificou, mantemos 8 ou 0?)
+    // Se registrou no fds, geralmente tudo é extra ou segue meta de 8h. 
+    // Vamos manter 8h como padrão seguro, mas o foco é Seg-Qui = 9h.
+    TARGET = 8 * 60 
+  }
+
+  // Tolerance Rule (Art. 58 CLT): variations of up to 10 min total/day are ignored.
+  // If surplus is <= 10, extra = 0. If > 10, extra = total surplus.
+  const diffMins = totalMins - TARGET
+  const extrasMins = diffMins > 10 ? diffMins : 0
 
   const hasEntrada = records.some(r => r.tipo_registro === 'entrada')
   const hasSaida   = records.some(r => r.tipo_registro === 'saida')
@@ -98,9 +118,10 @@ function calcBalance(records: PontoRecord[]): { totalMins: number; status: DayRo
   if (!hasEntrada) return { totalMins: 0, status: 'empty', extrasMins: 0 }
 
   let status: DayRow['status']
-  if (!hasSaida)                     status = 'incomplete'
-  else if (totalMins >= TARGET + 20) status = 'overtime'
-  else if (totalMins >= TARGET - 15) status = 'complete'
+  if (!hasSaida) status = 'incomplete'
+  // Status with 10-minute tolerance
+  else if (totalMins > TARGET + 10)  status = 'overtime'
+  else if (totalMins >= TARGET - 10) status = 'complete'
   else                               status = 'below'
 
   return { totalMins, status, extrasMins }
@@ -249,7 +270,7 @@ export default function PessoasPage() {
   const [isAdmin, setIsAdmin] = useState(false)
 
   // Relógio
-  const clockRef = useRef<Date | null>(null)
+  const offsetRef = useRef<number>(0)
   const [clockDisplay, setClockDisplay] = useState('--:--:--')
 
   // Ponto do dia
@@ -299,8 +320,12 @@ export default function PessoasPage() {
       })
       const data = await res.json()
       if (data.error) return
+      
       const serverDate = new Date(data.server_now)
-      if (!isNaN(serverDate.getTime())) clockRef.current = serverDate
+      if (!isNaN(serverDate.getTime())) {
+        // Calcula o offset entre o servidor e a máquina local
+        offsetRef.current = serverDate.getTime() - Date.now()
+      }
       setTodayRecords(data.today_records || [])
     } catch { /* silencioso */ }
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
@@ -338,21 +363,31 @@ export default function PessoasPage() {
   // Tick do relógio
   useEffect(() => {
     const interval = setInterval(() => {
-      const prev = clockRef.current
-      const isValid = prev && !isNaN(prev.getTime())
-      clockRef.current = isValid
-        ? new Date(prev!.getTime() + 1000)
-        : new Date()
-
-      const brtMs = clockRef.current.getTime() + BRT_OFFSET
+      // Sempre calcula baseado no Date.now() atual + offset do servidor
+      // Isso evita que o relógio atrase se a aba for suspensa pelo navegador
+      const nowMs = Date.now() + offsetRef.current
+      const brtMs = nowMs + BRT_OFFSET
       const brt   = new Date(brtMs)
+      
       const h     = brt.getUTCHours().toString().padStart(2, '0')
       const m     = brt.getUTCMinutes().toString().padStart(2, '0')
       const sc    = brt.getUTCSeconds().toString().padStart(2, '0')
       setClockDisplay(`${h}:${m}:${sc}`)
     }, 1000)
-    return () => clearInterval(interval)
-  }, [])
+
+    // Sincroniza sempre que o usuário voltar para a aba
+    const handleVisibility = () => {
+      if (document.visibilityState === 'visible') {
+        fetchToday()
+      }
+    }
+    document.addEventListener('visibilitychange', handleVisibility)
+
+    return () => {
+      clearInterval(interval)
+      document.removeEventListener('visibilitychange', handleVisibility)
+    }
+  }, [fetchToday])
 
   // Registra ponto
   const registrarPonto = async () => {
@@ -606,7 +641,8 @@ export default function PessoasPage() {
                       <th>S. Almoço</th>
                       <th>R. Almoço</th>
                       <th>Saída</th>
-                      <th>Extra (E/S)</th>
+                      <th>Extra Ent.</th>
+                      <th>Extra Saí.</th>
                       <th>Total</th>
                       <th>H. Extras</th>
                       <th>Status</th>
@@ -627,9 +663,17 @@ export default function PessoasPage() {
                             <div className={styles.extraPairs}>
                               {row.extras.map((pair, i) => (
                                 <div key={i} className={styles.extraPair}>
-                                  <span className={styles.extraLabel}>#{i + 1}</span>
                                   <span>{pair.entrada || '--:--'}</span>
-                                  <span className={styles.extraArrow}>→</span>
+                                </div>
+                              ))}
+                            </div>
+                          ) : <span className={styles.tdEmpty}>--:--</span>}
+                        </td>
+                        <td className={styles.tdExtraCol}>
+                          {row.extras.length > 0 ? (
+                            <div className={styles.extraPairs}>
+                              {row.extras.map((pair, i) => (
+                                <div key={i} className={styles.extraPair}>
                                   <span>{pair.saida || '--:--'}</span>
                                 </div>
                               ))}

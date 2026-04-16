@@ -1,6 +1,6 @@
 // @ts-nocheck
-import { serve } from 'https://deno.land/std@0.177.0/http/server.ts'
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import { serve } from 'std/http/server'
+import { createClient } from 'supabase'
 import { handleCors, json } from '../_shared/cors.ts'
 
 serve(async (req) => {
@@ -12,6 +12,22 @@ serve(async (req) => {
 
     if (!session_token) return json(req, { error: 'Sessão inválida.' }, 401)
     if (!action)        return json(req, { error: 'Action obrigatória.' }, 400)
+
+    // Helper: log atividade automaticamente na timeline
+    async function logActivity(sb: any, leadId: string, actType: string, title: string, metadata: any, userId: string, userName: string) {
+      try {
+        await sb.from('crm_activities').insert({
+          lead_id: leadId,
+          activity_type: actType,
+          title,
+          metadata: metadata || {},
+          created_by: userId,
+          created_by_name: userName,
+        })
+      } catch (e) {
+        console.error('[crm-manage-leads:logActivity]', e)
+      }
+    }
 
     const sb = createClient(
       Deno.env.get('SUPABASE_URL')!,
@@ -31,7 +47,7 @@ serve(async (req) => {
     // Valida role
     const { data: usuario } = await sb
       .from('usuarios')
-      .select('role')
+      .select('id, role, nome')
       .eq('id', sessao.usuario_id)
       .single()
 
@@ -208,6 +224,23 @@ serve(async (req) => {
         .single()
 
       if (error) throw error
+
+      // Log automático de mudança de etapa na timeline
+      if (oldStageId !== new_stage_id) {
+        const [oldStageRes, newStageRes] = await Promise.all([
+          sb.from('crm_pipeline_stages').select('name').eq('id', oldStageId).single(),
+          sb.from('crm_pipeline_stages').select('name').eq('id', new_stage_id).single(),
+        ])
+        const fromName = oldStageRes.data?.name || 'Desconhecida'
+        const toName   = newStageRes.data?.name || 'Desconhecida'
+        await logActivity(
+          sb, lead_id, 'mudanca_etapa',
+          `Movido de "${fromName}" para "${toName}"`,
+          { from_stage: fromName, to_stage: toName, from_stage_id: oldStageId, to_stage_id: new_stage_id },
+          sessao.usuario_id, usuario.nome || 'Usuário'
+        )
+      }
+
       return json(req, { lead: data, ok: true })
     }
 
