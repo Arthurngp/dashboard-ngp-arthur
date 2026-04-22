@@ -180,6 +180,24 @@ const SETORES: Setor[] = [
     gradient: 'linear-gradient(135deg,#3b82f6,#7c3aed)',
   },
   {
+    id: 'comercial-digital',
+    title: 'Comercial Digital',
+    desc: 'CRM digital entregue aos clientes com acesso próprio, pipelines isolados e operação comercial separada da NGP.',
+    icon: (
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M4 7h8" />
+        <path d="M4 12h13" />
+        <path d="M4 17h5" />
+        <path d="M16 5l4 4-4 4" />
+        <rect x="13" y="14" width="7" height="5" rx="1.5" />
+      </svg>
+    ),
+    href: '/comercial-digital',
+    external: false,
+    embed: false,
+    gradient: 'linear-gradient(135deg,#0f766e,#14b8a6)',
+  },
+  {
     id: 'trackeamento',
     title: 'Trackeamento',
     desc: 'UTMs, pixels, eventos e análise de jornada de conversão.',

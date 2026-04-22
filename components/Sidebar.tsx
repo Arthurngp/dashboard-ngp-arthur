@@ -1,5 +1,5 @@
 'use client'
-import React, { Suspense, useState, useEffect } from 'react'
+import React, { Suspense, useState, useEffect, useRef } from 'react'
 import styles from './Sidebar.module.css'
 import { useRouter, usePathname, useSearchParams } from 'next/navigation'
 import ProfileModal from './ProfileModal'
@@ -27,6 +27,8 @@ interface Props {
   sectorNav?: NavItem[]
   /** Título da seção de nav do setor */
   sectorNavTitle?: string
+  /** Quando true, mostra apenas a lista de setores aberta no sidebar */
+  setoresOnlyOpen?: boolean
 }
 
 interface NavItem { 
@@ -62,9 +64,9 @@ const sistemaNav: NavItem[] = [
 ]
 
 const cadastrarNav: NavItem[] = [
+  { icon: <Ico><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="8" y1="3" x2="8" y2="21"/></Ico>, label: 'Cadastros', href: '/admin/usuarios?tab=clientes' },
   { icon: <Ico><path d="M10 13a5 5 0 007.54.54l3-3a5 5 0 00-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 00-7.54-.54l-3 3a5 5 0 007.07 7.07l1.71-1.71"/></Ico>, label: 'Contas de Anúncio', href: '/admin/contas' },
   { icon: <Ico><path d="M21 8v13H3V8"/><path d="M1 3h22v5H1z"/><path d="M10 12h4"/></Ico>, label: 'Clientes Arquivados', href: '/admin/clientes-arquivados' },
-  { icon: <Ico><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75"/></Ico>, label: 'Usuários NGP Space', href: '/admin/usuarios' },
 ]
 
 function getSetoresNavItems(): NavItem[] {
@@ -73,6 +75,7 @@ function getSetoresNavItems(): NavItem[] {
     { icon: <Ico><path d="M12 2v20"/><path d="M17 6.5c0-1.9-2.2-3.5-5-3.5s-5 1.6-5 3.5 2.2 3.5 5 3.5 5 1.6 5 3.5-2.2 3.5-5 3.5-5-1.6-5-3.5"/></Ico>, label: 'Financeiro', href: 'https://financeiro.grupongp.com.br' },
     { icon: <Ico><circle cx="9" cy="8" r="3"/><path d="M3 19c0-3.3 2.7-6 6-6s6 2.7 6 6"/><circle cx="18" cy="9" r="2.5"/><path d="M15.5 19c.3-2.1 2.1-3.8 4.3-4.1"/></Ico>, label: 'Pessoas', href: '/pessoas' },
     { icon: <Ico><path d="M4 6h10"/><path d="M4 12h7"/><path d="M4 18h4"/><path d="M16 5l4 4-4 4"/><path d="M13 9h7"/></Ico>, label: 'Comercial', href: '/comercial' },
+    { icon: <Ico><path d="M4 7h7"/><path d="M4 12h11"/><path d="M4 17h5"/><circle cx="18" cy="7" r="3"/><path d="M16 18l2-2 2 2 3-3"/></Ico>, label: 'Comercial Digital', href: '/comercial-digital' },
     { icon: <Ico><path d="M12 3v3"/><path d="M21 12h-3"/><path d="M12 21v-3"/><path d="M3 12h3"/><circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="1.5"/></Ico>, label: 'Trackeamento', href: '#', badge: 'breve' },
   ]
 }
@@ -82,6 +85,25 @@ function getAutoSectorNav(pathname: string, role?: string): { title: string; nav
     return {
       title: 'SETORES',
       nav: getSetoresNavItems(),
+    }
+  }
+
+  if (pathname.startsWith('/comercial-digital')) {
+    return {
+      title: 'COMERCIAL DIGITAL',
+      nav: [
+        { icon: <Ico><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></Ico>, label: 'Gestão', href: '/comercial-digital' },
+        {
+          icon: <Ico><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></Ico>,
+          label: 'Pipeline',
+          href: '/comercial-digital/pipeline',
+          subItems: [
+            { icon: <span style={{ width: 15 }} />, label: 'Meu CRM', href: '/comercial-digital/pipeline?tab=kanban' },
+            { icon: <span style={{ width: 15 }} />, label: 'Campos', href: '/comercial-digital/pipeline?tab=fields' },
+            { icon: <span style={{ width: 15 }} />, label: 'Novo Funil', href: '/comercial-digital/pipeline?action=new_pipeline' },
+          ],
+        },
+      ],
     }
   }
 
@@ -123,20 +145,21 @@ function getAutoSectorNav(pathname: string, role?: string): { title: string; nav
   return null
 }
 
-function SidebarInner({ activeTab, onTabChange, onLogout, showDashboardNav = true, minimal = false, sectorNav, sectorNavTitle }: Props) {
+function SidebarInner({ activeTab, onTabChange, onLogout, showDashboardNav = true, minimal = false, sectorNav, sectorNavTitle, setoresOnlyOpen = false }: Props) {
   const router   = useRouter()
   const pathname = usePathname()
   const searchParams = useSearchParams()
   const sess     = getSession()
+  const isClient = sess?.role === 'cliente'
   const autoSector = getAutoSectorNav(pathname, sess?.role)
   const resolvedSectorNav = sectorNav || autoSector?.nav || []
   const resolvedSectorTitle = sectorNavTitle || autoSector?.title || 'SETORES'
   const isSetoresHome = pathname === '/setores'
   const isAdminSection = sectorNavTitle === 'ADMINISTRAÇÃO'
   const isSectorContext = isSetoresHome || !!autoSector || (!!sectorNav && !isAdminSection)
-  const showTopSetores = pathname.startsWith('/dashboard') || pathname.startsWith('/relatorio')
-  const showCollapsedSetores = !isSetoresHome && isSectorContext
-  const showBaseNav = !isSetoresHome && !isSectorContext
+  const showTopSetores = !isClient && !setoresOnlyOpen && (pathname.startsWith('/dashboard') || pathname.startsWith('/relatorio'))
+  const showCollapsedSetores = !isClient && !setoresOnlyOpen && !isSetoresHome && isSectorContext
+  const showBaseNav = !isClient && !setoresOnlyOpen && !isSetoresHome && !isSectorContext
   const collapsedSetoresNav: NavItem[] = [
     {
       icon: <Ico><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></Ico>,
@@ -149,9 +172,14 @@ function SidebarInner({ activeTab, onTabChange, onLogout, showDashboardNav = tru
   const [profileOpen, setProfileOpen] = useState(false)
   const [showConfigMenu, setShowConfigMenu] = useState(false)
   const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>({})
+  const configWrapRef = useRef<HTMLDivElement | null>(null)
 
   useEffect(() => {
-    function handleClickOutside() { setShowConfigMenu(false) }
+    function handleClickOutside(event: MouseEvent) {
+      const target = event.target as Node | null
+      if (configWrapRef.current && target && configWrapRef.current.contains(target)) return
+      setShowConfigMenu(false)
+    }
     document.addEventListener('mousedown', handleClickOutside)
     return () => document.removeEventListener('mousedown', handleClickOutside)
   }, [])
@@ -238,6 +266,13 @@ function SidebarInner({ activeTab, onTabChange, onLogout, showDashboardNav = tru
           isActive = match
         }
       }
+
+      if (!isActive && hrefPath === '/comercial-digital' && pathname.startsWith('/comercial-digital')) {
+        isActive = true
+      }
+      if (!isActive && hrefPath === '/cliente/relatorios' && pathname.startsWith('/cliente/relatorios')) {
+        isActive = true
+      }
     }
 
     function handleClick() {
@@ -304,15 +339,24 @@ function SidebarInner({ activeTab, onTabChange, onLogout, showDashboardNav = tru
       />
 
     <aside className={`${styles.sidebar} ${mobileOpen ? styles.sidebarOpen : ''}`}>
-      <button className={styles.logoBtn} onClick={() => handleNav(() => router.push('/setores'))}>
+      <button className={styles.logoBtn} onClick={() => handleNav(() => router.push(isClient ? '/cliente' : '/setores'))}>
         <div className={styles.logoMark}><LogoIcon /></div>
         <div>
           <div className={styles.logoText}>NGP <span>Dashboard</span></div>
-          <div className={styles.roleLabel}>{sess?.role === 'ngp' || sess?.role === 'admin' ? `👤 ${sess?.user || 'NGP'}` : sess?.user || 'NGP'}</div>
+          <div className={styles.roleLabel}>
+            {isClient ? 'Área do Cliente' : sess?.role === 'ngp' || sess?.role === 'admin' ? `👤 ${sess?.user || 'NGP'}` : sess?.user || 'NGP'}
+          </div>
         </div>
       </button>
 
       <nav className={styles.nav}>
+        {setoresOnlyOpen && !isClient && (
+          <>
+            <div className={styles.navLabel} style={{ marginTop: 0 }}>SETORES</div>
+            {renderNav(getSetoresNavItems())}
+          </>
+        )}
+
         {showTopSetores && (
           <>
             <div className={styles.navLabel} style={{ marginTop: 0 }}>SETORES</div>
@@ -352,33 +396,35 @@ function SidebarInner({ activeTab, onTabChange, onLogout, showDashboardNav = tru
       </nav>
 
       <div className={styles.footer}>
-        <div className={styles.configWrap}>
-          <button 
-            className={`${styles.navItem} ${styles.configBtn} ${showConfigMenu ? styles.active : ''}`}
-            onClick={(e) => { e.stopPropagation(); setShowConfigMenu(!showConfigMenu) }}
-          >
-            <span>
-              <Ico>
-                <circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/>
-              </Ico>
-            </span>
-            Configurações
-          </button>
+        {!isClient && (
+          <div className={styles.configWrap} ref={configWrapRef}>
+            <button 
+              className={`${styles.navItem} ${styles.configBtn} ${showConfigMenu ? styles.active : ''}`}
+              onClick={(e) => { e.stopPropagation(); setShowConfigMenu(!showConfigMenu) }}
+            >
+              <span>
+                <Ico>
+                  <circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+                </Ico>
+              </span>
+              Configurações
+            </button>
 
-          {showConfigMenu && (
-            <div className={styles.configBubble} onClick={(e) => e.stopPropagation()}>
-              <div className={styles.bubbleTitle}>CADASTRAR</div>
-              {renderNav(cadastrarNav)}
-            </div>
-          )}
-        </div>
+            {showConfigMenu && (
+              <div className={styles.configBubble} onClick={(e) => e.stopPropagation()}>
+                <div className={styles.bubbleTitle}>CADASTRAR</div>
+                {renderNav(cadastrarNav)}
+              </div>
+            )}
+          </div>
+        )}
 
         <div className={styles.userBlock} style={{ marginTop: '4px' }}>
           <div className={styles.userInfo} onClick={() => setProfileOpen(true)} style={{ cursor: 'pointer' }}>
             <div className={styles.avatar}>{initials}</div>
             <div>
               <div className={styles.userName}>{sess?.user || 'NGP'}</div>
-              <div className={styles.userRole}>Acesso total</div>
+              <div className={styles.userRole}>{isClient ? 'Acesso cliente' : 'Acesso total'}</div>
             </div>
           </div>
           <button className={styles.btnLogout} onClick={doLogout} title="Sair">⏻</button>
