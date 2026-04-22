@@ -9,3 +9,5 @@ tsconfig.tsbuildinfo
 .temp-ngp-finance/
 fix_icons.js
 .temp-ngp-finance
+.mcp.json
+supabase/.temp/
