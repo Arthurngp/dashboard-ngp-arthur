@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, Suspense } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import Link from 'next/link'
 import { getSession } from '@/lib/auth'
@@ -830,7 +830,7 @@ function TaskModal({ initialStatus = 'todo', initialClientId, initialSetorId, ed
 // Page
 // ─────────────────────────────────────────────────────────────────────────────
 
-export default function TarefasPage() {
+function TarefasContent() {
   const router       = useRouter()
   const searchParams = useSearchParams()
   const sess         = getSession()
@@ -1139,5 +1139,13 @@ export default function TarefasPage() {
         />
       )}
     </div>
+  )
+}
+
+export default function TarefasPage() {
+  return (
+    <Suspense fallback={<NGPLoading />}>
+      <TarefasContent />
+    </Suspense>
   )
 }
