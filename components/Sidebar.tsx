@@ -193,7 +193,7 @@ function getSetoresNavItems(): NavItem[] {
     {
       icon: <Ico><path d="M12 2v20" /><path d="M17 6.5c0-1.9-2.2-3.5-5-3.5s-5 1.6-5 3.5 2.2 3.5 5 3.5 5 1.6 5 3.5-2.2 3.5-5 3.5-5-1.6-5-3.5" /></Ico>,
       label: 'Financeiro',
-      href: 'https://financeiro.grupongp.com.br',
+      href: '/financeiro',
     },
     {
       icon: <Ico><circle cx="9" cy="8" r="3" /><path d="M3 19c0-3.3 2.7-6 6-6s6 2.7 6 6" /><circle cx="18" cy="9" r="2.5" /><path d="M15.5 19c.3-2.1 2.1-3.8 4.3-4.1" /></Ico>,
@@ -393,6 +393,7 @@ function getTopbarActiveId(pathname: string): 'pessoas' | 'comercial' | 'comerci
   if (pathname.startsWith('/dashboard') || pathname.startsWith('/relatorio') || pathname.startsWith('/utm-builder') || pathname.startsWith('/ia-analise')) return 'reports'
   if (pathname.startsWith('/tarefas')) return 'tarefas'
   if (pathname.startsWith('/pessoas')) return 'pessoas'
+  if (pathname.startsWith('/financeiro')) return 'financeiro'
   if (pathname.startsWith('/trackeamento')) return 'trackeamento'
   if (pathname.startsWith('/comercial-digital')) return 'comercial-digital'
   if (pathname.startsWith('/comercial')) return 'comercial'
@@ -408,6 +409,7 @@ function getTopbarSubtitle(pathname: string, sectorTitle?: string, isClient?: bo
   }
   if (pathname.startsWith('/tarefas')) return 'Gestão de Tarefas'
   if (pathname.startsWith('/pessoas')) return 'Pessoas'
+  if (pathname.startsWith('/financeiro')) return 'Financeiro'
   if (pathname.startsWith('/trackeamento')) return 'NGP Forms'
   if (pathname.startsWith('/comercial-digital')) return 'Comercial digital'
   if (pathname.startsWith('/comercial')) return 'Comercial'
@@ -422,6 +424,7 @@ function getContextDescription(pathname: string, title: string, isClient: boolea
   }
   if (pathname.startsWith('/tarefas')) return 'Gerencie tarefas da equipe em um Kanban visual com prioridades e responsáveis.'
   if (pathname.startsWith('/pessoas')) return 'Acompanhe registros, cadastros e operações da equipe neste contexto.'
+  if (pathname.startsWith('/financeiro')) return 'Controle entradas, saídas, contas e cadastros financeiros no novo módulo interno.'
   if (pathname.startsWith('/trackeamento')) return 'Crie formulários, acompanhe respostas e leia a jornada de conversão em um único módulo.'
   if (pathname.startsWith('/comercial-digital')) return 'Fluxo do CRM digital, pipelines e gestão entregue aos clientes.'
   if (pathname.startsWith('/comercial')) return 'Rotas de pipeline, propostas, contratos e operação comercial da NGP.'

@@ -1,6 +1,7 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2"
 import { handleCors, json } from "../_shared/cors.ts"
+import { normalizeText, parseCurrencyInput } from "../_shared/financeiro.ts"
 import { validateSession } from "../_shared/roles.ts"
 
 async function checkFinanceiroAccess(sb: any, usuario_id: string): Promise<boolean> {
@@ -55,9 +56,13 @@ serve(async (req) => {
 
       if (action === 'criar') {
         const { nome, tipo, saldo_inicial } = payload
-        if (!nome || !tipo) return json(req, { error: 'nome e tipo são obrigatórios.' }, 400)
+        const normalizedNome = normalizeText(nome)
+        const normalizedTipo = normalizeText(tipo)
+        const parsedSaldoInicial = parseCurrencyInput(saldo_inicial ?? 0)
+        if (!normalizedNome || !normalizedTipo) return json(req, { error: 'nome e tipo são obrigatórios.' }, 400)
+        if (parsedSaldoInicial == null) return json(req, { error: 'Saldo inicial inválido.' }, 400)
         const { data, error } = await sb.from('fin_accounts').insert({
-          nome, tipo, saldo_inicial: Number(saldo_inicial ?? 0),
+          nome: normalizedNome, tipo: normalizedTipo, saldo_inicial: parsedSaldoInicial,
         }).select().single()
         if (error) return json(req, { error: 'Erro ao criar conta.' }, 500)
         return json(req, { account: data })
@@ -91,9 +96,13 @@ serve(async (req) => {
 
       if (action === 'criar') {
         const { nome, tipo, valor_padrao } = payload
-        if (!nome || !tipo) return json(req, { error: 'nome e tipo são obrigatórios.' }, 400)
+        const normalizedNome = normalizeText(nome)
+        const normalizedTipo = normalizeText(tipo)
+        const parsedValorPadrao = valor_padrao == null ? null : parseCurrencyInput(valor_padrao)
+        if (!normalizedNome || !normalizedTipo) return json(req, { error: 'nome e tipo são obrigatórios.' }, 400)
+        if (valor_padrao != null && parsedValorPadrao == null) return json(req, { error: 'Valor padrão inválido.' }, 400)
         const { data, error } = await sb.from('fin_products').insert({
-          nome, tipo, valor_padrao: valor_padrao ? Number(valor_padrao) : null,
+          nome: normalizedNome, tipo: normalizedTipo, valor_padrao: parsedValorPadrao,
         }).select().single()
         if (error) return json(req, { error: 'Erro ao criar produto.' }, 500)
         return json(req, { product: data })

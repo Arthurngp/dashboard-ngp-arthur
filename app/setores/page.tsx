@@ -219,9 +219,9 @@ const SETORES: Setor[] = [
         <path d="M17 6.5c0-1.9-2.2-3.5-5-3.5s-5 1.6-5 3.5 2.2 3.5 5 3.5 5 1.6 5 3.5-2.2 3.5-5 3.5-5-1.6-5-3.5"/>
       </svg>
     ),
-    href: 'https://financeiro.grupongp.com.br',
-    external: true,
-    embed: true, // abre inline no NGP Space
+    href: '/financeiro',
+    external: false,
+    embed: false,
     gradient: 'linear-gradient(135deg,#059669,#14b8a6)',
   },
   {

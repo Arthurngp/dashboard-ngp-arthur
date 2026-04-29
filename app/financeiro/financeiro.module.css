@@ -288,6 +288,18 @@
 }
 .actionBtnDel:hover { background: #fef2f2; color: #DC2626; border-color: #fecaca; }
 
+.actionBtnRecurring {
+  border-color: #bfdbfe;
+  color: #1d4ed8;
+  background: #eff6ff;
+  font-weight: 600;
+}
+.actionBtnRecurring:hover {
+  background: #dbeafe;
+  border-color: #93c5fd;
+  color: #1e40af;
+}
+
 .empty {
   text-align: center;
   padding: 48px;
@@ -459,6 +471,30 @@
   font-weight: 600;
   color: #1C1C1E;
   margin-bottom: 2px;
+}
+
+.cadastroRecurring {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  align-self: flex-start;
+  padding: 5px 10px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  margin-bottom: 2px;
+}
+
+.cadastroRecurringActive {
+  background: #ecfdf5;
+  color: #047857;
+  border: 1px solid #a7f3d0;
+}
+
+.cadastroRecurringPaused {
+  background: #f8fafc;
+  color: #64748b;
+  border: 1px solid #cbd5e1;
 }
 
 .cadastroInfo { font-size: 12px; color: #8E8E93; }

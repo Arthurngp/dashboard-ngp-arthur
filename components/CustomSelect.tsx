@@ -29,11 +29,15 @@ export default function CustomSelect({ label, caption, value, options, onChange,
   const [openUp, setOpenUp] = useState(false)
   const [menuStyle, setMenuStyle] = useState<React.CSSProperties>({})
   const containerRef = useRef<HTMLDivElement>(null)
+  const menuRef = useRef<HTMLDivElement>(null)
   const selectedOption = options.find(o => o.id === value)
 
   useEffect(() => {
     function handleClickOutside(event: MouseEvent) {
-      if (containerRef.current && !containerRef.current.contains(event.target as Node)) {
+      const target = event.target as Node
+      const clickedContainer = containerRef.current?.contains(target)
+      const clickedMenu = menuRef.current?.contains(target)
+      if (!clickedContainer && !clickedMenu) {
         setIsOpen(false)
       }
     }
@@ -59,6 +63,7 @@ export default function CustomSelect({ label, caption, value, options, onChange,
 
   const menu = (
     <div
+      ref={menuRef}
       className={`${styles.menu} ${openUp ? styles.menuUp : ''}`}
       style={menuFixed ? { ...menuStyle, zIndex: 99999 } : undefined}
     >

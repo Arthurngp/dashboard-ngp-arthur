@@ -1,6 +1,7 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2"
 import { handleCors, json } from "../_shared/cors.ts"
+import { normalizeText } from "../_shared/financeiro.ts"
 import { validateSession } from "../_shared/roles.ts"
 
 async function checkFinanceiroAccess(sb: any, usuario_id: string): Promise<boolean> {
@@ -32,8 +33,10 @@ serve(async (req) => {
 
     if (action === 'criar') {
       const { nome, tipo, cor } = payload
-      if (!nome || !tipo) return json(req, { error: 'Nome e tipo são obrigatórios.' }, 400)
-      const { data, error } = await sb.from('fin_categorias').insert({ nome, tipo, cor: cor || '#6b7280' }).select().single()
+      const normalizedNome = normalizeText(nome)
+      const normalizedTipo = normalizeText(tipo)
+      if (!normalizedNome || !normalizedTipo) return json(req, { error: 'Nome e tipo são obrigatórios.' }, 400)
+      const { data, error } = await sb.from('fin_categorias').insert({ nome: normalizedNome, tipo: normalizedTipo, cor: cor || '#6b7280' }).select().single()
       if (error) return json(req, { error: 'Erro ao criar categoria.' }, 500)
       return json(req, { categoria: data })
     }

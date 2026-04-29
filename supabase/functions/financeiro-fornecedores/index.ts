@@ -1,6 +1,7 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2"
 import { handleCors, json } from "../_shared/cors.ts"
+import { normalizeText } from "../_shared/financeiro.ts"
 import { validateSession } from "../_shared/roles.ts"
 
 async function checkFinanceiroAccess(sb: any, usuario_id: string): Promise<boolean> {
@@ -29,8 +30,9 @@ serve(async (req) => {
 
     if (action === 'criar') {
       const { nome, documento, telefone, email, observacoes } = payload
-      if (!nome) return json(req, { error: 'Nome é obrigatório.' }, 400)
-      const { data, error } = await sb.from('fin_fornecedores').insert({ nome, documento, telefone, email, observacoes, created_by: user.usuario_id }).select().single()
+      const normalizedNome = normalizeText(nome)
+      if (!normalizedNome) return json(req, { error: 'Nome é obrigatório.' }, 400)
+      const { data, error } = await sb.from('fin_fornecedores').insert({ nome: normalizedNome, documento: normalizeText(documento), telefone: normalizeText(telefone), email: normalizeText(email), observacoes: normalizeText(observacoes), created_by: user.usuario_id }).select().single()
       if (error) return json(req, { error: 'Erro ao criar fornecedor.' }, 500)
       return json(req, { fornecedor: data })
     }
@@ -38,7 +40,9 @@ serve(async (req) => {
     if (action === 'atualizar') {
       const { id, nome, documento, telefone, email, observacoes } = payload
       if (!id) return json(req, { error: 'ID obrigatório.' }, 400)
-      const { data, error } = await sb.from('fin_fornecedores').update({ nome, documento, telefone, email, observacoes }).eq('id', id).select().single()
+      const normalizedNome = normalizeText(nome)
+      if (!normalizedNome) return json(req, { error: 'Nome é obrigatório.' }, 400)
+      const { data, error } = await sb.from('fin_fornecedores').update({ nome: normalizedNome, documento: normalizeText(documento), telefone: normalizeText(telefone), email: normalizeText(email), observacoes: normalizeText(observacoes) }).eq('id', id).select().single()
       if (error) return json(req, { error: 'Erro ao atualizar fornecedor.' }, 500)
       return json(req, { fornecedor: data })
     }

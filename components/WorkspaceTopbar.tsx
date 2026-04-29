@@ -86,7 +86,7 @@ export default function WorkspaceTopbar({
       { id: 'comercial', label: 'Comercial', active: activeId === 'comercial', href: '/comercial' },
       { id: 'comercial-digital', label: 'Comercial Digital', active: activeId === 'comercial-digital', href: '/comercial-digital' },
       { id: 'tarefas', label: 'Gestão de Tarefas', active: activeId === 'tarefas', href: '/tarefas' },
-      { id: 'financeiro', label: 'Financeiro', active: activeId === 'financeiro', href: 'https://financeiro.grupongp.com.br', external: true },
+      { id: 'financeiro', label: 'Financeiro', active: activeId === 'financeiro', href: '/financeiro' },
       { id: 'trackeamento', label: 'NGP Forms', active: activeId === 'trackeamento', href: '/trackeamento' },
       { id: 'gestao-anuncios', label: 'Gestão de anúncios', active: activeId === 'gestao-anuncios', disabled: true },
     ]

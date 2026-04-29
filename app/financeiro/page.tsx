@@ -3,11 +3,13 @@ import { Suspense, useEffect, useState, useCallback, useRef } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { getSession } from '@/lib/auth'
 import { SURL } from '@/lib/constants'
+import { parseCurrencyInput } from '@/lib/financeiro'
 import { efHeaders } from '@/lib/api'
 import Sidebar from '@/components/Sidebar'
 import NGPLoading from '@/components/NGPLoading'
 import CustomSelect from '@/components/CustomSelect'
 import CustomDatePicker from '@/components/CustomDatePicker'
+import FinanceiroAuthModal from '@/components/FinanceiroAuthModal'
 import { financeiroNav } from './financeiro-nav'
 import styles from './financeiro.module.css'
 
@@ -16,7 +18,18 @@ type TipoFiltro = 'todos' | 'entrada' | 'saida'
 type ViewMode = 'competencia' | 'caixa'
 
 interface Categoria    { id: string; nome: string; cor: string; tipo: string }
-interface FinCliente   { id: string; nome: string; documento?: string; telefone?: string; email?: string; observacoes?: string }
+interface FinCliente   {
+  id: string
+  nome: string
+  documento?: string
+  telefone?: string
+  email?: string
+  observacoes?: string
+  mensalidade_valor?: number | null
+  mensalidade_descricao?: string | null
+  dia_cobranca?: number | null
+  assinatura_ativa?: boolean | null
+}
 interface FinFornecedor{ id: string; nome: string; documento?: string; telefone?: string; email?: string; observacoes?: string }
 interface FinAccount   { id: string; nome: string; tipo: string; saldo_inicial: number; saldo_atual: number }
 interface FinCostCenter{ id: string; nome: string; descricao?: string }
@@ -49,6 +62,10 @@ function fmtDate(iso?: string | null) {
   return `${d}/${m}/${y}`
 }
 function todayISO() { return new Date().toISOString().split('T')[0] }
+function monthStartISO() {
+  const now = new Date()
+  return new Date(now.getFullYear(), now.getMonth(), 1).toISOString().split('T')[0]
+}
 
 // ── SelectComCadastro: CustomSelect + botão inline de cadastro rápido ────────
 interface QuickCreateField { key: string; label: string; placeholder?: string; type?: string; required?: boolean }
@@ -129,6 +146,7 @@ function FinanceiroInner() {
   const searchParams = useSearchParams()
   const [sess, setSess]             = useState<ReturnType<typeof getSession> | null>(null)
   const [authorized, setAuthorized] = useState(false)
+  const [authChecked, setAuthChecked] = useState(false)
   const [activeTab, setActiveTab]   = useState<Tab>('transacoes')
   const [loading, setLoading]       = useState(false)
   const [msg, setMsg]               = useState<{ type: 'ok' | 'err'; text: string } | null>(null)
@@ -169,11 +187,21 @@ function FinanceiroInner() {
 
   // ── Modal cadastro cliente/fornecedor (aba) ───────────────────────────────
   const [showCadForm, setShowCadForm] = useState(false)
+  const [cadMode, setCadMode]         = useState<'criar' | 'editar'>('criar')
+  const [cadEditId, setCadEditId]     = useState<string | null>(null)
   const [cadNome, setCadNome]         = useState('')
   const [cadDoc, setCadDoc]           = useState('')
   const [cadTel, setCadTel]           = useState('')
   const [cadEmail, setCadEmail]       = useState('')
   const [cadObs, setCadObs]           = useState('')
+  const [cadMensalidadeValor, setCadMensalidadeValor] = useState('')
+  const [cadMensalidadeDesc, setCadMensalidadeDesc]   = useState('')
+  const [cadDiaCobranca, setCadDiaCobranca]           = useState('')
+  const [cadAssinaturaAtiva, setCadAssinaturaAtiva]   = useState(false)
+  const [cadCriarRecebimento, setCadCriarRecebimento] = useState(false)
+  const [cadRecebimentoValor, setCadRecebimentoValor] = useState('')
+  const [cadRecebimentoDesc, setCadRecebimentoDesc]   = useState('')
+  const [cadRecebimentoData, setCadRecebimentoData]   = useState(todayISO())
   const [cadSaving, setCadSaving]     = useState(false)
 
   // ── Modal nova conta bancária (aba Contas) ────────────────────────────────
@@ -207,19 +235,26 @@ function FinanceiroInner() {
     if (!s || s.auth !== '1') { router.replace('/login'); return }
     if (s.role !== 'ngp' && s.role !== 'admin') { router.replace('/setores'); return }
     const flag = sessionStorage.getItem('fin_auth_ok')
-    if (!flag) { router.replace('/setores'); return }
     setSess(s)
-    setAuthorized(true)
+    setAuthorized(flag === '1')
+    setAuthChecked(true)
   }, [router])
 
   const callFn = useCallback(async (fn: string, body: object) => {
     const s = getSession()
     if (!s) return null
-    const res = await fetch(`${SURL}/functions/v1/${fn}`, {
-      method: 'POST', headers: efHeaders(),
-      body: JSON.stringify({ session_token: s.session, ...body }),
-    })
-    return res.json()
+    try {
+      const res = await fetch(`${SURL}/functions/v1/${fn}`, {
+        method: 'POST', headers: efHeaders(),
+        body: JSON.stringify({ session_token: s.session, ...body }),
+      })
+      const text = await res.text()
+      const data = text ? JSON.parse(text) : null
+      if (!res.ok && !data?.error) return { error: 'Erro inesperado ao processar a solicitação.' }
+      return data
+    } catch {
+      return { error: 'Erro de conexão. Tente novamente.' }
+    }
   }, [])
 
   const fetchTransacoes   = useCallback(async () => {
@@ -229,8 +264,18 @@ function FinanceiroInner() {
         callFn('financeiro-transacoes', { action: 'listar', mes: mesFiltro, ano: anoFiltro, view: viewMode }),
         callFn('financeiro-transacoes', { action: 'resumo', mes: mesFiltro, ano: anoFiltro, view: viewMode }),
       ])
-      if (data?.transacoes) setTransacoes(data.transacoes)
-      if (r && !r.error) setResumo(r)
+      if (data?.error) {
+        setTransacoes([])
+        showMsg('err', data.error)
+      } else if (data?.transacoes) {
+        setTransacoes(data.transacoes)
+      }
+      if (r?.error) {
+        setResumo({ entradas: 0, saidas: 0, saldo: 0 })
+        showMsg('err', r.error)
+      } else if (r) {
+        setResumo(r)
+      }
     } finally { setLoading(false) }
   }, [callFn, mesFiltro, anoFiltro, viewMode])
 
@@ -247,7 +292,9 @@ function FinanceiroInner() {
     fetchAccounts(); fetchCostCenters(); fetchProducts()
   }, [authorized, fetchCategorias, fetchClientes, fetchFornecedores, fetchAccounts, fetchCostCenters, fetchProducts])
 
-  useEffect(() => { if (authorized) fetchTransacoes() }, [authorized, fetchTransacoes])
+  useEffect(() => {
+    if (authorized && activeTab === 'transacoes') fetchTransacoes()
+  }, [authorized, activeTab, fetchTransacoes])
 
   function resetForm() {
     setFormMode('criar'); setEditId(null)
@@ -256,6 +303,13 @@ function FinanceiroInner() {
     setFCat(''); setFCliente(''); setFFornecedor('')
     setFAccount(''); setFCostCenter(''); setFProduct('')
     setFStatus('confirmado'); setFObs('')
+  }
+
+  function resetCadastroForm() {
+    setCadMode('criar'); setCadEditId(null)
+    setCadNome(''); setCadDoc(''); setCadTel(''); setCadEmail(''); setCadObs('')
+    setCadMensalidadeValor(''); setCadMensalidadeDesc(''); setCadDiaCobranca(''); setCadAssinaturaAtiva(false)
+    setCadCriarRecebimento(false); setCadRecebimentoValor(''); setCadRecebimentoDesc(''); setCadRecebimentoData(todayISO())
   }
 
   function openNovaTransacao() { resetForm(); setShowForm(true) }
@@ -286,13 +340,82 @@ function FinanceiroInner() {
     }
   }
 
+  function openNovoCadastro() {
+    resetCadastroForm()
+    setShowCadForm(true)
+  }
+
+  function openEditarCadastroCliente(cliente: FinCliente) {
+    setCadMode('editar'); setCadEditId(cliente.id)
+    setCadNome(cliente.nome || '')
+    setCadDoc(cliente.documento || '')
+    setCadTel(cliente.telefone || '')
+    setCadEmail(cliente.email || '')
+    setCadObs(cliente.observacoes || '')
+    setCadMensalidadeValor(cliente.mensalidade_valor != null ? String(cliente.mensalidade_valor) : '')
+    setCadMensalidadeDesc(cliente.mensalidade_descricao || '')
+    setCadDiaCobranca(cliente.dia_cobranca != null ? String(cliente.dia_cobranca) : '')
+    setCadAssinaturaAtiva(Boolean(cliente.assinatura_ativa))
+    setCadCriarRecebimento(false)
+    setCadRecebimentoValor('')
+    setCadRecebimentoDesc('')
+    setCadRecebimentoData(todayISO())
+    setShowCadForm(true)
+  }
+
+  function openEditarCadastroFornecedor(fornecedor: FinFornecedor) {
+    setCadMode('editar'); setCadEditId(fornecedor.id)
+    setCadNome(fornecedor.nome || '')
+    setCadDoc(fornecedor.documento || '')
+    setCadTel(fornecedor.telefone || '')
+    setCadEmail(fornecedor.email || '')
+    setCadObs(fornecedor.observacoes || '')
+    setCadMensalidadeValor(''); setCadMensalidadeDesc(''); setCadDiaCobranca(''); setCadAssinaturaAtiva(false)
+    setCadCriarRecebimento(false); setCadRecebimentoValor(''); setCadRecebimentoDesc(''); setCadRecebimentoData(todayISO())
+    setShowCadForm(true)
+  }
+
+  function lancarMensalidade(cliente: FinCliente) {
+    if (!cliente.mensalidade_valor || cliente.mensalidade_valor <= 0) {
+      showMsg('err', 'Este cliente não possui uma mensalidade válida cadastrada.')
+      return
+    }
+    resetForm()
+    setFormMode('criar')
+    setFTipo('entrada')
+    setFDesc(cliente.mensalidade_descricao?.trim() || `Mensalidade ${cliente.nome}`)
+    setFValor(String(cliente.mensalidade_valor))
+    setFCompDate(monthStartISO())
+    setFPayDate('')
+    setFCliente(cliente.id)
+    setFStatus('pendente')
+    setShowForm(true)
+  }
+
+  function abrirRecebimentoPendenteCliente(cliente: FinCliente) {
+    resetForm()
+    setFormMode('criar')
+    setFTipo('entrada')
+    setFDesc(`Recebimento pendente ${cliente.nome}`)
+    setFCompDate(todayISO())
+    setFPayDate('')
+    setFCliente(cliente.id)
+    setFStatus('pendente')
+    setShowForm(true)
+  }
+
   async function salvarTransacao(e: React.FormEvent) {
     e.preventDefault()
+    const valor = parseCurrencyInput(fValor)
+    if (valor == null || valor <= 0) {
+      showMsg('err', 'Informe um valor monetário válido maior que zero.')
+      return
+    }
     setSaving(true)
     try {
       const payload: Record<string, unknown> = {
         tipo: fTipo, descricao: fDesc,
-        valor: parseFloat(fValor.replace(',', '.')),
+        valor,
         competence_date: fCompDate,
         payment_date: fStatus === 'confirmado' ? fPayDate : null,
         categoria_id: fCat || null, cliente_id: fCliente || null,
@@ -330,15 +453,59 @@ function FinanceiroInner() {
 
   async function salvarCadastro(e: React.FormEvent) {
     e.preventDefault()
+    const isCliente = activeTab === 'clientes'
+    const mensalidadeValor = parseCurrencyInput(cadMensalidadeValor)
+    if (isCliente && cadMensalidadeValor.trim() && (mensalidadeValor == null || mensalidadeValor <= 0)) {
+      showMsg('err', 'Informe um valor mensal válido.')
+      return
+    }
+    const diaCobranca = cadDiaCobranca.trim() ? Number(cadDiaCobranca) : null
+    if (isCliente && diaCobranca != null && (!Number.isInteger(diaCobranca) || diaCobranca < 1 || diaCobranca > 31)) {
+      showMsg('err', 'Use um dia de cobrança entre 1 e 31.')
+      return
+    }
+    if (isCliente && cadAssinaturaAtiva && (mensalidadeValor == null || mensalidadeValor <= 0)) {
+      showMsg('err', 'Defina um valor mensal maior que zero para ativar a assinatura.')
+      return
+    }
+    const recebimentoValor = parseCurrencyInput(cadRecebimentoValor)
+    if (isCliente && cadCriarRecebimento && (recebimentoValor == null || recebimentoValor <= 0)) {
+      showMsg('err', 'Informe um valor válido para o recebimento pendente.')
+      return
+    }
+    if (isCliente && cadCriarRecebimento && !cadRecebimentoData) {
+      showMsg('err', 'Defina a data do recebimento pendente.')
+      return
+    }
     setCadSaving(true)
     try {
       const fn   = activeTab === 'clientes' ? 'financeiro-clientes' : 'financeiro-fornecedores'
-      const data = await callFn(fn, { action: 'criar', nome: cadNome, documento: cadDoc, telefone: cadTel, email: cadEmail, observacoes: cadObs })
+      const action = cadMode === 'criar' ? 'criar' : 'atualizar'
+      const data = await callFn(fn, {
+        action,
+        id: cadMode === 'editar' ? cadEditId : undefined,
+        nome: cadNome,
+        documento: cadDoc,
+        telefone: cadTel,
+        email: cadEmail,
+        observacoes: cadObs,
+        ...(isCliente ? {
+          mensalidade_valor: mensalidadeValor,
+          mensalidade_descricao: cadMensalidadeDesc || null,
+          dia_cobranca: diaCobranca,
+          assinatura_ativa: cadAssinaturaAtiva,
+          criar_recebimento_pendente: cadCriarRecebimento,
+          recebimento_valor: recebimentoValor,
+          recebimento_descricao: cadRecebimentoDesc || null,
+          recebimento_competencia: cadRecebimentoData || null,
+        } : {}),
+      })
       if (data?.error) { showMsg('err', data.error); return }
-      showMsg('ok', `${activeTab === 'clientes' ? 'Cliente' : 'Fornecedor'} cadastrado!`)
+      showMsg('ok', `${activeTab === 'clientes' ? 'Cliente' : 'Fornecedor'} ${cadMode === 'criar' ? 'cadastrado' : 'atualizado'}!`)
       setShowCadForm(false)
-      setCadNome(''); setCadDoc(''); setCadTel(''); setCadEmail(''); setCadObs('')
+      resetCadastroForm()
       activeTab === 'clientes' ? fetchClientes() : fetchFornecedores()
+      if (activeTab === 'clientes') fetchTransacoes()
     } finally { setCadSaving(false) }
   }
 
@@ -361,12 +528,17 @@ function FinanceiroInner() {
 
   async function salvarConta(e: React.FormEvent) {
     e.preventDefault()
+    const saldoInicial = parseCurrencyInput(contaSaldo)
+    if (contaSaldo.trim() && saldoInicial == null) {
+      showMsg('err', 'Informe um saldo inicial válido.')
+      return
+    }
     setContaSaving(true)
     try {
       const data = await callFn('financeiro-aux', {
         entity: 'accounts', action: 'criar',
         nome: contaNome, tipo: contaTipo,
-        saldo_inicial: parseFloat(contaSaldo.replace(',', '.')) || 0,
+        saldo_inicial: saldoInicial ?? 0,
       })
       if (data?.error) { showMsg('err', data.error); return }
       showMsg('ok', 'Conta cadastrada!')
@@ -393,10 +565,15 @@ function FinanceiroInner() {
   }
 
   async function quickCreateProduto(fields: Record<string, string>): Promise<boolean> {
+    const valorPadrao = parseCurrencyInput(fields.valor_padrao)
+    if (fields.valor_padrao?.trim() && valorPadrao == null) {
+      showMsg('err', 'Informe um valor padrão válido.')
+      return false
+    }
     const data = await callFn('financeiro-aux', {
       entity: 'products', action: 'criar',
       nome: fields.nome, tipo: fields.tipo || 'servico',
-      valor_padrao: fields.valor_padrao ? parseFloat(fields.valor_padrao.replace(',', '.')) : null,
+      valor_padrao: valorPadrao,
     })
     if (data?.error) { showMsg('err', data.error); return false }
     await fetchProducts()
@@ -405,10 +582,15 @@ function FinanceiroInner() {
   }
 
   async function quickCreateConta(fields: Record<string, string>): Promise<boolean> {
+    const saldoInicial = parseCurrencyInput(fields.saldo_inicial)
+    if (fields.saldo_inicial?.trim() && saldoInicial == null) {
+      showMsg('err', 'Informe um saldo inicial válido.')
+      return false
+    }
     const data = await callFn('financeiro-aux', {
       entity: 'accounts', action: 'criar',
       nome: fields.nome, tipo: fields.tipo || 'banco',
-      saldo_inicial: fields.saldo_inicial ? parseFloat(fields.saldo_inicial.replace(',', '.')) : 0,
+      saldo_inicial: saldoInicial ?? 0,
     })
     if (data?.error) { showMsg('err', data.error); return false }
     await fetchAccounts()
@@ -420,20 +602,28 @@ function FinanceiroInner() {
   const catsFiltradas = categorias.filter(c => c.tipo === fTipo)
   const resumoLabel = viewMode === 'competencia' ? 'Competência (DRE)' : 'Caixa (Pagos)'
 
-  if (!authorized) return <NGPLoading loading loadingText="Carregando financeiro..." />
+  if (!authChecked) return <NGPLoading loading loadingText="Carregando financeiro..." />
 
   return (
-    <div className={styles.layout}>
-      <Sidebar minimal sectorNavTitle="FINANCEIRO" sectorNav={financeiroNav} />
+    <>
+      {!authorized && (
+        <FinanceiroAuthModal
+          onSuccess={() => setAuthorized(true)}
+          onClose={() => router.replace('/setores')}
+        />
+      )}
 
-      <main className={styles.main}>
-        <div className={styles.content}>
+      <div className={styles.layout}>
+        <Sidebar minimal sectorNavTitle="FINANCEIRO" sectorNav={financeiroNav} />
 
-          <header className={styles.header}>
-            <div className={styles.eyebrow}>Setor Financeiro</div>
-            <h1 className={styles.title}>Financeiro NGP</h1>
-            <p className={styles.subtitle}>Controle de entradas, saídas, clientes e fornecedores.</p>
-          </header>
+        <main className={styles.main}>
+          <div className={styles.content}>
+
+            <header className={styles.header}>
+              <div className={styles.eyebrow}>Setor Financeiro</div>
+              <h1 className={styles.title}>Financeiro NGP</h1>
+              <p className={styles.subtitle}>Controle de entradas, saídas, clientes e fornecedores.</p>
+            </header>
 
 
           {msg && (
@@ -555,18 +745,34 @@ function FinanceiroInner() {
             <>
               <div className={styles.toolbar}>
                 <span style={{ fontSize: 13, color: '#8E8E93' }}>{clientes.length} cliente{clientes.length !== 1 ? 's' : ''}</span>
-                <button className={styles.btnNovo} onClick={() => { setCadNome(''); setCadDoc(''); setCadTel(''); setCadEmail(''); setCadObs(''); setShowCadForm(true) }}>+ Novo cliente</button>
+                <button className={styles.btnNovo} onClick={openNovoCadastro}>+ Novo cliente</button>
               </div>
               {clientes.length === 0 ? <div className={styles.empty}>Nenhum cliente cadastrado.</div> : (
                 <div className={styles.cardGrid}>
                   {clientes.map(c => (
                     <div key={c.id} className={styles.cadastroCard}>
                       <div className={styles.cadastroNome}>{c.nome}</div>
+                      {c.mensalidade_valor != null && (
+                        <div className={`${styles.cadastroRecurring} ${c.assinatura_ativa ? styles.cadastroRecurringActive : styles.cadastroRecurringPaused}`}>
+                          {c.assinatura_ativa ? 'Assinatura ativa' : 'Assinatura cadastrada'} · {fmtBRL(c.mensalidade_valor)}
+                        </div>
+                      )}
+                      {c.dia_cobranca != null && <div className={styles.cadastroInfo}>Cobrança no dia {c.dia_cobranca}</div>}
+                      {c.mensalidade_descricao && <div className={styles.cadastroInfo}>{c.mensalidade_descricao}</div>}
                       {c.documento   && <div className={styles.cadastroInfo}>Doc: {c.documento}</div>}
                       {c.telefone    && <div className={styles.cadastroInfo}>Tel: {c.telefone}</div>}
                       {c.email       && <div className={styles.cadastroInfo}>{c.email}</div>}
                       {c.observacoes && <div className={styles.cadastroInfo}>{c.observacoes}</div>}
                       <div className={styles.cadastroActions}>
+                        <button className={styles.actionBtn} onClick={() => openEditarCadastroCliente(c)}>Editar</button>
+                        {c.assinatura_ativa && c.mensalidade_valor != null && c.mensalidade_valor > 0 && (
+                          <button className={`${styles.actionBtn} ${styles.actionBtnRecurring}`} onClick={() => lancarMensalidade(c)}>
+                            Lançar mensalidade
+                          </button>
+                        )}
+                        <button className={`${styles.actionBtn} ${styles.actionBtnRecurring}`} onClick={() => abrirRecebimentoPendenteCliente(c)}>
+                          Recebimento pendente
+                        </button>
                         <button className={`${styles.actionBtn} ${styles.actionBtnDel}`} onClick={() => deletarCadastro(c.id, 'clientes')}>Remover</button>
                       </div>
                     </div>
@@ -581,7 +787,7 @@ function FinanceiroInner() {
             <>
               <div className={styles.toolbar}>
                 <span style={{ fontSize: 13, color: '#8E8E93' }}>{fornecedores.length} fornecedor{fornecedores.length !== 1 ? 'es' : ''}</span>
-                <button className={styles.btnNovo} onClick={() => { setCadNome(''); setCadDoc(''); setCadTel(''); setCadEmail(''); setCadObs(''); setShowCadForm(true) }}>+ Novo fornecedor</button>
+                <button className={styles.btnNovo} onClick={openNovoCadastro}>+ Novo fornecedor</button>
               </div>
               {fornecedores.length === 0 ? <div className={styles.empty}>Nenhum fornecedor cadastrado.</div> : (
                 <div className={styles.cardGrid}>
@@ -593,6 +799,7 @@ function FinanceiroInner() {
                       {f.email       && <div className={styles.cadastroInfo}>{f.email}</div>}
                       {f.observacoes && <div className={styles.cadastroInfo}>{f.observacoes}</div>}
                       <div className={styles.cadastroActions}>
+                        <button className={styles.actionBtn} onClick={() => openEditarCadastroFornecedor(f)}>Editar</button>
                         <button className={`${styles.actionBtn} ${styles.actionBtnDel}`} onClick={() => deletarCadastro(f.id, 'fornecedores')}>Remover</button>
                       </div>
                     </div>
@@ -652,20 +859,20 @@ function FinanceiroInner() {
             </>
           )}
 
-          <footer className={styles.footer}>
-            <span className={styles.footerDot} />
-            Conectado ao Supabase · {sess?.user}
-          </footer>
-        </div>
-      </main>
+            <footer className={styles.footer}>
+              <span className={styles.footerDot} />
+              Conectado ao Supabase · {sess?.user}
+            </footer>
+          </div>
+        </main>
 
-      {/* ── Modal transação V2 ── */}
-      {showForm && (
-        <div className={styles.formOverlay} onClick={() => setShowForm(false)}>
-          <div className={styles.formModal} onClick={e => e.stopPropagation()}>
-            <div className={styles.formTitle}>{formMode === 'criar' ? 'Nova transação' : 'Editar transação'}</div>
-            <form onSubmit={salvarTransacao}>
-              <div className={styles.formGrid}>
+        {/* ── Modal transação V2 ── */}
+        {showForm && (
+          <div className={styles.formOverlay} onClick={() => setShowForm(false)}>
+            <div className={styles.formModal} onClick={e => e.stopPropagation()}>
+              <div className={styles.formTitle}>{formMode === 'criar' ? 'Nova transação' : 'Editar transação'}</div>
+              <form onSubmit={salvarTransacao}>
+                <div className={styles.formGrid}>
 
                 <CustomSelect label="Tipo" value={fTipo} menuFixed
                   options={[{ id: 'saida', label: '↓ Saída' }, { id: 'entrada', label: '↑ Entrada' }]}
@@ -770,23 +977,27 @@ function FinanceiroInner() {
                   <textarea value={fObs} onChange={e => setFObs(e.target.value)} placeholder="Opcional" />
                 </div>
 
-              </div>
-              <div className={styles.formActions}>
-                <button type="button" className={styles.btnCancelForm} onClick={() => setShowForm(false)}>Cancelar</button>
-                <button type="submit" className={styles.btnSave} disabled={saving}>{saving ? 'Salvando...' : 'Salvar'}</button>
-              </div>
-            </form>
+                </div>
+                <div className={styles.formActions}>
+                  <button type="button" className={styles.btnCancelForm} onClick={() => setShowForm(false)}>Cancelar</button>
+                  <button type="submit" className={styles.btnSave} disabled={saving}>{saving ? 'Salvando...' : 'Salvar'}</button>
+                </div>
+              </form>
+            </div>
           </div>
-        </div>
-      )}
+        )}
 
-      {/* ── Modal cadastro cliente/fornecedor (aba) ── */}
-      {showCadForm && (
-        <div className={styles.formOverlay} onClick={() => setShowCadForm(false)}>
-          <div className={styles.formModal} onClick={e => e.stopPropagation()}>
-            <div className={styles.formTitle}>{activeTab === 'clientes' ? 'Novo cliente' : 'Novo fornecedor'}</div>
-            <form onSubmit={salvarCadastro}>
-              <div className={styles.formGrid}>
+        {/* ── Modal cadastro cliente/fornecedor (aba) ── */}
+        {showCadForm && (
+          <div className={styles.formOverlay} onClick={() => setShowCadForm(false)}>
+            <div className={styles.formModal} onClick={e => e.stopPropagation()}>
+              <div className={styles.formTitle}>
+                {cadMode === 'criar'
+                  ? activeTab === 'clientes' ? 'Novo cliente' : 'Novo fornecedor'
+                  : activeTab === 'clientes' ? 'Editar cliente' : 'Editar fornecedor'}
+              </div>
+              <form onSubmit={salvarCadastro}>
+                <div className={styles.formGrid}>
                 <div className={`${styles.field} ${styles.formGridFull}`}>
                   <label>Nome *</label>
                   <input value={cadNome} onChange={e => setCadNome(e.target.value)} placeholder="Nome completo ou razão social" required />
@@ -807,23 +1018,77 @@ function FinanceiroInner() {
                   <label>Observações</label>
                   <textarea value={cadObs} onChange={e => setCadObs(e.target.value)} placeholder="Opcional" />
                 </div>
-              </div>
-              <div className={styles.formActions}>
-                <button type="button" className={styles.btnCancelForm} onClick={() => setShowCadForm(false)}>Cancelar</button>
-                <button type="submit" className={styles.btnSave} disabled={cadSaving}>{cadSaving ? 'Salvando...' : 'Cadastrar'}</button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
 
-      {/* ── Modal nova conta (aba Contas) ── */}
-      {showContaForm && (
-        <div className={styles.formOverlay} onClick={() => setShowContaForm(false)}>
-          <div className={styles.formModal} onClick={e => e.stopPropagation()}>
-            <div className={styles.formTitle}>Nova conta bancária</div>
-            <form onSubmit={salvarConta}>
-              <div className={styles.formGrid}>
+                {activeTab === 'clientes' && (
+                  <>
+                    <CustomSelect
+                      label="Assinatura mensal"
+                      value={cadAssinaturaAtiva ? 'ativa' : 'inativa'}
+                      menuFixed
+                      options={[
+                        { id: 'inativa', label: 'Sem assinatura ativa' },
+                        { id: 'ativa', label: 'Assinatura ativa' },
+                      ]}
+                      onChange={v => setCadAssinaturaAtiva(v === 'ativa')}
+                    />
+                    <div className={styles.field}>
+                      <label>Valor mensal (R$)</label>
+                      <input value={cadMensalidadeValor} onChange={e => setCadMensalidadeValor(e.target.value)} placeholder="1000,00" />
+                    </div>
+                    <div className={styles.field}>
+                      <label>Dia de cobrança</label>
+                      <input type="number" min="1" max="31" value={cadDiaCobranca} onChange={e => setCadDiaCobranca(e.target.value)} placeholder="Ex: 5" />
+                    </div>
+                    <div className={`${styles.field} ${styles.formGridFull}`}>
+                      <label>Descrição da assinatura</label>
+                      <input value={cadMensalidadeDesc} onChange={e => setCadMensalidadeDesc(e.target.value)} placeholder="Ex: Gestão de Performance Mensal" />
+                    </div>
+
+                    <CustomSelect
+                      label="Recebimento pendente agora"
+                      value={cadCriarRecebimento ? 'sim' : 'nao'}
+                      menuFixed
+                      options={[
+                        { id: 'nao', label: 'Não criar agora' },
+                        { id: 'sim', label: 'Criar recebimento pendente' },
+                      ]}
+                      onChange={v => setCadCriarRecebimento(v === 'sim')}
+                    />
+                    <div className={styles.field}>
+                      <label>Valor do recebimento (R$)</label>
+                      <input value={cadRecebimentoValor} onChange={e => setCadRecebimentoValor(e.target.value)} placeholder="1000,00" disabled={!cadCriarRecebimento} />
+                    </div>
+                    <CustomDatePicker
+                      caption="Competência do recebimento"
+                      value={cadCriarRecebimento ? cadRecebimentoData : ''}
+                      onChange={setCadRecebimentoData}
+                      disabled={!cadCriarRecebimento}
+                    />
+                    <div className={`${styles.field} ${styles.formGridFull}`}>
+                      <label>Descrição do recebimento</label>
+                      <input value={cadRecebimentoDesc} onChange={e => setCadRecebimentoDesc(e.target.value)} placeholder="Ex: Setup inicial, parcela única, entrada pendente" disabled={!cadCriarRecebimento} />
+                    </div>
+                  </>
+                )}
+                </div>
+                <div className={styles.formActions}>
+                  <button type="button" className={styles.btnCancelForm} onClick={() => setShowCadForm(false)}>Cancelar</button>
+                  <button type="submit" className={styles.btnSave} disabled={cadSaving}>
+                    {cadSaving ? 'Salvando...' : cadMode === 'criar' ? 'Cadastrar' : 'Salvar alterações'}
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
+        )}
+
+        {/* ── Modal nova conta (aba Contas) ── */}
+        {showContaForm && (
+          <div className={styles.formOverlay} onClick={() => setShowContaForm(false)}>
+            <div className={styles.formModal} onClick={e => e.stopPropagation()}>
+              <div className={styles.formTitle}>Nova conta bancária</div>
+              <form onSubmit={salvarConta}>
+                <div className={styles.formGrid}>
                 <div className={`${styles.field} ${styles.formGridFull}`}>
                   <label>Nome da conta *</label>
                   <input value={contaNome} onChange={e => setContaNome(e.target.value)} placeholder="Ex: Nubank PJ, Caixa Empresa" required />
@@ -840,16 +1105,17 @@ function FinanceiroInner() {
                   <label>Saldo inicial (R$)</label>
                   <input value={contaSaldo} onChange={e => setContaSaldo(e.target.value)} placeholder="0,00" />
                 </div>
-              </div>
-              <div className={styles.formActions}>
-                <button type="button" className={styles.btnCancelForm} onClick={() => setShowContaForm(false)}>Cancelar</button>
-                <button type="submit" className={styles.btnSave} disabled={contaSaving}>{contaSaving ? 'Salvando...' : 'Cadastrar'}</button>
-              </div>
-            </form>
+                </div>
+                <div className={styles.formActions}>
+                  <button type="button" className={styles.btnCancelForm} onClick={() => setShowContaForm(false)}>Cancelar</button>
+                  <button type="submit" className={styles.btnSave} disabled={contaSaving}>{contaSaving ? 'Salvando...' : 'Cadastrar'}</button>
+                </div>
+              </form>
+            </div>
           </div>
-        </div>
-      )}
-    </div>
+        )}
+      </div>
+    </>
   )
 }
 
