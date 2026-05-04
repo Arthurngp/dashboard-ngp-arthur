@@ -69,7 +69,7 @@ interface ImportedCsvRow {
   cost_center?: string | null
   account_name?: string | null
   valor: number
-  tipo: 'entrada' | 'saida'
+  tipo: 'entrada' | 'saida' | 'transferencia'
 }
 interface ImportPreviewData {
   accountId: string | null
@@ -133,7 +133,7 @@ interface ReceitaCnpjData {
 
 interface Transacao {
   id: string
-  tipo: 'entrada' | 'saida'
+  tipo: 'entrada' | 'saida' | 'transferencia'
   descricao: string
   valor: number
   data_transacao: string
@@ -375,6 +375,34 @@ function parsePtBrDateToIso(value: string) {
 
   return null
 }
+
+// Hook para redimensionamento de colunas via drag
+function useColResize(initialWidths: number[]) {
+  const [widths, setWidths] = useState<number[]>(initialWidths)
+  const dragging = useRef<{ colIdx: number; startX: number; startW: number } | null>(null)
+
+  const onMouseDown = useCallback((colIdx: number) => (e: React.MouseEvent) => {
+    e.preventDefault()
+    dragging.current = { colIdx, startX: e.clientX, startW: widths[colIdx] }
+
+    function onMove(ev: MouseEvent) {
+      if (!dragging.current) return
+      const delta = ev.clientX - dragging.current.startX
+      const newW = Math.max(60, dragging.current.startW + delta)
+      setWidths(prev => { const next = [...prev]; next[dragging.current!.colIdx] = newW; return next })
+    }
+    function onUp() {
+      dragging.current = null
+      window.removeEventListener('mousemove', onMove)
+      window.removeEventListener('mouseup', onUp)
+    }
+    window.addEventListener('mousemove', onMove)
+    window.addEventListener('mouseup', onUp)
+  }, [widths])
+
+  return { widths, onMouseDown }
+}
+
 function parseImportCsvContent(content: string): ImportedCsvRow[] {
   const lines = content.replace(/^\uFEFF/, '').split(/\r?\n/).filter(line => line.trim())
   if (lines.length <= 1) return []
@@ -430,11 +458,15 @@ function parseImportCsvContent(content: string): ImportedCsvRow[] {
       status = 'confirmado'
     }
 
-    // Lógica de Tipo (Entrada/Saída)
-    let tipo: 'entrada' | 'saida' = valorRaw < 0 ? 'saida' : 'entrada'
-    if (idxTipo >= 0) {
+    // Lógica de Tipo (Entrada/Saída/Transferência)
+    let tipo: 'entrada' | 'saida' | 'transferencia' = valorRaw < 0 ? 'saida' : 'entrada'
+    const descNorm = normalizeContactKey(descricao)
+    if (descNorm.includes('transfer') || descNorm.includes('transf ') || descNorm.includes('moviment')) {
+      tipo = 'transferencia'
+    } else if (idxTipo >= 0) {
       const t = normalizeContactKey(cols[idxTipo])
-      if (t.includes('sai') || t.includes('desp') || t.includes('deb') || t.includes('pag')) tipo = 'saida'
+      if (t.includes('transfer') || t.includes('transf')) tipo = 'transferencia'
+      else if (t.includes('sai') || t.includes('desp') || t.includes('deb') || t.includes('pag')) tipo = 'saida'
       else if (t.includes('ent') || t.includes('rec') || t.includes('cre')) tipo = 'entrada'
     }
 
@@ -666,7 +698,7 @@ function FinanceiroInner() {
   const [showForm, setShowForm]       = useState(false)
   const [formMode, setFormMode]       = useState<'criar' | 'editar'>('criar')
   const [editId, setEditId]           = useState<string | null>(null)
-  const [fTipo, setFTipo]             = useState<'entrada' | 'saida'>('saida')
+  const [fTipo, setFTipo]             = useState<'entrada' | 'saida' | 'transferencia'>('saida')
   const [fDesc, setFDesc]             = useState('')
   const [fValor, setFValor]           = useState('')
   const [fCompDate, setFCompDate]     = useState(todayISO())
@@ -1753,6 +1785,8 @@ function FinanceiroInner() {
     { field: 'valor', label: 'Valor' },
     { field: 'status', label: 'Status' },
   ]
+  // col 0=Competência, 1=Pagamento, 2=Descrição, 3=Categoria, 4=Centro, 5=Conta, 6=Tipo, 7=Valor, 8=Status, 9=Ações
+  const { widths: colWidths, onMouseDown: colResizeDown } = useColResize([100, 100, 180, 110, 80, 100, 80, 90, 90, 160])
 
   if (!authChecked) return <NGPLoading loading loadingText="Carregando financeiro..." />
 
@@ -1887,12 +1921,18 @@ function FinanceiroInner() {
                 <div className={styles.empty}>Nenhuma transação encontrada para este período.</div>
               ) : (
                 <div className={styles.tableWrap}>
-                  <table className={`${styles.table} ${styles.transacoesTable}`}>
+                  <table className={`${styles.table} ${styles.transacoesTable}`} style={{ tableLayout: 'fixed', width: colWidths.reduce((a, b) => a + b, 0) }}>
+                    <colgroup>
+                      {colWidths.map((w, i) => <col key={i} style={{ width: w }} />)}
+                    </colgroup>
                     <thead>
                       <tr>
-                        <th>Competência</th>
-                        {sortableHeaders.map(header => (
-                          <th key={header.field}>
+                        <th style={{ position: 'relative' }}>
+                          Competência
+                          <span className={styles.colResizer} onMouseDown={colResizeDown(0)} />
+                        </th>
+                        {sortableHeaders.map((header, i) => (
+                          <th key={header.field} style={{ position: 'relative' }}>
                             <button
                               type="button"
                               className={`${styles.sortHeaderBtn} ${transacaoSort.field === header.field ? styles.sortHeaderBtnActive : ''}`}
@@ -1905,9 +1945,13 @@ function FinanceiroInner() {
                                   : '↓'}
                               </span>
                             </button>
+                            <span className={styles.colResizer} onMouseDown={colResizeDown(i + 1)} />
                           </th>
                         ))}
-                        <th className={styles.actionsHeader}>Ações</th>
+                        <th className={styles.actionsHeader} style={{ position: 'relative' }}>
+                          Ações
+                          <span className={styles.colResizer} onMouseDown={colResizeDown(9)} />
+                        </th>
                       </tr>
                     </thead>
                     <tbody>
@@ -2333,8 +2377,8 @@ function FinanceiroInner() {
                 <div className={styles.formGrid}>
 
                 <CustomSelect label="Tipo" value={fTipo} menuFixed
-                  options={[{ id: 'saida', label: '↓ Saída' }, { id: 'entrada', label: '↑ Entrada' }]}
-                  onChange={v => { setFTipo(v as 'entrada'|'saida'); setFCat(''); setFCliente(''); setFFornecedor(''); setFProduct('') }}
+                  options={[{ id: 'saida', label: '↓ Saída' }, { id: 'entrada', label: '↑ Entrada' }, { id: 'transferencia', label: '⇄ Transferência' }]}
+                  onChange={v => { setFTipo(v as 'entrada'|'saida'|'transferencia'); setFCat(''); setFCliente(''); setFFornecedor(''); setFProduct('') }}
                 />
                 <CustomSelect label="Status" value={fStatus} menuFixed
                   options={[{ id: 'confirmado', label: 'Confirmado' }, { id: 'pendente', label: 'Pendente' }]}
@@ -2796,7 +2840,7 @@ function FinanceiroInner() {
                                 <button
                                   type="button"
                                   className={styles.importInlineAction}
-                                  onClick={() => openNovoContatoDaImportacao(index, rowTipo)}
+                                  onClick={() => openNovoContatoDaImportacao(index, rowTipo === 'transferencia' ? 'saida' : rowTipo)}
                                 >
                                   Novo contato
                                 </button>
@@ -2820,14 +2864,15 @@ function FinanceiroInner() {
                               <select
                                 className={styles.importCellSelect}
                                 value={draft?.tipo || row.tipo}
-                                onChange={e => setEditingImportRow(prev => prev ? { ...prev, tipo: e.target.value as 'entrada' | 'saida', categoria: '' } : prev)}
+                                onChange={e => setEditingImportRow(prev => prev ? { ...prev, tipo: e.target.value as 'entrada' | 'saida' | 'transferencia', categoria: '' } : prev)}
                               >
                                 <option value="entrada">Entrada</option>
                                 <option value="saida">Saída</option>
+                                <option value="transferencia">Transferência</option>
                               </select>
                             ) : (
-                              <span className={`${styles.tipoBadge} ${row.tipo === 'entrada' ? styles.tipoEntrada : styles.tipoSaida}`}>
-                                {row.tipo === 'entrada' ? 'Entrada' : 'Saída'}
+                              <span className={`${styles.tipoBadge} ${row.tipo === 'entrada' ? styles.tipoEntrada : row.tipo === 'transferencia' ? styles.statusConfirmado : styles.tipoSaida}`}>
+                                {row.tipo === 'entrada' ? 'Entrada' : row.tipo === 'transferencia' ? 'Transferência' : 'Saída'}
                               </span>
                             )}
                           </td>

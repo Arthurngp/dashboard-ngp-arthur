@@ -239,7 +239,8 @@
   background: #fff;
   border: 1px solid #E5E5EA;
   border-radius: 14px;
-  overflow: hidden;
+  overflow-x: auto;
+  overflow-y: hidden;
   min-width: 0;
   width: 100%;
 }
@@ -248,6 +249,7 @@
 .transacoesTable {
   min-width: 0;
   table-layout: fixed;
+  width: max-content;
 }
 
 .table thead tr { border-bottom: 1px solid #F0F0F0; }
@@ -317,60 +319,29 @@
 .transacoesTable td {
   padding-left: 12px;
   padding-right: 12px;
-}
-
-.transacoesTable th:nth-child(1),
-.transacoesTable td:nth-child(1) {
-  width: 9%;
-}
-
-.transacoesTable th:nth-child(2),
-.transacoesTable td:nth-child(2) {
-  width: 9%;
-}
-
-.transacoesTable th:nth-child(3),
-.transacoesTable td:nth-child(3) {
-  width: 12%;
-}
-
-.transacoesTable th:nth-child(4),
-.transacoesTable td:nth-child(4) {
-  width: 11%;
-}
-
-.transacoesTable th:nth-child(5),
-.transacoesTable td:nth-child(5) {
-  width: 6%;
-}
-
-.transacoesTable th:nth-child(6),
-.transacoesTable td:nth-child(6) {
-  width: 6%;
-}
-
-.transacoesTable th:nth-child(7),
-.transacoesTable td:nth-child(7) {
-  width: 7%;
-}
-
-.transacoesTable th:nth-child(8),
-.transacoesTable td:nth-child(8) {
-  width: 10%;
-}
-
-.transacoesTable th:nth-child(9),
-.transacoesTable td:nth-child(9) {
-  width: 10%;
-}
-
-.transacoesTable th:nth-child(10),
-.transacoesTable td:nth-child(10) {
-  width: 20%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .actionsHeader {
-  min-width: 180px;
+  min-width: 120px;
+}
+
+/* Resizer handle no th */
+.colResizer {
+  position: absolute;
+  right: 0;
+  top: 0;
+  bottom: 0;
+  width: 6px;
+  cursor: col-resize;
+  user-select: none;
+  z-index: 1;
+}
+.colResizer:hover,
+.colResizer:active {
+  background: #E5E5EA;
 }
 
 .actionsCell {
@@ -408,6 +379,23 @@
 .statusConfirmado { background: #ecfdf5; color: #059669; }
 .statusPendente   { background: #fffbeb; color: #d97706; }
 .statusCancelado  { background: #F5F5F7; color: #8E8E93; }
+
+.sourceTag {
+  display: inline-flex;
+  align-items: center;
+  width: fit-content;
+  max-width: 100%;
+  margin-top: 5px;
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: #eef2ff;
+  color: #4f46e5;
+  font-size: 11px;
+  font-weight: 700;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 
 .catDot {
   display: inline-block;
