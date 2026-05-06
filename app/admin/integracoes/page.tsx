@@ -188,14 +188,18 @@ export default function IntegracoesPage() {
               <div className={styles.tokenReveal}>
                 <div className={styles.tokenRevealTitle}>Copie este token agora</div>
                 <div className={styles.tokenValue}>{createdToken}</div>
+
                 <div className={styles.tokenRevealUrl}>
-                  <span className={styles.tokenRevealUrlLabel}>URL da API</span>
+                  <span className={styles.tokenRevealUrlLabel}>Endpoint do agente financeiro</span>
                   <div className={styles.tokenValue}>
-                    https://uqukfjtwsuffeunikiwz.supabase.co/functions/v1/admin-api-tokens
+                    https://uqukfjtwsuffeunikiwz.supabase.co/functions/v1/financeiro-openclaw
                   </div>
                 </div>
+
                 <div className={styles.tokenRevealHint}>
-                  Use o token no header: <code>Authorization: Bearer {'<token>'}</code>
+                  Envie o token no header: <code>x-ngp-api-token: {createdToken.slice(0, 16)}...</code>
+                  <br />
+                  Ou como: <code>Authorization: Bearer {'<token>'}</code>
                 </div>
               </div>
             )}
