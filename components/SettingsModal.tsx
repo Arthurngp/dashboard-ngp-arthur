@@ -2,6 +2,7 @@
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { getSession } from '@/lib/auth'
+import { getAdminNavigation } from '@/lib/admin-navigation'
 import styles from './SettingsModal.module.css'
 
 interface SettingsModalProps {
@@ -11,70 +12,25 @@ interface SettingsModalProps {
 
 const MASTER_USERNAMES = ['arthur', 'arthur.oliveira@sejangp.com.br']
 
-interface SettingsSection {
-  title: string
-  items: {
-    icon: string
-    label: string
-    description: string
-    href: string
-    masterOnly?: boolean
-    adminOnly?: boolean
-  }[]
+const ITEM_ICON: Record<string, string> = {
+  cadastros: '👥',
+  contas: '💳',
+  'clientes-arquivados': '📦',
+  'setores-tarefas': '📋',
+  integracoes: '🔗',
+  feedback: '💬',
 }
 
-const SETTINGS_SECTIONS: SettingsSection[] = [
-  {
-    title: 'Cadastros',
-    items: [
-      {
-        icon: '👥',
-        label: 'Central de Clientes',
-        description: 'Gerencie clientes, portais e acessos CRM',
-        href: '/admin/usuarios?tab=clientes',
-        adminOnly: true,
-      },
-      {
-        icon: '🧑‍💼',
-        label: 'Usuários da NGP',
-        description: 'Cadastre e gerencie colaboradores internos',
-        href: '/admin/usuarios?tab=usuarios-ngp',
-        adminOnly: true,
-      },
-    ],
-  },
-  {
-    title: 'Sistema',
-    items: [
-      {
-        icon: '💳',
-        label: 'Contas',
-        description: 'Gerencie contas e planos do sistema',
-        href: '/admin/contas',
-        adminOnly: true,
-      },
-      {
-        icon: '🔗',
-        label: 'Link de Contas',
-        description: 'Vincule e integre contas externas',
-        href: '/admin/link-accounts',
-        adminOnly: true,
-      },
-    ],
-  },
-  {
-    title: 'Controle de Acesso',
-    items: [
-      {
-        icon: '🔒',
-        label: 'Setores Restritos',
-        description: 'Gerencie quem pode acessar setores sigilosos',
-        href: '/admin/usuarios?tab=usuarios-ngp',
-        masterOnly: true,
-      },
-    ],
-  },
-]
+const ITEM_SECTION: Record<string, string> = {
+  cadastros: 'CADASTROS',
+  'clientes-arquivados': 'CADASTROS',
+  contas: 'SISTEMA',
+  'setores-tarefas': 'SISTEMA',
+  integracoes: 'SISTEMA',
+  feedback: 'SISTEMA',
+}
+
+const SECTION_ORDER = ['CADASTROS', 'SISTEMA']
 
 export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
   const router = useRouter()
@@ -102,14 +58,16 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
     router.push(href)
   }
 
-  const visibleSections = SETTINGS_SECTIONS.map(section => ({
-    ...section,
-    items: section.items.filter(item => {
-      if (item.masterOnly) return isMaster
-      if (item.adminOnly) return isAdmin
-      return true
-    }),
-  })).filter(s => s.items.length > 0)
+  const visibleItems = getAdminNavigation(sess.role).map((item) => ({
+    ...item,
+    icon: ITEM_ICON[item.id] || '⚙',
+    section: ITEM_SECTION[item.id] || 'SISTEMA',
+  }))
+
+  const grouped = SECTION_ORDER.map((section) => ({
+    section,
+    items: visibleItems.filter((item) => item.section === section),
+  })).filter((g) => g.items.length > 0)
 
   return (
     <div className={styles.overlay} onClick={onClose}>
@@ -126,16 +84,16 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
         </div>
 
         <div className={styles.body}>
-          {visibleSections.length === 0 ? (
+          {visibleItems.length === 0 ? (
             <div className={styles.empty}>Nenhuma configuração disponível para seu perfil.</div>
           ) : (
-            visibleSections.map(section => (
-              <div key={section.title} className={styles.section}>
-                <div className={styles.sectionTitle}>{section.title}</div>
+            grouped.map(({ section, items }) => (
+              <div key={section} className={styles.section}>
+                <div className={styles.sectionTitle}>{section}</div>
                 <div className={styles.grid}>
-                  {section.items.map(item => (
+                  {items.map(item => (
                     <button
-                      key={item.href + item.label}
+                      key={item.id}
                       className={styles.card}
                       onClick={() => navigate(item.href)}
                     >

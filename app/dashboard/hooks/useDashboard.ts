@@ -3,6 +3,7 @@ import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { useRouter } from 'next/navigation'
 import { getSession } from '@/lib/auth'
 import { metaCall } from '@/lib/meta'
+import { fetchWithRetry } from '@/lib/fetch-utils'
 import { parseIns, fmt, fmtN, fmtI } from '@/lib/utils'
 import { clearSession } from '@/lib/auth'
 import { SURL } from '@/lib/constants'
@@ -157,17 +158,21 @@ export function useDashboard() {
   const [tableStatus, setTableStatus] = useState('all')
 
   // ─── API Functions ────────────────────────────────────────────────────────
+  const loadClientsAbortRef = useRef<AbortController | null>(null)
   const loadClients = useCallback(async () => {
     setInitLoad(true)
+    loadClientsAbortRef.current?.abort()
+    loadClientsAbortRef.current = new AbortController()
     try {
-      const res = await fetch(`${SURL}/functions/v1/get-ngp-data`, {
-        method: 'POST',
-        headers: efHeaders(),
-        body: JSON.stringify({ session_token: sess?.session }),
-      })
+      const res = await fetchWithRetry(
+        `${SURL}/functions/v1/get-ngp-data`,
+        { method: 'POST', headers: efHeaders(), body: JSON.stringify({ session_token: sess?.session }), signal: loadClientsAbortRef.current.signal },
+      )
       const data = await res.json()
       if (data.clientes) setClients(data.clientes)
-    } catch {}
+    } catch (e: any) {
+      if (e?.name !== 'AbortError') console.error('[loadClients]', e)
+    }
     setInitLoad(false)
   }, [sess?.session])
 
@@ -247,8 +252,11 @@ export function useDashboard() {
     }
   }, [clients, period, cmpPeriodParam, visibleMetrics])
 
+  const loadDataInflightRef = useRef(false)
   const loadData = useCallback(async (dp: DateParam = period) => {
     if (!viewing) return
+    if (loadDataInflightRef.current) return
+    loadDataInflightRef.current = true
     setLoading(true); setError('')
     try {
       const fieldsToFetch = ['campaign_id', 'campaign_name', ...getRequiredApiFields(visibleMetrics)].join(',')
@@ -280,8 +288,10 @@ export function useDashboard() {
       setCampaigns(mapped.sort((a, b) => b.spend - a.spend))
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : 'Erro ao carregar dados')
+    } finally {
+      setLoading(false)
+      loadDataInflightRef.current = false
     }
-    setLoading(false)
   }, [viewing, period, visibleMetrics])
 
   const loadPrevData = useCallback(async (dp: DateParam) => {
@@ -394,8 +404,11 @@ export function useDashboard() {
     setPreviewLoading(false)
   }, [viewing])
 
+  const breakdownInflightRef = useRef(false)
   const loadBreakdown = useCallback(async (type: 'by_day' | 'by_device' | 'by_placement', metric: 'spend' | 'impressions' | 'clicks', dp: DateParam = period) => {
     if (!viewing) return
+    if (breakdownInflightRef.current) return
+    breakdownInflightRef.current = true
     setBreakdownLoading(true)
     setBreakdownError('')
     try {
@@ -421,12 +434,17 @@ export function useDashboard() {
     } catch (e) {
       setBreakdownError(e instanceof Error ? e.message : 'Não foi possível carregar o breakdown real da Meta.')
       setBreakdownData([])
+    } finally {
+      setBreakdownLoading(false)
+      breakdownInflightRef.current = false
     }
-    setBreakdownLoading(false)
   }, [viewing, period])
 
+  const timeSeriesInflightRef = useRef(false)
   const loadTimeSeries = useCallback(async (dp: DateParam = period) => {
     if (!viewing) return
+    if (timeSeriesInflightRef.current) return
+    timeSeriesInflightRef.current = true
     setTimeSeriesLoading(true)
     setTimeSeriesError('')
     try {
@@ -441,8 +459,10 @@ export function useDashboard() {
       setTimeSeriesData(data)
     } catch (e) {
       setTimeSeriesError(e instanceof Error ? e.message : 'Erro ao carregar série temporal.')
+    } finally {
+      setTimeSeriesLoading(false)
+      timeSeriesInflightRef.current = false
     }
-    setTimeSeriesLoading(false)
   }, [viewing, period])
 
   // ─── Effects ─────────────────────────────────────────────────────────────

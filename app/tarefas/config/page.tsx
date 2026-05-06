@@ -176,7 +176,7 @@ export default function TarefasConfigPage() {
   if (loading) {
     return (
       <div className={styles.layout}>
-        <Sidebar showDashboardNav={false} minimal setoresOnlyOpen />
+        <Sidebar showDashboardNav={false} minimal />
         <main className={styles.main}>
           <div className={styles.loadingWrap}><NGPLoading /></div>
         </main>
@@ -186,7 +186,7 @@ export default function TarefasConfigPage() {
 
   return (
     <div className={styles.layout}>
-      <Sidebar showDashboardNav={false} minimal setoresOnlyOpen />
+      <Sidebar showDashboardNav={false} minimal />
 
       <main className={styles.main}>
         <div className={styles.content}>

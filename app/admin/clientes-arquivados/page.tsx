@@ -5,6 +5,7 @@ import Sidebar from '@/components/Sidebar'
 import { getSession } from '@/lib/auth'
 import { SURL } from '@/lib/constants'
 import { efHeaders } from '@/lib/api'
+import Image from 'next/image'
 import styles from '../contas/contas.module.css'
 
 interface ArchivedClient {
@@ -102,7 +103,7 @@ export default function ClientesArquivadosPage() {
             <button className={styles.btnBack} onClick={() => router.push('/setores')}>← Setores</button>
             <div className={styles.eyebrow}>Admin · Configurações</div>
             <h1 className={styles.title}>Clientes Arquivados</h1>
-            <p className={styles.subtitle}>Clientes arquivados ficam fora da seleção principal, mas continuam preservados.</p>
+            <p className={styles.subtitle}>Clientes ou projetos encerrados saem da operação ativa, mas continuam preservados aqui para consulta e restauração.</p>
           </header>
 
           {error && <div className={styles.msgErr}>{error}</div>}
@@ -117,7 +118,7 @@ export default function ClientesArquivadosPage() {
                 <div key={cliente.id} className={styles.card}>
                   <div className={styles.clienteInfo}>
                     {cliente.foto_url
-                      ? <img src={cliente.foto_url} alt={cliente.nome} className={styles.avatar} />
+                      ? <Image src={cliente.foto_url} alt={cliente.nome} className={styles.avatar} width={40} height={40} />
                       : <div className={styles.avatarFallback}>{cliente.nome.slice(0, 2).toUpperCase()}</div>
                     }
                     <div>

@@ -16,7 +16,7 @@ export function corsHeaders(req: Request): Record<string, string> {
     const allowed = ALLOWED_ORIGINS.includes(origin)
     return {
       'Access-Control-Allow-Origin': allowed ? origin : '',
-      'Access-Control-Allow-Headers': 'content-type, apikey, authorization',
+      'Access-Control-Allow-Headers': 'content-type, apikey, authorization, x-ngp-api-token',
       'Access-Control-Allow-Methods': 'POST, OPTIONS',
       'Vary': 'Origin',
     }
@@ -25,7 +25,7 @@ export function corsHeaders(req: Request): Record<string, string> {
   // Fallback: sem whitelist configurada → aceita qualquer (dev mode)
   return {
     'Access-Control-Allow-Origin': origin || '*',
-    'Access-Control-Allow-Headers': 'content-type, apikey, authorization',
+    'Access-Control-Allow-Headers': 'content-type, apikey, authorization, x-ngp-api-token',
     'Access-Control-Allow-Methods': 'POST, OPTIONS',
     'Vary': 'Origin',
   }
@@ -42,5 +42,16 @@ export function json(req: Request, data: unknown, status = 200): Response {
   return new Response(JSON.stringify(data), {
     status,
     headers: { ...corsHeaders(req), 'Content-Type': 'application/json' },
+  })
+}
+
+export function jsonCached(req: Request, data: unknown, ttlSeconds: number): Response {
+  return new Response(JSON.stringify(data), {
+    status: 200,
+    headers: {
+      ...corsHeaders(req),
+      'Content-Type': 'application/json',
+      'Cache-Control': `private, max-age=${ttlSeconds}, stale-while-revalidate=${ttlSeconds * 2}`,
+    },
   })
 }

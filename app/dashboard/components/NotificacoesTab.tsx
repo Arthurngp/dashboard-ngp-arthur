@@ -1,5 +1,6 @@
 'use client'
 import React from 'react'
+import Image from 'next/image'
 import { fmt } from '@/lib/utils'
 import { BudgetAlert } from '../types'
 import styles from '../dashboard.module.css'
@@ -83,7 +84,7 @@ export default function NotificacoesTab({
                   <div key={key} style={{ background: bgColor, border: `1.5px solid ${borderColor}20`, borderLeft: `4px solid ${borderColor}`, borderRadius: 10, padding: '14px 18px', display: 'flex', alignItems: 'center', gap: 14, transition: 'all .15s' }}>
                     <div style={{ width: 42, height: 42, borderRadius: 10, background: 'linear-gradient(135deg,#2563eb,#38bdf8)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: 13, fontWeight: 800, flexShrink: 0, overflow: 'hidden', position: 'relative' }}>
                       {alert.clientFoto
-                        ? <img src={alert.clientFoto} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover', position: 'absolute', inset: 0 }} />
+                        ? <Image src={alert.clientFoto} alt={alert.clientName} fill style={{ objectFit: 'cover' }} />
                         : alert.clientName.slice(0, 2).toUpperCase()
                       }
                     </div>

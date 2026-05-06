@@ -1,6 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useMemo, useRef, useState, Suspense } from 'react'
+import Image from 'next/image'
 import { useRouter, useSearchParams } from 'next/navigation'
 import Link from 'next/link'
 import { getSession } from '@/lib/auth'
@@ -258,7 +259,7 @@ function ClientsOverview({ clientes, allTasks, onSelect }: {
           <div key={c.id} className={styles.clientCard} onClick={() => onSelect(c.id)}>
             <div className={styles.clientCardHead}>
               <div className={styles.clientAvatar}>
-                {c.foto_url ? <img src={c.foto_url} alt={c.nome} /> : initials(c.nome)}
+                {c.foto_url ? <Image src={c.foto_url} alt={c.nome} width={40} height={40} style={{ objectFit: 'cover', borderRadius: '50%' }} /> : initials(c.nome)}
               </div>
               <div className={styles.clientInfo}>
                 <div className={styles.clientName}>{c.nome}</div>
@@ -360,7 +361,7 @@ function ListView({ tasks, onEdit, onAddClick, onDelete, colaboradores, onInline
                       {t.assignee ? (
                         <div className={styles.miniUser}>
                           <div className={styles.miniAvatar}>
-                            {t.assignee.foto_url ? <img src={t.assignee.foto_url} /> : initials(t.assignee.nome)}
+                            {t.assignee.foto_url ? <Image src={t.assignee.foto_url} alt={t.assignee.nome} width={24} height={24} style={{ objectFit: 'cover', borderRadius: '50%' }} /> : initials(t.assignee.nome)}
                           </div>
                           {t.assignee.nome.split(' ')[0]}
                         </div>
@@ -444,7 +445,7 @@ function TaskCard({ task, onClick }: { task: Task; onClick: () => void }) {
           <div className={styles.assignee}>
             <div className={styles.avatar}>
               {task.assignee.foto_url
-                ? <img src={task.assignee.foto_url} alt={task.assignee.nome} className={styles.avatarImg} />
+                ? <Image src={task.assignee.foto_url} alt={task.assignee.nome} className={styles.avatarImg} width={32} height={32} style={{ objectFit: 'cover' }} />
                 : initials(task.assignee.nome)}
             </div>
             <span className={styles.assigneeName}>{task.assignee.nome.split(' ')[0]}</span>

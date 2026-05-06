@@ -1,5 +1,5 @@
 'use client'
-import React, { useEffect, useRef, useMemo } from 'react'
+import React, { useEffect, useRef, useMemo, Suspense } from 'react'
 import { useRouter } from 'next/navigation'
 import { fmt, fmtN, fmtI } from '@/lib/utils'
 import { SURL } from '@/lib/constants'
@@ -8,10 +8,7 @@ import PeriodFilter from '@/components/PeriodFilter'
 import WorkspaceTopbar from '@/components/WorkspaceTopbar'
 import NGPLoading from '@/components/NGPLoading'
 import { summarizeSnapshotForDisplay } from '@/lib/analytics-snapshot'
-import {
-  Chart as ChartJS, CategoryScale, LinearScale, BarElement, LineElement, PointElement,
-  ArcElement, Title, Tooltip, Legend, Filler,
-} from 'chart.js'
+import dynamic from 'next/dynamic'
 import styles from './dashboard.module.css'
 import AccountModal from './components/AccountModal'
 import MetricsModal from './components/MetricsModal'
@@ -20,19 +17,21 @@ import KpiSection from './components/KpiSection'
 import CustomSelect from '@/components/CustomSelect'
 import { shellIcons } from './components/ShellIcons'
 import OverviewTab from './components/OverviewTab'
-import CampanhasTab from './components/CampanhasTab'
-import GraficosTab from './components/GraficosTab'
-import NotificacoesTab from './components/NotificacoesTab'
 import AccountSelector from './components/AccountSelector'
-import DiagnosisPanel from './components/DiagnosisPanel'
-import MetaAnalysisPanel from '@/components/MetaAnalysisPanel'
 import { Tab, WorkspaceNavSection } from './types'
 import { getPeriodBudgetFactor } from './dashboard-utils'
 import { useDashboard } from './hooks/useDashboard'
 import { META_METRICS, DEFAULT_METRICS } from '@/lib/meta-metrics'
-import { Bar, Doughnut } from 'react-chartjs-2'
 
-ChartJS.register(CategoryScale, LinearScale, BarElement, LineElement, PointElement, ArcElement, Title, Tooltip, Legend, Filler)
+const CampanhasTab = dynamic(() => import('./components/CampanhasTab'), { ssr: false })
+const GraficosTab = dynamic(() => import('./components/GraficosTab'), { ssr: false })
+const NotificacoesTab = dynamic(() => import('./components/NotificacoesTab'), { ssr: false })
+const DiagnosisPanel = dynamic(() => import('./components/DiagnosisPanel'), { ssr: false })
+const MetaAnalysisPanel = dynamic(() => import('@/components/MetaAnalysisPanel'), { ssr: false })
+const Bar = dynamic(() => import('react-chartjs-2').then(m => ({ default: m.Bar })), { ssr: false })
+const Doughnut = dynamic(() => import('react-chartjs-2').then(m => ({ default: m.Doughnut })), { ssr: false })
+
+import '@/app/dashboard/chart-setup'
 
 export default function DashboardPage() {
   const {
@@ -380,8 +379,12 @@ export default function DashboardPage() {
                   )
                 })()}
 
-                <DiagnosisPanel analyticsSnapshot={analyticsSnapshot} snapshotDisplay={snapshotDisplay} loadedAds={loadedAds} bestAd={bestAd} worstAd={worstAd} />
-                <MetaAnalysisPanel campaigns={metricsBase} prevCampaigns={selectedCampIds.size > 0 ? prevCampaigns.filter(c => selectedCampIds.has(c.id)) : prevCampaigns} periodLabel={periodLabel} comparisonLabel={cmpLabel} title="Análise Meta Ads" />
+                <Suspense fallback={null}>
+                  <DiagnosisPanel analyticsSnapshot={analyticsSnapshot} snapshotDisplay={snapshotDisplay} loadedAds={loadedAds} bestAd={bestAd} worstAd={worstAd} />
+                </Suspense>
+                <Suspense fallback={null}>
+                  <MetaAnalysisPanel campaigns={metricsBase} prevCampaigns={selectedCampIds.size > 0 ? prevCampaigns.filter(c => selectedCampIds.has(c.id)) : prevCampaigns} periodLabel={periodLabel} comparisonLabel={cmpLabel} title="Análise Meta Ads" />
+                </Suspense>
 
                 {campaigns.length > 0 && (
                   <div className={styles.chartsRow}>
@@ -403,10 +406,22 @@ export default function DashboardPage() {
                 </div>
               </>}
 
-              {activeTab === 'campanhas' && <CampanhasTab loading={loading} campSearch={campSearch} campStatus={campStatus} campFiltered={campFiltered} openCamps={openCamps} openAdsets={openAdsets} loadingAdsets={loadingAdsets} loadingAds={loadingAds} adsetMap={adsetMap} adsMap={adsMap} breakdownType={breakdownType} breakdownMetric={breakdownMetric} breakdownData={breakdownData} breakdownLoading={breakdownLoading} breakdownError={breakdownError} topAdsSort={topAdsSort} campaigns={campaigns} visibleMetrics={visibleMetrics} onSetCampSearch={setCampSearch} onSetCampStatus={setCampStatus} onToggleCamp={toggleCamp} onToggleAdset={toggleAdset} onLoadAllCampaignData={loadAllCampaignData} onLoadBreakdown={loadBreakdown} onSetBreakdownType={setBreakdownType} onSetBreakdownMetric={setBreakdownMetric} onSetTopAdsSort={setTopAdsSort} onLoadPreview={loadPreview} />}
-              {activeTab === 'graficos' && <GraficosTab campaigns={campaigns} chartMetric={chartMetric} chartData={chartData} donutData={donutData} timeSeriesData={timeSeriesData} timeSeriesLoading={timeSeriesLoading} timeSeriesError={timeSeriesError} onSetChartMetric={setChartMetric} />}
+              {activeTab === 'campanhas' && (
+                <Suspense fallback={<NGPLoading loading loadingText="Carregando campanhas..." />}>
+                  <CampanhasTab loading={loading} campSearch={campSearch} campStatus={campStatus} campFiltered={campFiltered} openCamps={openCamps} openAdsets={openAdsets} loadingAdsets={loadingAdsets} loadingAds={loadingAds} adsetMap={adsetMap} adsMap={adsMap} breakdownType={breakdownType} breakdownMetric={breakdownMetric} breakdownData={breakdownData} breakdownLoading={breakdownLoading} breakdownError={breakdownError} topAdsSort={topAdsSort} campaigns={campaigns} visibleMetrics={visibleMetrics} onSetCampSearch={setCampSearch} onSetCampStatus={setCampStatus} onToggleCamp={toggleCamp} onToggleAdset={toggleAdset} onLoadAllCampaignData={loadAllCampaignData} onLoadBreakdown={loadBreakdown} onSetBreakdownType={setBreakdownType} onSetBreakdownMetric={setBreakdownMetric} onSetTopAdsSort={setTopAdsSort} onLoadPreview={loadPreview} />
+                </Suspense>
+              )}
+              {activeTab === 'graficos' && (
+                <Suspense fallback={<NGPLoading loading loadingText="Carregando gráficos..." />}>
+                  <GraficosTab campaigns={campaigns} chartMetric={chartMetric} chartData={chartData} donutData={donutData} timeSeriesData={timeSeriesData} timeSeriesLoading={timeSeriesLoading} timeSeriesError={timeSeriesError} onSetChartMetric={setChartMetric} />
+                </Suspense>
+              )}
               {activeTab === 'relatorios' && <div className={styles.relList}>{relatorios.map(r => (<div key={r.id} className={styles.relCard}>{r.titulo} <button onClick={() => deleteRelatorio(r.id)}>🗑</button></div>))}</div>}
-              {activeTab === 'notificacoes' && <NotificacoesTab alertsLoading={alertsLoading} budgetAlerts={budgetAlerts} alertsDismissed={alertsDismissed} clients={clients} onLoadBudgetAlerts={() => {}} onDismissAlert={dismissAlert} onClearDismissed={clearDismissed} />}
+              {activeTab === 'notificacoes' && (
+                <Suspense fallback={<NGPLoading loading loadingText="Carregando notificações..." />}>
+                  <NotificacoesTab alertsLoading={alertsLoading} budgetAlerts={budgetAlerts} alertsDismissed={alertsDismissed} clients={clients} onLoadBudgetAlerts={() => {}} onDismissAlert={dismissAlert} onClearDismissed={clearDismissed} />
+                </Suspense>
+              )}
             </div>
           </div>
         </div>

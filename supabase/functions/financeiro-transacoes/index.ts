@@ -91,14 +91,14 @@ async function ensureAccount(sb: any, nome: string) {
   if (!normalizedNome) return null
   const existing = await sb.from('fin_accounts')
     .select('id,nome')
-    .eq('ativo', true)
+    .or('ativo.is.null,ativo.eq.true')
     .eq('nome', normalizedNome)
     .maybeSingle()
   if (existing.error) throw existing.error
   if (existing.data?.id) return { id: existing.data.id, created: false, nome: existing.data.nome }
 
   const insert = await sb.from('fin_accounts')
-    .insert({ nome: normalizedNome, tipo: 'banco', saldo_inicial: 0 })
+    .insert({ nome: normalizedNome, tipo: 'banco', saldo_inicial: 0, ativo: true })
     .select('id,nome')
     .single()
   if (insert.error) throw insert.error
@@ -147,8 +147,12 @@ function extractOpenAiText(data: any) {
   const parts: string[] = []
   for (const item of data?.output || []) {
     for (const content of item?.content || []) {
-      if (content?.type === 'output_text' && content?.text) parts.push(content.text)
-      if (typeof content?.text === 'string') parts.push(content.text)
+      // Prioriza output_text; se não, qualquer text string. Nunca os dois (duplicaria JSON).
+      if (content?.type === 'output_text' && typeof content?.text === 'string') {
+        parts.push(content.text)
+      } else if (typeof content?.text === 'string') {
+        parts.push(content.text)
+      }
     }
   }
   return parts.join('\n').trim()
@@ -217,7 +221,7 @@ async function analyzeImportWithAi(rows: any[], accountName: string) {
           role: 'system',
           content: [
             {
-              type: 'text',
+              type: 'input_text',
               text: 'Você analisa importações financeiras de CSV antes da gravação. Seja conservador. Alerte inconsistências, duplicidades prováveis, categorias estranhas, transferências suspeitas e padrões que mereçam revisão humana. Não invente fatos. Responda em português do Brasil.',
             },
           ],
@@ -226,7 +230,7 @@ async function analyzeImportWithAi(rows: any[], accountName: string) {
           role: 'user',
           content: [
             {
-              type: 'text',
+              type: 'input_text',
               text: JSON.stringify(prompt),
             },
           ],
@@ -255,6 +259,350 @@ async function analyzeImportWithAi(rows: any[], accountName: string) {
   }
 }
 
+async function matchDuplicatesWithAi(
+  sb: any,
+  csvRows: any[],
+  accountId: string | null,
+  accountName: string,
+): Promise<{ matches: any[]; debug: any }> {
+  const debug: any = {
+    csv_rows_count: csvRows.length,
+    account_id: accountId,
+    account_name: accountName,
+    has_openai_key: !!Deno.env.get('OPENAI_API_KEY'),
+  }
+  const openAiKey = Deno.env.get('OPENAI_API_KEY')
+  if (csvRows.length === 0) { debug.exit = 'no_csv_rows'; return { matches: [], debug } }
+
+  // Determina range de datas do CSV (ampliado em 5 dias)
+  const dates = csvRows.map(r => r.competence_date).filter(Boolean).sort()
+  debug.csv_dates_count = dates.length
+  debug.csv_first_row_sample = csvRows[0] ? {
+    competence_date: csvRows[0].competence_date,
+    descricao: csvRows[0].descricao,
+    valor: csvRows[0].valor,
+  } : null
+  if (dates.length === 0) { debug.exit = 'no_dates_in_csv'; return { matches: [], debug } }
+
+  const minDateObj = new Date(dates[0])
+  minDateObj.setDate(minDateObj.getDate() - 5)
+  const minDate = minDateObj.toISOString().split('T')[0]
+
+  const maxDateObj = new Date(dates[dates.length - 1])
+  maxDateObj.setDate(maxDateObj.getDate() + 5)
+  const maxDate = maxDateObj.toISOString().split('T')[0]
+
+  debug.search_range = { minDate, maxDate }
+
+  // Busca lançamentos existentes no range de datas (na mesma conta, se fornecida)
+  // Busca tanto por competence_date quanto payment_date (cobre ambos os casos)
+  let q = sb.from('fin_transacoes')
+    .select('id,tipo,descricao,valor,competence_date,payment_date,status,account_id,categoria:fin_categorias(nome),cliente:fin_clientes(nome),fornecedor:fin_fornecedores(nome)')
+    .or(`and(competence_date.gte.${minDate},competence_date.lte.${maxDate}),and(payment_date.gte.${minDate},payment_date.lte.${maxDate})`)
+    .limit(500)
+  if (accountId) q = q.eq('account_id', accountId)
+
+  const { data: existing, error: existingErr } = await q
+  if (existingErr) {
+    debug.exit = 'db_query_error'
+    debug.error = String(existingErr.message || existingErr)
+    return { matches: [], debug }
+  }
+  debug.existing_count = existing?.length || 0
+  if (!existing || existing.length === 0) {
+    debug.exit = 'no_existing_in_range'
+    return { matches: [], debug }
+  }
+
+  // Pré-filtro: agrupa por valor + proximidade de data (até 5 dias)
+  // Compara contra COMPETENCE_DATE *e* PAYMENT_DATE do existente
+  type Candidate = {
+    csv_index: number
+    csv_desc: string
+    csv_tipo: string
+    csv_valor: number
+    csv_date: string
+    csv_status: string
+    csv_contato: string
+    existing_id: string
+    existing_desc: string
+    existing_tipo: string
+    existing_valor: number
+    existing_date: string
+    existing_status: string
+    existing_categoria: string
+    existing_contato: string
+  }
+
+  // Para cada linha do CSV, coleta candidatos e limita aos 3 mais próximos por data
+  type CandidateWithDiff = Candidate & { _diffDays: number }
+  const candidates: Candidate[] = []
+  for (let i = 0; i < csvRows.length; i++) {
+    const row = csvRows[i]
+    const csvValor = Math.abs(Number(row.valor || 0))
+    const csvDate = row.competence_date
+    if (!csvDate || csvValor <= 0) continue
+
+    const rowCandidates: CandidateWithDiff[] = []
+    for (const ex of existing) {
+      const exValor = Math.abs(Number(ex.valor || 0))
+      const exDates = [ex.competence_date, ex.payment_date].filter(Boolean) as string[]
+      let bestDiffDays = Infinity
+      let bestExDate = ''
+      for (const exDate of exDates) {
+        const d1 = new Date(csvDate)
+        const d2 = new Date(exDate)
+        const diff = Math.abs((d1.getTime() - d2.getTime()) / (1000 * 3600 * 24))
+        if (diff < bestDiffDays) { bestDiffDays = diff; bestExDate = exDate }
+      }
+
+      // Candidatos: mesmo valor (tolerância R$0.05) e até 5 dias de diferença
+      if (Math.abs(csvValor - exValor) <= 0.05 && bestDiffDays <= 5) {
+        rowCandidates.push({
+          csv_index: i,
+          csv_desc: String(row.descricao || ''),
+          csv_tipo: String(row.tipo || ''),
+          csv_valor: csvValor,
+          csv_date: csvDate,
+          csv_status: String(row.status || ''),
+          csv_contato: String(row.contato || ''),
+          existing_id: ex.id,
+          existing_desc: ex.descricao,
+          existing_tipo: ex.tipo,
+          existing_valor: exValor,
+          existing_date: bestExDate || ex.competence_date,
+          existing_status: ex.status,
+          existing_categoria: ex.categoria?.nome || '',
+          existing_contato: ex.cliente?.nome || ex.fornecedor?.nome || '',
+          _diffDays: bestDiffDays,
+        })
+      }
+    }
+
+    // Mantém só os 3 candidatos mais próximos por data (evita explosão em CSV de taxas repetitivas)
+    rowCandidates.sort((a, b) => a._diffDays - b._diffDays)
+    for (const c of rowCandidates.slice(0, 3)) {
+      const { _diffDays, ...clean } = c
+      candidates.push(clean)
+    }
+  }
+
+  debug.candidates_count = candidates.length
+  if (candidates.length === 0) {
+    debug.exit = 'no_candidates_matched_value_and_date'
+    // Adiciona amostra dos valores no DB pra debug
+    debug.db_sample_values = existing.slice(0, 5).map((e: any) => ({
+      desc: e.descricao,
+      valor: e.valor,
+      date: e.competence_date,
+    }))
+    debug.csv_sample_values = csvRows.slice(0, 5).map((r: any) => ({
+      desc: r.descricao,
+      valor: r.valor,
+      date: r.competence_date,
+    }))
+    return { matches: [], debug }
+  }
+
+  // Sem OpenAI: NÃO usa heurística (geraria falsos positivos demais).
+  // Retorna vazio com flag pra UI mostrar banner explicando.
+  if (!openAiKey) {
+    debug.exit = 'no_openai_key'
+    debug.error_user_facing = 'Detecção por IA indisponível: configure OPENAI_API_KEY nas Edge Functions do Supabase.'
+    return { matches: [], debug }
+  }
+
+  // Limita candidatos para não estourar tokens (max 60 pares)
+  const limitedCandidates = candidates.slice(0, 60)
+  debug.limited_candidates_count = limitedCandidates.length
+
+  const schema = {
+    type: 'object',
+    additionalProperties: false,
+    properties: {
+      matches: {
+        type: 'array',
+        items: {
+          type: 'object',
+          additionalProperties: false,
+          properties: {
+            pair_index: { type: 'number' },
+            is_duplicate: { type: 'boolean' },
+            confidence: { type: 'string', enum: ['high', 'medium', 'low'] },
+            reason: { type: 'string' },
+          },
+          required: ['pair_index', 'is_duplicate', 'confidence', 'reason'],
+        },
+      },
+    },
+    required: ['matches'],
+  }
+
+  const pairsForAi = limitedCandidates.map((c, idx) => ({
+    pair_index: idx,
+    csv: {
+      descricao: c.csv_desc,
+      tipo: c.csv_tipo,
+      valor: c.csv_valor,
+      data: c.csv_date,
+      status: c.csv_status,
+      contato: c.csv_contato,
+    },
+    existente: {
+      descricao: c.existing_desc,
+      tipo: c.existing_tipo,
+      valor: c.existing_valor,
+      data: c.existing_date,
+      status: c.existing_status,
+      categoria: c.existing_categoria,
+      contato: c.existing_contato,
+    },
+  }))
+
+  try {
+    const aiRes = await fetch('https://api.openai.com/v1/responses', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${openAiKey}`,
+      },
+      body: JSON.stringify({
+        model: 'gpt-4o-mini',
+        input: [
+          {
+            role: 'system',
+            content: [{
+              type: 'input_text',
+              text: [
+                'Você é especialista em conciliação financeira. Recebe pares (CSV vindo de extrato bancário/Asaas vs lançamento já cadastrado no sistema).',
+                'Todos os pares já bateram em VALOR e DATA próxima. Sua tarefa: decidir se é a MESMA transação.',
+                '',
+                'REGRA #1 — CONTATO/CLIENTE/FORNECEDOR É O SINAL MAIS FORTE:',
+                '- Se ambos têm contato e os contatos referem-se a pessoas/empresas DIFERENTES → NÃO é duplicata (is_duplicate=false), mesmo com valor e data iguais. É coincidência.',
+                '- Exemplo: "Mariana Duarte" vs "Espaço Maurício Vanute" → NÃO é match.',
+                '- Exemplo: "CF Serviços de Engenharia" vs "Santa Cruz Confecções" → NÃO é match.',
+                '',
+                'REGRA #2 — MESMO CONTATO/CLIENTE = MATCH FORTE:',
+                '- Se contatos batem (mesmo nome ou um contém o outro), confidence=high.',
+                '- Exemplo: sistema "Solucione Energia Eletrica" + CSV "SOLUCIONE ENERGIA ELÉTRICA LTDA" → high (mesma empresa).',
+                '- Exemplo: sistema "Santa Cruz Confecções" + CSV "fatura SANTA CRUZ CONFECCOES LTDA" → high.',
+                '- Exemplo: descrição do plano sem contato no CSV (ex: sistema "Plano Elite – Solucione" + CSV "fatura SOLUCIONE ENERGIA"), inferir do nome → high.',
+                '',
+                'REGRA #3 — SEM CONTATO EM AMBOS:',
+                '- Compare descrições. Cobrança/fatura genérica do CSV pode ser plano/serviço específico do sistema → medium.',
+                '- Se descrições são incompatíveis → false.',
+                '',
+                'REGRA #4 — TRANSFERÊNCIAS NGP→NGP:',
+                '- Se ambos mencionam "NGP", "NOVA GESTAO", "NGP NOVA GESTAO" ou similar (transferência interna entre contas da empresa), marque is_duplicate=true com confidence=medium e na reason inclua "TRANSFERÊNCIA INTERNA NGP→NGP".',
+                '- Múltiplas linhas idênticas no mesmo dia entre contas NGP são transferências separadas — não consolidar.',
+                '',
+                'CONFIANÇA:',
+                '- high: contatos batem claramente OU descrições idênticas.',
+                '- medium: forte indicação mas algum campo diverge (ex: contato só em um dos lados).',
+                '- low: incerteza grande.',
+                '',
+                'Para cada par retorne: pair_index, is_duplicate (true/false), confidence (high/medium/low), reason (1 frase em PT-BR explicando a decisão).',
+              ].join('\n'),
+            }],
+          },
+          {
+            role: 'user',
+            content: [{
+              type: 'input_text',
+              text: JSON.stringify({ conta: accountName, pares: pairsForAi }),
+            }],
+          },
+        ],
+        text: {
+          format: {
+            type: 'json_schema',
+            name: 'duplicate_matching',
+            schema,
+            strict: true,
+          },
+        },
+        max_output_tokens: 4000,
+      }),
+    })
+
+    // Falhas da IA: NÃO faz fallback heurístico (geraria ruído).
+    // Sinaliza erro pra UI mostrar banner.
+    const aiFailure = (reason: string) => {
+      debug.exit = 'openai_failed'
+      debug.error_user_facing = `Detecção por IA falhou: ${reason}. Verifique a API key da OpenAI.`
+      return { matches: [], debug }
+    }
+
+    if (!aiRes.ok) {
+      const errText = await aiRes.text().catch(() => 'unknown')
+      console.error('[matchDuplicatesWithAi] OpenAI HTTP error:', aiRes.status, errText)
+      return aiFailure(`HTTP ${aiRes.status}: ${errText.slice(0, 200)}`)
+    }
+    const aiData = await aiRes.json()
+    const raw = extractOpenAiText(aiData)
+    if (!raw) {
+      console.error('[matchDuplicatesWithAi] OpenAI empty response:', JSON.stringify(aiData).slice(0, 500))
+      return aiFailure('resposta vazia')
+    }
+    debug.ai_raw_first_300 = raw.slice(0, 300)
+    debug.ai_raw_length = raw.length
+
+    let parsed: any
+    try {
+      parsed = JSON.parse(raw)
+    } catch (_e) {
+      console.error('[matchDuplicatesWithAi] Failed to parse AI JSON:', raw.slice(0, 500))
+      debug.ai_parse_error = String(_e).slice(0, 200)
+      return aiFailure('JSON inválido')
+    }
+
+    const allMatches: any[] = []
+    debug.ai_matches_total = parsed.matches?.length || 0
+    debug.ai_matches_breakdown = { high: 0, medium: 0, low: 0, false: 0 }
+
+    for (const match of parsed.matches || []) {
+      if (!match.is_duplicate) { debug.ai_matches_breakdown.false++; continue }
+      debug.ai_matches_breakdown[match.confidence as 'high' | 'medium' | 'low']++
+      // Aceita high, medium e low — usuário decide
+      const candidate = limitedCandidates[match.pair_index]
+      if (!candidate) continue
+
+      allMatches.push({
+        csv_index: candidate.csv_index,
+        existing_id: candidate.existing_id,
+        existing_descricao: candidate.existing_desc,
+        existing_valor: candidate.existing_valor,
+        existing_date: candidate.existing_date,
+        existing_status: candidate.existing_status,
+        existing_contato: candidate.existing_contato,
+        confidence: match.confidence,
+        reason: match.reason,
+      })
+    }
+
+    // Dedupe por csv_index: 1 linha do CSV = 1 match (escolhe high antes de medium)
+    const byIndex = new Map<number, any>()
+    for (const m of allMatches) {
+      const existing = byIndex.get(m.csv_index)
+      if (!existing) { byIndex.set(m.csv_index, m); continue }
+      // Prioriza high > medium
+      if (existing.confidence === 'medium' && m.confidence === 'high') byIndex.set(m.csv_index, m)
+    }
+    const results = Array.from(byIndex.values())
+
+    debug.exit = results.length === 0 ? 'ai_rejected_all' : 'ok'
+    debug.results_count = results.length
+    debug.ai_raw_matches_before_dedupe = allMatches.length
+    return { matches: results, debug }
+  } catch (e) {
+    console.error('[matchDuplicatesWithAi]', e)
+    debug.exit = 'exception'
+    debug.error = String(e)
+    debug.error_user_facing = `Erro inesperado na detecção: ${String(e).slice(0, 150)}`
+    return { matches: [], debug }
+  }
+}
+
 serve(async (req: Request) => {
   const cors = handleCors(req)
   if (cors) return cors
@@ -280,18 +628,14 @@ serve(async (req: Request) => {
           'categoria:fin_categorias(id,nome,cor)',
           'cliente:fin_clientes(id,nome)',
           'fornecedor:fin_fornecedores(id,nome)',
-          'account:fin_accounts(id,nome,tipo)',
+          'account:fin_accounts!inner(id,nome,tipo,ativo)',
           'cost_center:fin_cost_centers(id,nome)',
           'product:fin_products(id,nome,tipo)',
         ].join(','))
         .order(dateField, { ascending: false })
 
       if (!account_id) {
-        const { data: inactiveAccounts } = await sb.from('fin_accounts').select('id').eq('ativo', false)
-        const inactiveIds = (inactiveAccounts ?? []).map((a: any) => a.id)
-        if (inactiveIds.length > 0) {
-          q = q.not('account_id', 'in', `(${inactiveIds.join(',')})`)
-        }
+        q = q.eq('account.ativo', true)
       }
 
       if (tipo) q = q.eq('tipo', tipo)
@@ -313,12 +657,13 @@ serve(async (req: Request) => {
     }
 
     if (action === 'importar_csv') {
-      const { account_id, rows } = payload as { account_id?: string; rows?: any[] }
+      const { account_id, rows, skip_indices } = payload as { account_id?: string; rows?: any[]; skip_indices?: number[] }
+      const skipSet = new Set(skip_indices || [])
       if (!Array.isArray(rows) || rows.length === 0) return json(req, { error: 'Nenhuma linha válida para importar.' }, 400)
 
       let fixedAccountId: string | null = null
       if (account_id) {
-        const accountCheck = await sb.from('fin_accounts').select('id,nome').eq('id', account_id).eq('ativo', true).maybeSingle()
+        const accountCheck = await sb.from('fin_accounts').select('id,nome').eq('id', account_id).or('ativo.is.null,ativo.eq.true').maybeSingle()
         if (accountCheck.error) return json(req, { error: 'Erro ao validar conta.' }, 500)
         if (!accountCheck.data?.id) return json(req, { error: 'Conta não encontrada.' }, 404)
         fixedAccountId = accountCheck.data.id
@@ -351,8 +696,10 @@ serve(async (req: Request) => {
       const normalizedRows: NormalizedRow[] = []
       let skipped = 0
 
-      for (const row of rows) {
-        const tipo: 'entrada' | 'saida' = row.tipo === 'saida' ? 'saida' : 'entrada'
+      for (let rowIdx = 0; rowIdx < rows.length; rowIdx++) {
+        if (skipSet.has(rowIdx)) { skipped += 1; continue }
+        const row = rows[rowIdx]
+        const tipo: 'entrada' | 'saida' | 'transferencia' = row.tipo === 'saida' ? 'saida' : row.tipo === 'transferencia' ? 'transferencia' : 'entrada'
         const descricao = normalizeText(row.descricao)
         const competence_date = parseImportDate(row.competence_date)
         const payment_date = parseImportDate(row.payment_date)
@@ -492,13 +839,48 @@ serve(async (req: Request) => {
       return json(req, { imported, skipped, created_accounts: Array.from(createdAccounts) })
     }
 
+    if (action === 'combinar_transacao') {
+      const { existing_id, chosen_status, csv_payment_date } = payload as {
+        existing_id: string
+        chosen_status: 'confirmado' | 'pendente'
+        csv_payment_date?: string | null
+      }
+      if (!existing_id) return json(req, { error: 'ID do lançamento existente obrigatório.' }, 400)
+      if (!chosen_status) return json(req, { error: 'Status escolhido obrigatório.' }, 400)
+
+      const { data: existing, error: fetchErr } = await sb.from('fin_transacoes')
+        .select('id, status, competence_date, payment_date')
+        .eq('id', existing_id)
+        .single()
+      if (fetchErr || !existing) return json(req, { error: 'Lançamento não encontrado.' }, 404)
+
+      const update: Record<string, any> = {
+        status: chosen_status,
+        updated_at: new Date().toISOString(),
+      }
+
+      if (chosen_status === 'confirmado') {
+        const payDate = parseImportDate(csv_payment_date)
+        update.payment_date = payDate || existing.payment_date || existing.competence_date
+      } else {
+        update.payment_date = null
+      }
+
+      const { error: updateErr } = await sb.from('fin_transacoes')
+        .update(update)
+        .eq('id', existing_id)
+      if (updateErr) return json(req, { error: 'Erro ao combinar lançamento.' }, 500)
+
+      return json(req, { ok: true, combined_id: existing_id })
+    }
+
     if (action === 'analisar_importacao_csv') {
       const { account_id, rows } = payload as { account_id?: string; rows?: any[] }
       if (!Array.isArray(rows) || rows.length === 0) return json(req, { error: 'Nenhuma linha válida para analisar.' }, 400)
 
       let accountName = 'Importação multi-conta'
       if (account_id) {
-        const accountCheck = await sb.from('fin_accounts').select('id,nome').eq('id', account_id).eq('ativo', true).maybeSingle()
+        const accountCheck = await sb.from('fin_accounts').select('id,nome').eq('id', account_id).or('ativo.is.null,ativo.eq.true').maybeSingle()
         if (accountCheck.error) return json(req, { error: 'Erro ao validar conta.' }, 500)
         if (!accountCheck.data?.id) return json(req, { error: 'Conta não encontrada.' }, 404)
         accountName = accountCheck.data.nome
@@ -549,17 +931,23 @@ serve(async (req: Request) => {
       )) as string[]
       const accountsToCreate: string[] = []
       if (!account_id && detectedAccounts.length > 0) {
+        const { data: existingAccounts } = await sb.from('fin_accounts')
+          .select('nome')
+          .or('ativo.is.null,ativo.eq.true')
+          .in('nome', detectedAccounts)
+        const existingNames = new Set((existingAccounts ?? []).map((a: any) => a.nome))
         for (const detected of detectedAccounts) {
-          const existing = await sb.from('fin_accounts')
-            .select('id')
-            .eq('ativo', true)
-            .eq('nome', detected)
-            .maybeSingle()
-          if (!existing.data?.id) accountsToCreate.push(detected)
+          if (!existingNames.has(detected)) accountsToCreate.push(detected)
         }
       }
 
       const aiReview = await analyzeImportWithAi(importedRows, accountName)
+
+      // Cruzamento inteligente com IA para detectar duplicatas já existentes no banco
+      const dupResult = await matchDuplicatesWithAi(
+        sb, importedRows, account_id || null, accountName,
+      )
+      console.log('[duplicate_match_debug]', JSON.stringify(dupResult.debug))
 
       return json(req, {
         account_name: accountName,
@@ -569,6 +957,8 @@ serve(async (req: Request) => {
         warnings,
         sample: importedRows.slice(0, 8),
         ai_review: aiReview,
+        potential_duplicates: dupResult.matches,
+        duplicate_debug: dupResult.debug,
       })
     }
 
@@ -708,20 +1098,14 @@ serve(async (req: Request) => {
     if (action === 'resumo') {
       const { view = 'competencia', account_id, date_start, date_end } = payload
 
-      let q = sb.from('fin_transacoes').select('tipo, valor, status, payment_date, account_id, descricao, observacoes, categoria:fin_categorias(nome)')
+      let q = sb.from('fin_transacoes').select('tipo, valor, status, payment_date, account_id, descricao, observacoes, categoria:fin_categorias(nome), account:fin_accounts!inner(id,ativo)')
       let accountsQuery = sb.from('fin_accounts').select('id, saldo_inicial')
       if (account_id) {
         q = q.eq('account_id', account_id)
         accountsQuery = accountsQuery.eq('id', account_id)
       } else {
-        const { data: inactiveAccounts } = await sb.from('fin_accounts').select('id').eq('ativo', false)
-        const inactiveIds = (inactiveAccounts ?? []).map((a: any) => a.id)
-        if (inactiveIds.length > 0) {
-          q = q.not('account_id', 'in', `(${inactiveIds.join(',')})`)
-          accountsQuery = accountsQuery.eq('ativo', true)
-        } else {
-          accountsQuery = accountsQuery.eq('ativo', true)
-        }
+        q = q.eq('account.ativo', true)
+        accountsQuery = accountsQuery.eq('ativo', true)
       }
 
       if (date_start && date_end) {

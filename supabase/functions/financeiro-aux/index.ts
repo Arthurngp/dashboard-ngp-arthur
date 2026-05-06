@@ -1,5 +1,5 @@
-import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2"
+import { serve } from "std/http/server"
+import { createClient } from "supabase"
 import { handleCors, json } from "../_shared/cors.ts"
 import { normalizeText, parseCurrencyInput } from "../_shared/financeiro.ts"
 import { validateSession } from "../_shared/roles.ts"
@@ -9,7 +9,7 @@ async function checkFinanceiroAccess(sb: any, usuario_id: string): Promise<boole
   return !!data?.acesso_financeiro && !!data?.ativo
 }
 
-serve(async (req) => {
+serve(async (req: Request) => {
   const cors = handleCors(req)
   if (cors) return cors
 
@@ -26,14 +26,20 @@ serve(async (req) => {
     // ── fin_accounts ─────────────────────────────────────────────────────────
     if (entity === 'accounts') {
       if (action === 'listar') {
-        const { data, error } = await sb
+        const { show_archived = false } = payload
+        let q = sb
           .from('fin_accounts')
           .select('id, nome, tipo, saldo_inicial')
-          .eq('ativo', true)
           .order('nome')
+
+        q = show_archived
+          ? q.eq('ativo', false)
+          : q.or('ativo.is.null,ativo.eq.true')
+
+        const { data, error } = await q
         if (error) return json(req, { error: 'Erro ao buscar contas.' }, 500)
 
-        // Calcula saldo real: saldo_inicial + entradas confirmadas - saídas confirmadas
+        // Saldo real: saldo_inicial + todas as transações confirmadas (sem filtro de data)
         const { data: txs } = await sb
           .from('fin_transacoes')
           .select('account_id, tipo, valor')
@@ -62,10 +68,54 @@ serve(async (req) => {
         if (!normalizedNome || !normalizedTipo) return json(req, { error: 'nome e tipo são obrigatórios.' }, 400)
         if (parsedSaldoInicial == null) return json(req, { error: 'Saldo inicial inválido.' }, 400)
         const { data, error } = await sb.from('fin_accounts').insert({
-          nome: normalizedNome, tipo: normalizedTipo, saldo_inicial: parsedSaldoInicial,
+          nome: normalizedNome, tipo: normalizedTipo, saldo_inicial: parsedSaldoInicial, ativo: true,
         }).select().single()
         if (error) return json(req, { error: 'Erro ao criar conta.' }, 500)
         return json(req, { account: data })
+      }
+
+      if (action === 'atualizar') {
+        const { id, nome, tipo, saldo_inicial } = payload
+        const normalizedNome = normalizeText(nome)
+        const normalizedTipo = normalizeText(tipo)
+        const parsedSaldoInicial = parseCurrencyInput(saldo_inicial ?? 0)
+        if (!id) return json(req, { error: 'ID da conta é obrigatório.' }, 400)
+        if (!normalizedNome || !normalizedTipo) return json(req, { error: 'nome e tipo são obrigatórios.' }, 400)
+        if (parsedSaldoInicial == null) return json(req, { error: 'Saldo inicial inválido.' }, 400)
+
+        const { data, error } = await sb.from('fin_accounts')
+          .update({
+            nome: normalizedNome,
+            tipo: normalizedTipo,
+            saldo_inicial: parsedSaldoInicial,
+          })
+          .eq('id', id)
+          .select()
+          .single()
+        if (error) return json(req, { error: 'Erro ao atualizar conta.' }, 500)
+        return json(req, { account: data })
+      }
+
+      if (action === 'deletar') {
+        const { id } = payload
+        if (!id) return json(req, { error: 'ID da conta é obrigatório.' }, 400)
+
+        const { error } = await sb.from('fin_accounts')
+          .update({ ativo: false })
+          .eq('id', id)
+        if (error) return json(req, { error: `Erro ao arquivar conta: ${error.message}` }, 500)
+        return json(req, { ok: true })
+      }
+
+      if (action === 'restaurar') {
+        const { id } = payload
+        if (!id) return json(req, { error: 'ID da conta é obrigatório.' }, 400)
+
+        const { error } = await sb.from('fin_accounts')
+          .update({ ativo: true })
+          .eq('id', id)
+        if (error) return json(req, { error: `Erro ao restaurar conta: ${error.message}` }, 500)
+        return json(req, { ok: true })
       }
     }
 
@@ -79,6 +129,18 @@ serve(async (req) => {
           .order('nome')
         if (error) return json(req, { error: 'Erro ao buscar centros de custo.' }, 500)
         return json(req, { cost_centers: data })
+      }
+
+      if (action === 'criar') {
+        const { nome, descricao } = payload
+        const normalizedNome = normalizeText(nome)
+        if (!normalizedNome) return json(req, { error: 'Nome do centro de custo é obrigatório.' }, 400)
+        const { data, error } = await sb.from('fin_cost_centers').insert({
+          nome: normalizedNome,
+          descricao: normalizeText(descricao),
+        }).select().single()
+        if (error) return json(req, { error: 'Erro ao criar centro de custo.' }, 500)
+        return json(req, { cost_center: data })
       }
     }
 

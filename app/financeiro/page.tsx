@@ -71,6 +71,22 @@ interface ImportedCsvRow {
   valor: number
   tipo: 'entrada' | 'saida' | 'transferencia'
 }
+interface AiDuplicateMatch {
+  csv_index: number
+  existing_id: string
+  existing_descricao: string
+  existing_valor: number
+  existing_date: string
+  existing_status: string
+  existing_contato: string
+  confidence: 'high' | 'medium' | 'low'
+  reason: string
+}
+type DupAction = 'pending' | 'combine' | 'import' | 'transfer'
+interface DupActionState {
+  action: DupAction
+  chosenStatus?: 'confirmado' | 'pendente'
+}
 interface ImportPreviewData {
   accountId: string | null
   accountName: string
@@ -97,6 +113,8 @@ interface ImportPreviewData {
       opportunities?: string[]
       confidence?: 'high' | 'medium' | 'low'
     } | null
+    potential_duplicates?: AiDuplicateMatch[]
+    duplicate_debug?: any
   } | null
 }
 type ImportAlertKey = 'duplicados' | 'transferencias' | 'sem-categoria' | 'sem-contato'
@@ -457,6 +475,11 @@ function parseImportCsvContent(content: string): ImportedCsvRow[] {
     if (paymentDate || statusVal.includes('pago') || statusVal.includes('confirmado') || statusVal.includes('liquidado')) {
       status = 'confirmado'
     }
+    // Se o CSV não tem coluna de status NEM de pagamento, é um extrato bancário
+    // (ex: Asaas) — tudo já foi efetivado
+    if (idxStatus < 0 && idxPayment < 0) {
+      status = 'confirmado'
+    }
 
     // Lógica de Tipo (Entrada/Saída/Transferência)
     let tipo: 'entrada' | 'saida' | 'transferencia' = valorRaw < 0 ? 'saida' : 'entrada'
@@ -473,7 +496,7 @@ function parseImportCsvContent(content: string): ImportedCsvRow[] {
     rows.push({
       competence_date: competenceDate,
       due_date: idxDue >= 0 ? parsePtBrDateToIso(cols[idxDue]) : null,
-      payment_date: paymentDate,
+      payment_date: paymentDate || (status === 'confirmado' ? competenceDate : null),
       descricao: descricao.trim(),
       status,
       contato: idxCont >= 0 ? cols[idxCont] : null,
@@ -764,6 +787,9 @@ function FinanceiroInner() {
   const [editingImportRow, setEditingImportRow] = useState<ImportedCsvRow | null>(null)
   const [importContactRowIndex, setImportContactRowIndex] = useState<number | null>(null)
   const [activeImportAlert, setActiveImportAlert] = useState<ImportAlertKey | null>(null)
+  const [importDupActions, setImportDupActions] = useState<Map<number, DupActionState>>(new Map())
+  const [selectedDupIdx, setSelectedDupIdx] = useState<number | null>(null)
+  const [dupResolveChoices, setDupResolveChoices] = useState<Record<number, Record<string, 'csv' | 'existing'>>>({})
   const [showBulkApplyPanel, setShowBulkApplyPanel] = useState(false)
   const [bulkApplyFields, setBulkApplyFields] = useState<Record<ImportBulkField, boolean>>({
     contato: true,
@@ -1422,6 +1448,7 @@ function FinanceiroInner() {
         account_id: effectiveImportMode === 'single' ? accountId : undefined,
         rows,
       })
+      console.log('[DEBUG] Analysis response:', analysis)
       if (analysis?.error) { showMsg('err', analysis.error); return }
       setImportPreview({
         accountId: effectiveImportMode === 'single' ? accountId : null,
@@ -1431,6 +1458,16 @@ function FinanceiroInner() {
         analysis,
       })
       setActiveImportAlert(null)
+      // Inicializa todas as duplicatas como 'pending'.
+      // Pré-seleciona 'transfer' quando a IA marcou como transferência interna no reason.
+      const dups: AiDuplicateMatch[] = analysis?.potential_duplicates || []
+      const actionsMap = new Map<number, DupActionState>()
+      for (const d of dups) {
+        const reason = (d.reason || '').toUpperCase()
+        const isInternalTransfer = reason.includes('TRANSFERÊNCIA INTERNA') || reason.includes('TRANSFERENCIA INTERNA')
+        actionsMap.set(d.csv_index, { action: isInternalTransfer ? 'transfer' : 'pending' })
+      }
+      setImportDupActions(actionsMap)
     } finally {
       setImportPreviewLoading(false)
       setImportingAccountId(null)
@@ -1439,16 +1476,55 @@ function FinanceiroInner() {
 
   async function confirmImportPreview() {
     if (!importPreview) return
+    // Verifica se há duplicatas pendentes
+    const pendingDups = Array.from(importDupActions.values()).filter(a => a.action === 'pending')
+    if (pendingDups.length > 0) {
+      showMsg('err', `Resolva ${pendingDups.length} duplicata${pendingDups.length > 1 ? 's' : ''} antes de importar.`)
+      return
+    }
+
     setImportPreviewLoading(true)
-    const BATCH_SIZE = 500
-    const allRows = importPreview.rows
-    const totalBatches = Math.ceil(allRows.length / BATCH_SIZE)
-    setImportProgress({ done: 0, total: allRows.length })
-    let totalImported = 0
-    let totalSkipped = 0
+    const duplicates = importPreview.analysis?.potential_duplicates || []
+
     try {
+      // 1. Executar combinações primeiro
+      let combined = 0
+      for (const dup of duplicates) {
+        const dupAction = importDupActions.get(dup.csv_index)
+        if (dupAction?.action !== 'combine') continue
+        const csvRow = importPreview.rows[dup.csv_index]
+        const res = await callFn('financeiro-transacoes', {
+          action: 'combinar_transacao',
+          existing_id: dup.existing_id,
+          chosen_status: dupAction.chosenStatus || dup.existing_status,
+          csv_payment_date: csvRow?.payment_date,
+        })
+        if (res?.error) { showMsg('err', res.error); return }
+        combined++
+      }
+
+      // 2. Determinar quais linhas importar (excluir as combinadas)
+      const combineIndices = new Set(
+        duplicates.filter(d => importDupActions.get(d.csv_index)?.action === 'combine').map(d => d.csv_index)
+      )
+      // Linhas marcadas como transferência interna: vão ser importadas, mas com tipo='transferencia'
+      const transferIndices = new Set(
+        duplicates.filter(d => importDupActions.get(d.csv_index)?.action === 'transfer').map(d => d.csv_index)
+      )
+      const allOriginalRows = importPreview.rows
+      const rowsToImport = allOriginalRows
+        .map((row, i) => transferIndices.has(i) ? { ...row, tipo: 'transferencia' as const } : row)
+        .filter((_, i) => !combineIndices.has(i))
+
+      // 3. Importar as linhas restantes em batches
+      const BATCH_SIZE = 500
+      const totalBatches = Math.ceil(rowsToImport.length / BATCH_SIZE)
+      setImportProgress({ done: 0, total: rowsToImport.length })
+      let totalImported = 0
+      let totalSkipped = 0
+
       for (let i = 0; i < totalBatches; i++) {
-        const batch = allRows.slice(i * BATCH_SIZE, (i + 1) * BATCH_SIZE)
+        const batch = rowsToImport.slice(i * BATCH_SIZE, (i + 1) * BATCH_SIZE)
         const data = await callFn('financeiro-transacoes', {
           action: 'importar_csv',
           account_id: importPreview.accountId || undefined,
@@ -1457,13 +1533,22 @@ function FinanceiroInner() {
         if (data?.error) { showMsg('err', data.error); return }
         totalImported += data.imported || 0
         totalSkipped += data.skipped || 0
-        setImportProgress({ done: Math.min((i + 1) * BATCH_SIZE, allRows.length), total: allRows.length })
+        setImportProgress({ done: Math.min((i + 1) * BATCH_SIZE, rowsToImport.length), total: rowsToImport.length })
       }
-      showMsg('ok', `Importação concluída: ${totalImported} lançamentos importados, ${totalSkipped} ignorados.`)
+
+      const transferCount = transferIndices.size
+      const parts = [`${totalImported} importados`]
+      if (combined > 0) parts.push(`${combined} combinados`)
+      if (transferCount > 0) parts.push(`${transferCount} como transferência`)
+      if (totalSkipped > 0) parts.push(`${totalSkipped} ignorados`)
+      showMsg('ok', `Importação concluída: ${parts.join(', ')}.`)
       setImportPreview(null)
       setEditingImportRowIndex(null)
       setEditingImportRow(null)
       setActiveImportAlert(null)
+      setImportDupActions(new Map())
+      setSelectedDupIdx(null)
+      setDupResolveChoices({})
       await fetchAccounts()
       if (activeTab === 'transacoes') await fetchTransacoes()
     } finally {
@@ -1786,7 +1871,7 @@ function FinanceiroInner() {
     { field: 'status', label: 'Status' },
   ]
   // col 0=Competência, 1=Pagamento, 2=Descrição, 3=Categoria, 4=Centro, 5=Conta, 6=Tipo, 7=Valor, 8=Status, 9=Ações
-  const { widths: colWidths, onMouseDown: colResizeDown } = useColResize([100, 100, 180, 110, 80, 100, 80, 90, 90, 160])
+  const { widths: colWidths, onMouseDown: colResizeDown } = useColResize([130, 130, 280, 180, 130, 140, 110, 140, 130, 200])
 
   if (!authChecked) return <NGPLoading loading loadingText="Carregando financeiro..." />
 
@@ -2688,6 +2773,26 @@ function FinanceiroInner() {
           </div>
         )}
 
+        {/* Loading overlay enquanto a IA processa o CSV */}
+        {importPreviewLoading && !importPreview && (
+          <div className={styles.formOverlay}>
+            <div className={styles.aiLoadingCard}>
+              <div className={styles.aiLoadingSpinner}>
+                <div className={styles.aiLoadingDot} />
+                <div className={styles.aiLoadingDot} />
+                <div className={styles.aiLoadingDot} />
+              </div>
+              <div className={styles.aiLoadingTitle}>🤖 IA analisando seu CSV…</div>
+              <div className={styles.aiLoadingSubtitle}>
+                Identificando duplicatas, contatos, categorias e conferindo lançamentos contra o sistema.
+              </div>
+              <div className={styles.aiLoadingHint}>
+                Isso pode levar até 30 segundos para CSVs grandes.
+              </div>
+            </div>
+          </div>
+        )}
+
         {importPreview && (
           <div className={styles.formOverlay} onClick={() => !importPreviewLoading && setImportPreview(null)}>
             <div className={`${styles.formModal} ${styles.importPreviewModal}`} onClick={e => e.stopPropagation()}>
@@ -2701,46 +2806,47 @@ function FinanceiroInner() {
                   <div className={styles.importPreviewRows}>{importPreview.rows.length} linhas válidas</div>
                 </div>
 
-                <div className={styles.importPreviewGrid}>
-                  <div className={styles.importPreviewCard}>
-                    <span>Entradas</span>
-                    <strong>{importSummary?.entradas || 0}</strong>
-                    <small>{fmtBRL(importSummary?.total_entradas || 0)}</small>
+                {/* Barra compacta com KPIs + alertas inline */}
+                <div className={styles.importTopBar}>
+                  <div className={styles.importTopKpis}>
+                    <div className={styles.importTopKpi}>
+                      <span className={styles.importTopKpiLabel}>Entradas</span>
+                      <strong className={styles.importTopKpiValue}>{importSummary?.entradas || 0}</strong>
+                      <small>{fmtBRL(importSummary?.total_entradas || 0)}</small>
+                    </div>
+                    <div className={styles.importTopKpiDivider} />
+                    <div className={styles.importTopKpi}>
+                      <span className={styles.importTopKpiLabel}>Saídas</span>
+                      <strong className={styles.importTopKpiValue}>{importSummary?.saidas || 0}</strong>
+                      <small>{fmtBRL(importSummary?.total_saidas || 0)}</small>
+                    </div>
+                    <div className={styles.importTopKpiDivider} />
+                    <div className={styles.importTopKpi}>
+                      <span className={styles.importTopKpiLabel}>Confirmados</span>
+                      <strong className={`${styles.importTopKpiValue} ${styles.importTopKpiValueOk}`}>{importSummary?.confirmados || 0}</strong>
+                    </div>
+                    <div className={styles.importTopKpiDivider} />
+                    <div className={styles.importTopKpi}>
+                      <span className={styles.importTopKpiLabel}>Pendentes</span>
+                      <strong className={`${styles.importTopKpiValue} ${(importSummary?.pendentes || 0) > 0 ? styles.importTopKpiValueWarn : ''}`}>{importSummary?.pendentes || 0}</strong>
+                    </div>
                   </div>
-                  <div className={styles.importPreviewCard}>
-                    <span>Saídas</span>
-                    <strong>{importSummary?.saidas || 0}</strong>
-                    <small>{fmtBRL(importSummary?.total_saidas || 0)}</small>
-                  </div>
-                  <div className={styles.importPreviewCard}>
-                    <span>Confirmados</span>
-                    <strong>{importSummary?.confirmados || 0}</strong>
-                    <small>com baixa informada</small>
-                  </div>
-                  <div className={styles.importPreviewCard}>
-                    <span>Pendentes</span>
-                    <strong>{importSummary?.pendentes || 0}</strong>
-                    <small>sem pagamento</small>
-                  </div>
-                </div>
-
-                {!!importWarnings.length && (
-                  <div className={styles.importPreviewBlock}>
-                    <div className={styles.importPreviewBlockTitle}>Alertas automáticos</div>
-                    <div className={styles.importPreviewList}>
+                  {!!importWarnings.length && (
+                    <div className={styles.importTopAlerts}>
                       {importAlerts.map(alert => (
                         <button
                           key={alert.key}
                           type="button"
-                          className={`${styles.importPreviewWarning} ${styles.importPreviewWarningButton} ${activeImportAlert === alert.key ? styles.importPreviewWarningActive : ''}`}
+                          className={`${styles.importTopAlertChip} ${activeImportAlert === alert.key ? styles.importTopAlertChipActive : ''}`}
                           onClick={() => setActiveImportAlert(current => current === alert.key ? null : alert.key)}
+                          title={alert.label}
                         >
-                          {alert.label}
+                          ⚠ {alert.label}
                         </button>
                       ))}
                     </div>
-                  </div>
-                )}
+                  )}
+                </div>
 
                 {!!importPreview.analysis?.accounts_detected?.length && (
                   <div className={styles.importPreviewBlock}>
@@ -2758,34 +2864,504 @@ function FinanceiroInner() {
                   </div>
                 )}
 
-                {importPreview.analysis?.ai_review && (
-                  <div className={styles.importPreviewBlock}>
-                    <div className={styles.importPreviewBlockTitle}>Leitura assistida por IA</div>
-                    <div className={styles.importPreviewAiCard}>
-                      <div className={styles.importPreviewAiHeadline}>{importPreview.analysis.ai_review.headline}</div>
-                      {importPreview.analysis.ai_review.summary && (
-                        <p className={styles.importPreviewAiSummary}>{importPreview.analysis.ai_review.summary}</p>
-                      )}
-                      <div className={styles.importPreviewAiMeta}>
-                        Confiança: {importPreview.analysis.ai_review.confidence === 'high' ? 'alta' : importPreview.analysis.ai_review.confidence === 'medium' ? 'média' : 'baixa'}
+                {importPreview.analysis?.ai_review && (() => {
+                  const review = importPreview.analysis.ai_review
+                  const totalInsights = (review.warnings?.length || 0) + (review.opportunities?.length || 0)
+                  return (
+                    <details className={styles.aiReviewDetails}>
+                      <summary className={styles.aiReviewSummary}>
+                        <span>🧠 Leitura assistida por IA</span>
+                        <span className={styles.aiReviewSummaryHint}>
+                          {review.headline || 'Análise disponível'}
+                          {totalInsights > 0 && ` · ${totalInsights} insight${totalInsights > 1 ? 's' : ''}`}
+                          {' · '}clique para expandir
+                        </span>
+                      </summary>
+                      <div className={styles.importPreviewAiCard}>
+                        {review.summary && (
+                          <p className={styles.importPreviewAiSummary}>{review.summary}</p>
+                        )}
+                        <div className={styles.importPreviewAiMeta}>
+                          Confiança: {review.confidence === 'high' ? 'alta' : review.confidence === 'medium' ? 'média' : 'baixa'}
+                        </div>
+                        {!!review.warnings?.length && (
+                          <div className={styles.importPreviewList}>
+                            {review.warnings.map(item => (
+                              <div key={item} className={styles.importPreviewWarning}>{item}</div>
+                            ))}
+                          </div>
+                        )}
+                        {!!review.opportunities?.length && (
+                          <div className={styles.importPreviewList}>
+                            {review.opportunities.map(item => (
+                              <div key={item} className={styles.importPreviewOpportunity}>{item}</div>
+                            ))}
+                          </div>
+                        )}
                       </div>
-                      {!!importPreview.analysis.ai_review.warnings?.length && (
-                        <div className={styles.importPreviewList}>
-                          {importPreview.analysis.ai_review.warnings.map(item => (
-                            <div key={item} className={styles.importPreviewWarning}>{item}</div>
-                          ))}
+                    </details>
+                  )
+                })()}
+
+                {/* Banner de erro quando a IA não consegue rodar a detecção */}
+                {importPreview.analysis?.duplicate_debug?.error_user_facing && (
+                  <div className={styles.importPreviewBlock}>
+                    <div className={styles.dupErrorBanner}>
+                      <div className={styles.dupErrorIcon}>⚠</div>
+                      <div className={styles.dupErrorContent}>
+                        <div className={styles.dupErrorTitle}>Detecção de duplicatas indisponível</div>
+                        <div className={styles.dupErrorText}>{importPreview.analysis.duplicate_debug.error_user_facing}</div>
+                        <div className={styles.dupErrorHint}>
+                          {importPreview.analysis.duplicate_debug.candidates_count > 0 && (
+                            <>Foram encontrados <strong>{importPreview.analysis.duplicate_debug.candidates_count} candidatos prováveis</strong> no banco. Após corrigir a IA, refaça a importação para ver a análise.</>
+                          )}
                         </div>
-                      )}
-                      {!!importPreview.analysis.ai_review.opportunities?.length && (
-                        <div className={styles.importPreviewList}>
-                          {importPreview.analysis.ai_review.opportunities.map(item => (
-                            <div key={item} className={styles.importPreviewOpportunity}>{item}</div>
-                          ))}
-                        </div>
-                      )}
+                      </div>
                     </div>
                   </div>
                 )}
+
+                {/* Diagnóstico técnico — colapsado por padrão */}
+                {importPreview.analysis?.duplicate_debug && (
+                  <details className={styles.dupDebugDetails}>
+                    <summary className={styles.dupDebugSummary}>
+                      🐞 Diagnóstico técnico da detecção
+                      <span className={styles.dupDebugSummaryHint}>
+                        {importPreview.analysis.duplicate_debug.existing_count ?? 0} no DB · {importPreview.analysis.duplicate_debug.candidates_count ?? 0} candidatos · {importPreview.analysis.potential_duplicates?.length ?? 0} matches
+                      </span>
+                    </summary>
+                    <div className={styles.dupDebugBody}>
+                      <div><span className={styles.dupDebugLabel}>Saída:</span> <code>{importPreview.analysis.duplicate_debug.exit || '—'}</code></div>
+                      <div><span className={styles.dupDebugLabel}>CSV:</span> {importPreview.analysis.duplicate_debug.csv_rows_count} linhas, {importPreview.analysis.duplicate_debug.csv_dates_count} com data</div>
+                      {importPreview.analysis.duplicate_debug.search_range && (
+                        <div><span className={styles.dupDebugLabel}>Busca DB:</span> {importPreview.analysis.duplicate_debug.search_range.minDate} → {importPreview.analysis.duplicate_debug.search_range.maxDate} {importPreview.analysis.duplicate_debug.account_id ? `(conta filtrada)` : '(todas as contas)'}</div>
+                      )}
+                      <div><span className={styles.dupDebugLabel}>Lançamentos no DB:</span> {importPreview.analysis.duplicate_debug.existing_count ?? '—'}</div>
+                      <div><span className={styles.dupDebugLabel}>Candidatos (valor + ±5 dias):</span> {importPreview.analysis.duplicate_debug.candidates_count ?? '—'}</div>
+                      {importPreview.analysis.duplicate_debug.ai_matches_breakdown && (
+                        <div><span className={styles.dupDebugLabel}>IA analisou:</span> {importPreview.analysis.duplicate_debug.ai_matches_total} pares — <span style={{ color: '#16a34a' }}>high {importPreview.analysis.duplicate_debug.ai_matches_breakdown.high}</span>, <span style={{ color: '#ca8a04' }}>medium {importPreview.analysis.duplicate_debug.ai_matches_breakdown.medium}</span>, low {importPreview.analysis.duplicate_debug.ai_matches_breakdown.low}, rejeitados {importPreview.analysis.duplicate_debug.ai_matches_breakdown.false}</div>
+                      )}
+                      <div><span className={styles.dupDebugLabel}>Matches finais (após dedupe):</span> <strong>{importPreview.analysis.potential_duplicates?.length ?? 0}</strong></div>
+                    </div>
+                  </details>
+                )}
+
+                {(() => {
+                  const dups = importPreview.analysis?.potential_duplicates || []
+                  const dupByIdx = new Map<number, AiDuplicateMatch>()
+                  for (const d of dups) dupByIdx.set(d.csv_index, d)
+                  const totalDups = dups.length
+                  const pending = dups.filter(d => (importDupActions.get(d.csv_index)?.action || 'pending') === 'pending').length
+
+                  // Ordena: duplicatas primeiro (high → medium → low), depois resto por índice original
+                  const confidenceRank = (c?: 'high' | 'medium' | 'low') => c === 'high' ? 0 : c === 'medium' ? 1 : c === 'low' ? 2 : 3
+                  const orderedRows = importPreview.rows
+                    .map((row, idx) => ({ row, idx, dup: dupByIdx.get(idx) }))
+                    .sort((a, b) => {
+                      const aHasDup = a.dup ? 0 : 1
+                      const bHasDup = b.dup ? 0 : 1
+                      if (aHasDup !== bHasDup) return aHasDup - bHasDup
+                      if (a.dup && b.dup) {
+                        const cr = confidenceRank(a.dup.confidence) - confidenceRank(b.dup.confidence)
+                        if (cr !== 0) return cr
+                      }
+                      return a.idx - b.idx
+                    })
+
+                  return (
+                    <div className={styles.importPreviewBlock}>
+                      <div className={styles.dupSplitHeader}>
+                        <div>
+                          <div className={styles.dupSplitTitle}>🔀 Revisão e Conciliação</div>
+                          <div className={styles.dupSplitSubtitle}>
+                            {orderedRows.length} lançamento{orderedRows.length !== 1 ? 's' : ''} no CSV
+                            {totalDups > 0 ? (
+                              <> · <strong>{totalDups} possíveis duplicatas</strong> · <strong style={{ color: pending > 0 ? '#ea580c' : '#16a34a' }}>{pending} pendente{pending !== 1 ? 's' : ''}</strong></>
+                            ) : (
+                              <> · <strong style={{ color: '#16a34a' }}>nenhuma duplicata detectada pela IA</strong></>
+                            )}
+                          </div>
+                        </div>
+                        {totalDups > 0 && (
+                          <div className={styles.dupSplitProgress}>
+                            <div className={styles.dupSplitProgressBar}>
+                              <div className={styles.dupSplitProgressFill} style={{ width: `${((totalDups - pending) / totalDups) * 100}%` }} />
+                            </div>
+                            <span>{totalDups - pending} / {totalDups} resolvidas</span>
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Cabeçalho das colunas */}
+                      <div className={styles.dupSplitColumnHeaders}>
+                        <div className={`${styles.dupSplitColHead} ${styles.dupSplitColHeadExisting}`}>
+                          💾 Já cadastrado no sistema
+                        </div>
+                        <div className={styles.dupSplitColHeadMatch}>
+                          🤖 IA
+                        </div>
+                        <div className={`${styles.dupSplitColHead} ${styles.dupSplitColHeadCsv}`}>
+                          📥 Vindo do CSV
+                        </div>
+                        <div className={styles.dupSplitColHeadActions}>
+                          Ação
+                        </div>
+                      </div>
+
+                      {/* Linhas split — sistema | match | csv | ações */}
+                      <div className={styles.dupSplitList}>
+                        {orderedRows.map(({ row: csvRow, idx, dup }) => {
+                          const csvStatus = csvRow?.status || 'pendente'
+                          const dupState = dup ? (importDupActions.get(dup.csv_index) || { action: 'pending' as DupAction }) : null
+                          const existStatus = dup?.existing_status
+                          const rowClass = dupState?.action === 'combine'
+                            ? styles.dupSplitRowCombine
+                            : dupState?.action === 'import'
+                              ? styles.dupSplitRowImport
+                              : dupState?.action === 'transfer'
+                                ? styles.dupSplitRowTransfer
+                                : !dup ? styles.dupSplitRowClean : ''
+                          return (
+                            <div key={idx} className={`${styles.dupSplitRow} ${rowClass}`}>
+                              {/* COLUNA SISTEMA */}
+                              {dup ? (
+                                <div className={styles.dupSplitCellExisting}>
+                                  <div className={styles.dupSplitCellMain}>{dup.existing_descricao}</div>
+                                  <div className={styles.dupSplitCellMeta}>
+                                    <span>📅 {fmtDate(dup.existing_date)}</span>
+                                    <span className={styles.dupSplitCellValor}>{fmtBRL(dup.existing_valor)}</span>
+                                    <span className={existStatus === 'confirmado' ? styles.dupSplitTagPaid : styles.dupSplitTagPending}>
+                                      {existStatus === 'confirmado' ? '✓ Pago' : '⏳ Pendente'}
+                                    </span>
+                                  </div>
+                                  {dup.existing_contato && (
+                                    <div className={styles.dupSplitCellContact}>👤 {dup.existing_contato}</div>
+                                  )}
+                                </div>
+                              ) : (
+                                <div className={styles.dupSplitCellEmpty}>
+                                  Sem correspondência no sistema
+                                </div>
+                              )}
+
+                              {/* COLUNA MATCH (IA) */}
+                              {dup ? (
+                                <div className={styles.dupSplitCellMatch}>
+                                  <span className={`${styles.dupSplitConfidence} ${styles[`dupSplitConfidence_${dup.confidence}`]}`}>
+                                    {dup.confidence === 'high' ? '⬤ Alta' : dup.confidence === 'medium' ? '⬤ Média' : '⬤ Baixa'}
+                                  </span>
+                                  <div className={styles.dupSplitArrows}>⇆</div>
+                                  <div className={styles.dupSplitReason} title={dup.reason}>{dup.reason}</div>
+                                </div>
+                              ) : (
+                                <div className={styles.dupSplitCellMatchClean}>
+                                  <span className={styles.dupSplitTagNew}>✓ Novo</span>
+                                  <div className={styles.dupSplitReasonClean}>Lançamento sem duplicata detectada</div>
+                                </div>
+                              )}
+
+                              {/* COLUNA CSV */}
+                              <div className={styles.dupSplitCellCsv}>
+                                <div className={styles.dupSplitCellMain}>{csvRow?.descricao || '—'}</div>
+                                <div className={styles.dupSplitCellMeta}>
+                                  <span>📅 {fmtDate(csvRow?.competence_date || dup?.existing_date || '')}</span>
+                                  <span className={styles.dupSplitCellValor}>{fmtBRL(csvRow?.valor ?? dup?.existing_valor ?? 0)}</span>
+                                  <span className={csvStatus === 'confirmado' ? styles.dupSplitTagPaid : styles.dupSplitTagPending}>
+                                    {csvStatus === 'confirmado' ? '✓ Pago' : '⏳ Pendente'}
+                                  </span>
+                                </div>
+                                {csvRow?.contato && (
+                                  <div className={styles.dupSplitCellContact}>👤 {csvRow.contato}</div>
+                                )}
+                                {csvRow?.categoria && (
+                                  <div className={styles.dupSplitCellContact}>🏷 {csvRow.categoria}</div>
+                                )}
+                              </div>
+
+                              {/* COLUNA AÇÕES */}
+                              <div className={styles.dupSplitCellActions}>
+                                {dup ? (
+                                  <>
+                                    <button
+                                      type="button"
+                                      className={`${styles.dupSplitBtn} ${styles.dupSplitBtnCombine} ${dupState?.action === 'combine' ? styles.dupSplitBtnActive : ''}`}
+                                      onClick={() => {
+                                        setImportDupActions(prev => {
+                                          const next = new Map(prev)
+                                          next.set(dup.csv_index, { action: 'combine', chosenStatus: csvStatus as any })
+                                          return next
+                                        })
+                                      }}
+                                      title="Combinar: atualizar lançamento existente com dados do CSV"
+                                    >
+                                      🔗 Combinar
+                                    </button>
+                                    <button
+                                      type="button"
+                                      className={`${styles.dupSplitBtn} ${styles.dupSplitBtnImport} ${dupState?.action === 'import' ? styles.dupSplitBtnActive : ''}`}
+                                      onClick={() => {
+                                        setImportDupActions(prev => {
+                                          const next = new Map(prev)
+                                          next.set(dup.csv_index, { action: 'import' })
+                                          return next
+                                        })
+                                      }}
+                                      title="Imputar como novo lançamento separado"
+                                    >
+                                      ➕ Separado
+                                    </button>
+                                    <button
+                                      type="button"
+                                      className={`${styles.dupSplitBtn} ${styles.dupSplitBtnTransfer} ${dupState?.action === 'transfer' ? styles.dupSplitBtnActive : ''}`}
+                                      onClick={() => {
+                                        setImportDupActions(prev => {
+                                          const next = new Map(prev)
+                                          next.set(dup.csv_index, { action: 'transfer' })
+                                          return next
+                                        })
+                                      }}
+                                      title="Transferência interna: importa o lançamento como tipo 'transferência' (movimentação entre contas)"
+                                    >
+                                      🔄 Transferência
+                                    </button>
+                                    <button
+                                      type="button"
+                                      className={styles.dupSplitBtnDetails}
+                                      onClick={() => setSelectedDupIdx(dup.csv_index)}
+                                      title="Abrir conciliação detalhada (escolher campo a campo)"
+                                    >
+                                      🔍 Detalhes
+                                    </button>
+                                    {dupState?.action !== 'pending' && (
+                                      <button
+                                        type="button"
+                                        className={styles.dupSplitBtnReset}
+                                        onClick={() => {
+                                          setImportDupActions(prev => {
+                                            const next = new Map(prev)
+                                            next.set(dup.csv_index, { action: 'pending' })
+                                            return next
+                                          })
+                                        }}
+                                      >
+                                        ↩ Desfazer
+                                      </button>
+                                    )}
+                                  </>
+                                ) : (
+                                  <span className={styles.dupSplitNoAction}>✓ Será importado</span>
+                                )}
+                              </div>
+                            </div>
+                          )
+                        })}
+                      </div>
+                    </div>
+                  )
+                })()}
+
+                {/* MODAL SPLIT VIEW DE CONCILIAÇÃO */}
+                {selectedDupIdx !== null && (() => {
+                  const dup = importPreview.analysis?.potential_duplicates?.find(d => d.csv_index === selectedDupIdx)
+                  if (!dup) return null
+                  const csvRow = importPreview.rows[dup.csv_index]
+                  if (!csvRow) return null
+                  const dupState = importDupActions.get(dup.csv_index) || { action: 'pending' as DupAction }
+                  const csvStatus = csvRow.status || 'pendente'
+                  const existStatus = dup.existing_status
+                  const choices = dupResolveChoices[dup.csv_index] || {}
+
+                  // Define todos os campos a comparar
+                  const fields: { key: string; label: string; csv: any; existing: any; format?: (v: any) => string; differs: boolean }[] = [
+                    {
+                      key: 'descricao',
+                      label: 'Descrição',
+                      csv: csvRow.descricao || '—',
+                      existing: dup.existing_descricao || '—',
+                      differs: (csvRow.descricao || '').trim().toLowerCase() !== (dup.existing_descricao || '').trim().toLowerCase(),
+                    },
+                    {
+                      key: 'data',
+                      label: 'Data de Competência',
+                      csv: csvRow.competence_date,
+                      existing: dup.existing_date,
+                      format: (v) => fmtDate(v),
+                      differs: csvRow.competence_date !== dup.existing_date,
+                    },
+                    {
+                      key: 'valor',
+                      label: 'Valor',
+                      csv: csvRow.valor,
+                      existing: dup.existing_valor,
+                      format: (v) => fmtBRL(v),
+                      differs: Math.abs(Number(csvRow.valor || 0)) !== Math.abs(Number(dup.existing_valor || 0)),
+                    },
+                    {
+                      key: 'status',
+                      label: 'Status',
+                      csv: csvStatus,
+                      existing: existStatus,
+                      format: (v) => v === 'confirmado' ? '✓ Pago' : '⏳ Pendente',
+                      differs: csvStatus !== existStatus,
+                    },
+                    {
+                      key: 'contato',
+                      label: 'Cliente / Fornecedor',
+                      csv: csvRow.contato || '—',
+                      existing: dup.existing_contato || '—',
+                      differs: (csvRow.contato || '').trim().toLowerCase() !== (dup.existing_contato || '').trim().toLowerCase(),
+                    },
+                    {
+                      key: 'categoria',
+                      label: 'Categoria',
+                      csv: csvRow.categoria || '—',
+                      existing: '—',
+                      differs: !!csvRow.categoria,
+                    },
+                  ]
+
+                  const diffCount = fields.filter(f => f.differs).length
+
+                  return (
+                    <div className={styles.dupResolveBackdrop} onClick={() => setSelectedDupIdx(null)}>
+                      <div className={styles.dupResolveModal} onClick={e => e.stopPropagation()}>
+                        <div className={styles.dupResolveHeader}>
+                          <div>
+                            <h2 className={styles.dupResolveTitle}>🔀 Conciliação de Lançamento</h2>
+                            <div className={styles.dupResolveSubtitle}>
+                              {diffCount === 0 ? '✓ Nenhuma divergência — provável duplicata exata' : `⚠ ${diffCount} campo${diffCount > 1 ? 's' : ''} divergente${diffCount > 1 ? 's' : ''} entre o CSV e o sistema`}
+                            </div>
+                          </div>
+                          <button
+                            type="button"
+                            className={styles.dupResolveCloseBtn}
+                            onClick={() => setSelectedDupIdx(null)}
+                          >
+                            ✕
+                          </button>
+                        </div>
+
+                        {/* Análise da IA */}
+                        <div className={styles.dupResolveAiBox}>
+                          <div className={styles.dupResolveAiHeader}>
+                            <span className={styles.dupResolveAiBadge}>🤖 Análise da IA</span>
+                            <span className={`${styles.importDupConfidence} ${styles[`importDupConfidence_${dup.confidence}`]}`}>
+                              Confiança {dup.confidence === 'high' ? 'Alta' : dup.confidence === 'medium' ? 'Média' : 'Baixa'}
+                            </span>
+                          </div>
+                          <div className={styles.dupResolveAiText}>{dup.reason}</div>
+                          <div className={styles.dupResolveAiHint}>
+                            💡 <strong>Recomendação:</strong> {dup.confidence === 'high'
+                              ? 'É praticamente certo que é o mesmo lançamento. Combine para evitar duplicação.'
+                              : 'Pode ser duplicata, mas há algumas diferenças. Revise os campos abaixo antes de decidir.'
+                            }
+                          </div>
+                        </div>
+
+                        {/* Tabela Split View Lado-a-Lado */}
+                        <div className={styles.dupResolveCompareTable}>
+                          <div className={styles.dupResolveCompareHeader}>
+                            <div className={styles.dupResolveCompareCell}>📋 Campo</div>
+                            <div className={`${styles.dupResolveCompareCell} ${styles.dupResolveCompareCellExisting}`}>
+                              💾 Já cadastrado no sistema
+                            </div>
+                            <div className={`${styles.dupResolveCompareCell} ${styles.dupResolveCompareCellCsv}`}>
+                              📥 Vindo do CSV
+                            </div>
+                            <div className={styles.dupResolveCompareCell}>✓ Manter</div>
+                          </div>
+                          {fields.map((field) => {
+                            const csvVal = field.format ? field.format(field.csv) : String(field.csv ?? '—')
+                            const exVal = field.format ? field.format(field.existing) : String(field.existing ?? '—')
+                            const choice = choices[field.key] || (field.differs ? 'csv' : 'existing')
+                            return (
+                              <div key={field.key} className={`${styles.dupResolveCompareRow} ${field.differs ? styles.dupResolveCompareRowDiff : ''}`}>
+                                <div className={styles.dupResolveCompareCell}>
+                                  <strong>{field.label}</strong>
+                                  {field.differs && <span className={styles.dupResolveDiffMark}>⚠ diferente</span>}
+                                </div>
+                                <div
+                                  className={`${styles.dupResolveCompareCell} ${styles.dupResolveCompareCellExisting} ${choice === 'existing' ? styles.dupResolveCompareCellChosen : ''}`}
+                                  onClick={() => {
+                                    setDupResolveChoices(prev => ({
+                                      ...prev,
+                                      [dup.csv_index]: { ...(prev[dup.csv_index] || {}), [field.key]: 'existing' }
+                                    }))
+                                  }}
+                                >
+                                  {exVal}
+                                </div>
+                                <div
+                                  className={`${styles.dupResolveCompareCell} ${styles.dupResolveCompareCellCsv} ${choice === 'csv' ? styles.dupResolveCompareCellChosen : ''}`}
+                                  onClick={() => {
+                                    setDupResolveChoices(prev => ({
+                                      ...prev,
+                                      [dup.csv_index]: { ...(prev[dup.csv_index] || {}), [field.key]: 'csv' }
+                                    }))
+                                  }}
+                                >
+                                  {csvVal}
+                                </div>
+                                <div className={styles.dupResolveCompareCell}>
+                                  <span className={`${styles.dupResolveChoiceTag} ${choice === 'csv' ? styles.dupResolveChoiceTagCsv : styles.dupResolveChoiceTagExisting}`}>
+                                    {choice === 'csv' ? '📥 CSV' : '💾 Sistema'}
+                                  </span>
+                                </div>
+                              </div>
+                            )
+                          })}
+                        </div>
+
+                        {/* Ações finais */}
+                        <div className={styles.dupResolveActions}>
+                          <button
+                            type="button"
+                            className={`${styles.dupResolveBtn} ${styles.dupResolveBtnCombine} ${dupState.action === 'combine' ? styles.dupResolveBtnActive : ''}`}
+                            onClick={() => {
+                              setImportDupActions(prev => {
+                                const next = new Map(prev)
+                                const finalStatus = (choices['status'] === 'csv' ? csvStatus : existStatus) as 'confirmado' | 'pendente'
+                                next.set(dup.csv_index, { action: 'combine', chosenStatus: finalStatus })
+                                return next
+                              })
+                              setSelectedDupIdx(null)
+                            }}
+                          >
+                            🔗 Combinar com existente (atualizar campos escolhidos)
+                          </button>
+                          <button
+                            type="button"
+                            className={`${styles.dupResolveBtn} ${styles.dupResolveBtnImport} ${dupState.action === 'import' ? styles.dupResolveBtnActive : ''}`}
+                            onClick={() => {
+                              setImportDupActions(prev => {
+                                const next = new Map(prev)
+                                next.set(dup.csv_index, { action: 'import' })
+                                return next
+                              })
+                              setSelectedDupIdx(null)
+                            }}
+                          >
+                            ➕ Imputar mesmo assim (criar lançamento separado)
+                          </button>
+                          <button
+                            type="button"
+                            className={`${styles.dupResolveBtn} ${styles.dupResolveBtnIgnore}`}
+                            onClick={() => {
+                              setImportDupActions(prev => {
+                                const next = new Map(prev)
+                                next.set(dup.csv_index, { action: 'pending' })
+                                return next
+                              })
+                              setSelectedDupIdx(null)
+                            }}
+                          >
+                            ↩ Desfazer / Decidir depois
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  )
+                })()}
 
                 <div className={`${styles.importPreviewBlock} ${styles.importPreviewTableBlock}`}>
                   <div className={styles.importPreviewBlockTitle}>
@@ -2804,8 +3380,14 @@ function FinanceiroInner() {
                         const isEditing = editingImportRowIndex === index && editingImportRow
                         const draft = isEditing ? editingImportRow : null
                         const rowTipo = draft?.tipo || row.tipo
+                        const dupMatch = importPreview.analysis?.potential_duplicates?.find(d => d.csv_index === index)
+                        const dupState = importDupActions.get(index)
+                        const isCombined = dupState?.action === 'combine'
                         return (
-                        <tr key={`${row.descricao}-${row.competence_date}-${index}`}>
+                        <tr
+                          key={`${row.descricao}-${row.competence_date}-${index}`}
+                          className={isCombined ? styles.importRowSkipped : ''}
+                        >
                           <td className={styles.tdMuted}>
                             {isEditing ? (
                               <input
@@ -2824,7 +3406,21 @@ function FinanceiroInner() {
                                 value={draft?.descricao || ''}
                                 onChange={e => setEditingImportRow(prev => prev ? { ...prev, descricao: e.target.value } : prev)}
                               />
-                            ) : row.descricao}
+                            ) : (
+                              <div>
+                                {row.descricao}
+                                {dupMatch && (
+                                  <div className={`${styles.importDupInlineBadge} ${styles[`importDupConfidence_${dupMatch.confidence}`]}`}>
+                                    {dupState?.action === 'combine'
+                                      ? `🔗 Será combinado com “${dupMatch.existing_descricao}”`
+                                      : dupState?.action === 'import'
+                                        ? `➕ Será importado como novo (duplicata de “${dupMatch.existing_descricao}”)`
+                                        : `⚠ Provável duplicata de “${dupMatch.existing_descricao}” — resolva acima`
+                                    }
+                                  </div>
+                                )}
+                              </div>
+                            )}
                           </td>
                           <td>
                             {isEditing ? (
@@ -3015,12 +3611,40 @@ function FinanceiroInner() {
 
               <div className={styles.formActions}>
                 <button type="button" className={styles.btnCancelForm} disabled={importPreviewLoading} onClick={() => setImportPreview(null)}>Cancelar</button>
-                <button type="button" className={styles.btnSave} disabled={importPreviewLoading} onClick={() => void confirmImportPreview()}>
+                <button
+                  type="button"
+                  className={styles.btnSave}
+                  disabled={(() => {
+                    if (importPreviewLoading) return true
+                    const hasPending = Array.from(importDupActions.values()).some(a => a.action === 'pending')
+                    if (hasPending) return true
+                    // Verifica se alguma combinação com status diferente não foi resolvida
+                    for (const [idx, a] of importDupActions.entries()) {
+                      if (a.action !== 'combine' || a.chosenStatus) continue
+                      const dup = importPreview?.analysis?.potential_duplicates?.find(d => d.csv_index === idx)
+                      const csvStatus = importPreview?.rows[idx]?.status || 'pendente'
+                      if (dup && dup.existing_status !== csvStatus) return true
+                    }
+                    return false
+                  })()}
+                  onClick={() => void confirmImportPreview()}
+                >
                   {importPreviewLoading
                     ? importProgress
                       ? `Importando lote ${Math.ceil(importProgress.done / 500)} de ${Math.ceil(importProgress.total / 500)}…`
                       : 'Preparando…'
-                    : 'Importar agora'}
+                    : (() => {
+                        const pending = Array.from(importDupActions.values()).filter(a => a.action === 'pending').length
+                        const needsStatus = Array.from(importDupActions.entries()).filter(([idx, a]) => {
+                          if (a.action !== 'combine' || a.chosenStatus) return false
+                          const dup = importPreview?.analysis?.potential_duplicates?.find(d => d.csv_index === idx)
+                          return dup && dup.existing_status !== importPreview?.rows[idx]?.status
+                        }).length
+                        if (pending > 0) return `Resolva ${pending} duplicata${pending > 1 ? 's' : ''} para importar`
+                        if (needsStatus > 0) return `Escolha status de ${needsStatus} combinação${needsStatus > 1 ? 'ões' : ''}`
+                        return 'Importar agora'
+                      })()
+                  }
                 </button>
               </div>
             </div>

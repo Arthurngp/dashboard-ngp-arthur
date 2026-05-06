@@ -1,6 +1,7 @@
 import type { Metadata } from 'next'
 import './globals.css'
 import InactivityGuard from '@/components/InactivityGuard'
+import FeedbackFloatingButton from '@/components/FeedbackFloatingButton'
 
 export const metadata: Metadata = {
   title: 'NGP Space',
@@ -16,7 +17,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           rel="stylesheet"
         />
       </head>
-      <body><InactivityGuard>{children}</InactivityGuard></body>
+      <body><InactivityGuard>{children}</InactivityGuard><FeedbackFloatingButton /></body>
     </html>
   )
 }

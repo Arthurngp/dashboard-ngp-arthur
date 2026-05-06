@@ -1,5 +1,6 @@
 'use client'
 import { Suspense, useEffect, useMemo, useState, useCallback } from 'react'
+import Image from 'next/image'
 import CustomSelect, { SelectOption } from '@/components/CustomSelect'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { getSession } from '@/lib/auth'
@@ -215,7 +216,7 @@ function UsuariosPageInner() {
 
   return (
     <div className={styles.layout}>
-      <Sidebar showDashboardNav={false} minimal setoresOnlyOpen />
+      <Sidebar showDashboardNav={false} minimal />
       <main className={styles.main}>
         <div className={styles.content}>
 
@@ -349,7 +350,7 @@ function UsuariosPageInner() {
                             <td>
                               <div className={styles.userCell}>
                                 <div className={styles.avatar}>
-                                  {u.foto_url ? <img src={u.foto_url} alt="" /> : u.nome.slice(0, 2).toUpperCase()}
+                                  {u.foto_url ? <Image src={u.foto_url} alt={u.nome} width={32} height={32} style={{ objectFit: 'cover', borderRadius: '50%' }} /> : u.nome.slice(0, 2).toUpperCase()}
                                 </div>
                                 <span className={styles.userName}>{u.nome}</span>
                               </div>
