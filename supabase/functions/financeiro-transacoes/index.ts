@@ -823,6 +823,7 @@ serve(async (req: Request) => {
             cost_center_id,
             status,
             observacoes,
+            source_type: 'import',
             created_by: user.usuario_id,
           })
         }
