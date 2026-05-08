@@ -28,122 +28,30 @@ import CustomDatePicker from '@/components/CustomDatePicker'
 import FinanceiroAuthModal from '@/components/FinanceiroAuthModal'
 import { financeiroNav } from './financeiro-nav'
 import styles from './financeiro.module.css'
-
-type Tab = 'transacoes' | 'contatos' | 'categorias' | 'contas' | 'dre'
-type TipoFiltro = 'todos' | 'entrada' | 'saida'
-type PeriodoTipo = 'hoje' | 'semana' | 'mes' | '30dias' | 'ultimo_mes' | 'trimestre' | 'ano' | 'mes_especifico' | 'personalizado' | 'tudo'
-type ViewMode = 'competencia' | 'caixa'
-type ContatoTipo = 'cliente' | 'fornecedor' | 'ambos'
-type ContatoFiltro = 'todos' | 'clientes' | 'fornecedores' | 'ambos'
-type TransacaoSortField = 'payment_date' | 'descricao' | 'categoria' | 'cost_center' | 'account' | 'tipo' | 'valor' | 'status'
-type SortDirection = 'asc' | 'desc'
-
-interface Categoria    { id: string; nome: string; cor: string; tipo: string }
-interface FinCliente   {
-  id: string
-  nome: string
-  documento?: string
-  telefone?: string
-  email?: string
-  observacoes?: string
-  mensalidade_valor?: number | null
-  mensalidade_descricao?: string | null
-  dia_cobranca?: number | null
-  assinatura_ativa?: boolean | null
-}
-interface FinFornecedor{ id: string; nome: string; documento?: string; telefone?: string; email?: string; observacoes?: string }
-interface FinAccount   { id: string; nome: string; tipo: string; saldo_inicial: number; saldo_atual: number }
-interface FinCostCenter{ id: string; nome: string; descricao?: string }
-interface FinProduct   { id: string; nome: string; tipo: string; valor_padrao?: number | null }
-interface FinContato {
-  key: string
-  nome: string
-  documento?: string
-  telefone?: string
-  email?: string
-  observacoes?: string
-  tipo: ContatoTipo
-  clienteId?: string
-  fornecedorId?: string
-  mensalidade_valor?: number | null
-  mensalidade_descricao?: string | null
-  dia_cobranca?: number | null
-  assinatura_ativa?: boolean | null
-}
-type ImportBulkField = 'contato' | 'categoria' | 'tipo' | 'status'
-interface ReceitaCnpjData {
-  razao_social?: string
-  nome_fantasia?: string
-  email?: string | null
-  ddd_telefone_1?: string
-  telefone_1?: string
-  logradouro?: string
-  numero?: string
-  complemento?: string
-  bairro?: string
-  municipio?: string
-  uf?: string
-  cep?: string
-  descricao_situacao_cadastral?: string
-  estabelecimento?: {
-    nome_fantasia?: string | null
-    email?: string | null
-    ddd1?: string | null
-    telefone1?: string | null
-    logradouro?: string | null
-    numero?: string | null
-    complemento?: string | null
-    bairro?: string | null
-    cep?: string | null
-    situacao_cadastral?: string | null
-    cidade?: { nome?: string | null } | null
-    estado?: { sigla?: string | null } | null
-  } | null
-}
-
-interface Transacao {
-  id: string
-  tipo: 'entrada' | 'saida' | 'transferencia'
-  descricao: string
-  valor: number
-  data_transacao: string
-  competence_date?: string | null
-  payment_date?: string | null
-  status: 'confirmado' | 'pendente' | 'cancelado'
-  observacoes?: string
-  source_type?: 'manual' | 'api' | 'import' | 'system' | null
-  source_tag?: string | null
-  source_message?: string | null
-  api_token_id?: string | null
-  categoria?: Categoria | null
-  cliente?: FinCliente | null
-  fornecedor?: FinFornecedor | null
-  account?: FinAccount | null
-  cost_center?: FinCostCenter | null
-  product?: FinProduct | null
-}
-
-interface DreCellValue { confirmado: number; pendente: number }
-interface DreRow {
-  categoria_id: string | null
-  categoria_nome: string
-  tipo: 'entrada' | 'saida'
-  meses: DreCellValue[]
-}
-interface DreData {
-  ano: number
-  view: ViewMode
-  entradas: DreRow[]
-  saidas: DreRow[]
-  total_entradas: DreCellValue[]
-  total_saidas: DreCellValue[]
-  resultado: DreCellValue[]
-}
-interface ResumoData {
-  entradas: number
-  saidas: number
-  saldo: number
-}
+import type {
+  Tab,
+  TipoFiltro,
+  PeriodoTipo,
+  ViewMode,
+  ContatoTipo,
+  ContatoFiltro,
+  TransacaoSortField,
+  SortDirection,
+  ImportBulkField,
+  Categoria,
+  FinCliente,
+  FinFornecedor,
+  FinAccount,
+  FinCostCenter,
+  FinProduct,
+  FinContato,
+  ReceitaCnpjData,
+  Transacao,
+  DreCellValue,
+  DreRow,
+  DreData,
+  ResumoData,
+} from './types'
 
 const MESES = ['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro']
 const MESES_CURTO = ['Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez']
