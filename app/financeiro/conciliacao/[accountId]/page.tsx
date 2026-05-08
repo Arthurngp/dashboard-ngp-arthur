@@ -81,13 +81,13 @@ function ConciliacaoInner() {
 
   const callFn = useCallback(async (fn: string, body: object) => {
     const s = getSession()
-    if (!s) return null
-    const requestKey = [
-      fn,
-      (body as { entity?: unknown }).entity || '',
-      (body as { action?: unknown }).action || '',
-    ].join(':')
-    abortRefs.current[requestKey]?.abort()
+    if (!s) return { error: 'Sessão expirada. Faça login novamente.' }
+    const action = String((body as { action?: unknown }).action || '')
+    const entity = String((body as { entity?: unknown }).entity || '')
+    // Ações com efeito colateral não devem ser canceladas/retentadas: importar_csv, combinar_transacao, criar/atualizar/excluir, importar_csv etc.
+    const isMutating = /^(criar|atualizar|excluir|importar|combinar|conciliar|toggle|arquivar|restaurar|salvar|update|delete|insert)/i.test(action)
+    const requestKey = [fn, entity, action].join(':')
+    if (!isMutating) abortRefs.current[requestKey]?.abort()
     const controller = new AbortController()
     abortRefs.current[requestKey] = controller
     const signal = controller.signal
@@ -95,14 +95,24 @@ function ConciliacaoInner() {
       const res = await fetchWithRetry(
         `${SURL}/functions/v1/${fn}`,
         { method: 'POST', headers: efHeaders(), body: JSON.stringify({ session_token: s.session, ...body }), signal, cache: 'no-store' },
+        isMutating ? 1 : 3,
       )
       const text = await res.text()
-      const data = text ? JSON.parse(text) : null
-      if (!res.ok && !data?.error) return { error: 'Erro inesperado ao processar a solicitação.' }
+      let data: any = null
+      try { data = text ? JSON.parse(text) : null }
+      catch { return { error: `Resposta inválida do servidor (status ${res.status}).` } }
+      if (!data) {
+        return { error: res.ok ? 'O servidor não respondeu (resposta vazia). Verifique se a operação foi salva antes de tentar novamente.' : `Erro do servidor (status ${res.status}).` }
+      }
+      if (!res.ok && !data?.error) return { error: `Erro do servidor (status ${res.status}).` }
       return data
     } catch (e: any) {
-      if (e?.name === 'AbortError') return null
-      return { error: 'Erro de conexão. Tente novamente.' }
+      if (e?.name === 'AbortError') return { error: 'Operação cancelada.' }
+      const msg = String(e?.message || '').toLowerCase()
+      if (msg.includes('timeout') || msg.includes('timed out')) {
+        return { error: 'A operação demorou demais. Verifique no banco/lista se foi salva antes de tentar novamente.' }
+      }
+      return { error: 'Erro de conexão. Verifique sua internet e tente novamente.' }
     } finally {
       if (abortRefs.current[requestKey] === controller) delete abortRefs.current[requestKey]
     }
@@ -172,7 +182,10 @@ function ConciliacaoInner() {
         account_id: accountId,
         rows,
       })
-      if (analysis?.error) { showMsg('err', analysis.error); return }
+      if (!analysis || analysis.error) {
+        showMsg('err', analysis?.error || 'A análise do CSV não retornou. Tente novamente.')
+        return
+      }
       setImportPreview({
         accountId,
         accountName: account?.nome || 'Conta',
@@ -232,7 +245,10 @@ function ConciliacaoInner() {
         descricao_query: query || undefined,
         limit: 50,
       })
-      if (data?.error) { showMsg('err', data.error); return }
+      if (!data || data.error) {
+        showMsg('err', data?.error || 'A busca não retornou resposta.')
+        return
+      }
       setSearchResults(data?.transacoes || [])
     } finally {
       setSearchLoading(false)
@@ -252,7 +268,10 @@ function ConciliacaoInner() {
         chosen_status: csvRow.status || 'confirmado',
         csv_payment_date: csvRow.payment_date,
       })
-      if (res?.error) { showMsg('err', res.error); return }
+      if (!res || res.error) {
+        showMsg('err', res?.error || 'Não foi possível concluir a conciliação manual.')
+        return
+      }
       setManualCombines(prev => {
         const next = new Map(prev)
         next.set(idx, { existing_id: existingId, existing_descricao: existingDesc, existing_account_name: existingAccountName })
@@ -288,7 +307,11 @@ function ConciliacaoInner() {
           chosen_status: dupAction.chosenStatus || dup.existing_status,
           csv_payment_date: csvRow?.payment_date,
         })
-        if (res?.error) { showMsg('err', res.error); return }
+        if (!res || res.error) {
+          const msg = res?.error || 'Combinação não retornou resposta do servidor.'
+          showMsg('err', `Combinar duplicata ${dup.csv_index + 1}: ${msg}`)
+          return
+        }
         combined++
       }
 
@@ -325,9 +348,17 @@ function ConciliacaoInner() {
           account_id: importPreview.accountId || undefined,
           rows: batch,
         })
-        if (data?.error) { showMsg('err', data.error); return }
-        totalImported += data.imported || 0
-        totalSkipped += data.skipped || 0
+        if (!data || data.error) {
+          const msg = data?.error || 'A importação não retornou resposta. Verifique a lista antes de tentar de novo para evitar duplicatas.'
+          showMsg('err', `Lote ${i + 1}/${totalBatches}: ${msg}`)
+          return
+        }
+        if (typeof data.imported !== 'number') {
+          showMsg('err', `Lote ${i + 1}/${totalBatches}: resposta sem contagem de importados. Verifique a lista antes de repetir.`)
+          return
+        }
+        totalImported += data.imported
+        totalSkipped += (typeof data.skipped === 'number' ? data.skipped : 0)
         setImportProgress({ done: Math.min((i + 1) * BATCH_SIZE, rowsToImport.length), total: rowsToImport.length })
       }
 
@@ -337,7 +368,13 @@ function ConciliacaoInner() {
       if (totalCombined > 0) parts.push(`${totalCombined} combinados`)
       if (transferCount > 0) parts.push(`${transferCount} como transferência`)
       if (totalSkipped > 0) parts.push(`${totalSkipped} ignorados`)
-      showMsg('ok', `Importação concluída: ${parts.join(', ')}.`)
+      const houveAcao = totalImported + totalCombined + transferCount > 0
+      if (houveAcao) {
+        showMsg('ok', `Importação concluída: ${parts.join(', ')}.`)
+      } else {
+        showMsg('err', `Nenhum lançamento foi salvo no banco. Detalhes: ${parts.join(', ')}. Verifique se o CSV tem datas, descrições e valores válidos.`)
+        return
+      }
 
       setImportPreview(null)
       setImportDupActions(new Map())
