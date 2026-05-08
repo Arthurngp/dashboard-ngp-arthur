@@ -571,6 +571,7 @@ async function matchDuplicatesWithAi(
         csv_index: candidate.csv_index,
         existing_id: candidate.existing_id,
         existing_descricao: candidate.existing_desc,
+        existing_tipo: candidate.existing_tipo,
         existing_valor: candidate.existing_valor,
         existing_date: candidate.existing_date,
         existing_status: candidate.existing_status,
@@ -960,6 +961,58 @@ serve(async (req: Request) => {
         potential_duplicates: dupResult.matches,
         duplicate_debug: dupResult.debug,
       })
+    }
+
+    // ── BUSCAR PARA CONCILIAR (modal manual de conciliação) ─────────────────
+    if (action === 'buscar_para_conciliar') {
+      const {
+        valor,
+        valor_tolerance = 0.05,
+        date_start,
+        date_end,
+        account_id,
+        descricao_query,
+        limit = 50,
+      } = payload as {
+        valor?: number
+        valor_tolerance?: number
+        date_start?: string
+        date_end?: string
+        account_id?: string | null
+        descricao_query?: string
+        limit?: number
+      }
+
+      let q = sb.from('fin_transacoes')
+        .select([
+          'id,tipo,descricao,valor,competence_date,payment_date,status,account_id',
+          'categoria:fin_categorias(id,nome)',
+          'cliente:fin_clientes(id,nome)',
+          'fornecedor:fin_fornecedores(id,nome)',
+          'account:fin_accounts(id,nome)',
+        ].join(','))
+        .order('competence_date', { ascending: false })
+        .limit(Math.min(Math.max(Number(limit) || 50, 1), 200))
+
+      if (account_id) q = q.eq('account_id', account_id)
+
+      if (date_start && date_end) {
+        q = q.or(`and(competence_date.gte.${date_start},competence_date.lte.${date_end}),and(payment_date.gte.${date_start},payment_date.lte.${date_end})`)
+      }
+
+      if (typeof valor === 'number' && valor > 0) {
+        const minV = Math.max(0, valor - Math.abs(valor_tolerance))
+        const maxV = valor + Math.abs(valor_tolerance)
+        q = q.gte('valor', minV).lte('valor', maxV)
+      }
+
+      if (descricao_query && descricao_query.trim()) {
+        q = q.ilike('descricao', `%${descricao_query.trim()}%`)
+      }
+
+      const { data, error } = await q
+      if (error) return json(req, { error: 'Erro ao buscar lançamentos.' }, 500)
+      return json(req, { transacoes: data || [] })
     }
 
     // ── CRIAR ────────────────────────────────────────────────────────────────
