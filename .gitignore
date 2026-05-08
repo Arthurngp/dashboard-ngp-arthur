@@ -11,3 +11,6 @@ fix_icons.js
 .temp-ngp-finance
 .mcp.json
 supabase/.temp/
+
+# Histórico financeiro com dados sensíveis (CSVs do Controlle, SQLs de import)
+historico-total-controlle-financeiro/
