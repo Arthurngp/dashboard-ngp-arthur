@@ -7,20 +7,17 @@ import { parseCurrencyInput } from '@/lib/financeiro'
 import {
   type ImportedCsvRow,
   type AiDuplicateMatch,
-  type DupAction,
   type DupActionState,
   type ImportPreviewData,
   type ImportAlertKey,
   fmtBRL,
   fmtDate,
   normalizeContactKey,
-  parseCsvLine,
-  parsePtBrDateToIso,
   parseImportCsvContent,
   summarizeImportRows,
 } from '@/lib/financeiro-import'
 import { efHeaders } from '@/lib/api'
-import { fetchWithRetry, debounce } from '@/lib/fetch-utils'
+import { fetchWithRetry } from '@/lib/fetch-utils'
 import Sidebar from '@/components/Sidebar'
 import NGPLoading from '@/components/NGPLoading'
 import CustomSelect from '@/components/CustomSelect'
