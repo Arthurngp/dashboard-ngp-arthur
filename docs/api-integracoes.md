@@ -71,9 +71,10 @@ O `scope básico` é uma escolha editorial — não existe no banco. Na hora de 
 | Toggle UI                      | Scopes reais                                                     | Default | Sensibilidade |
 |--------------------------------|-------------------------------------------------------------------|---------|---------------|
 | Acesso básico ao Financeiro    | `financeiro:read`, `financeiro:create`, `financeiro:reports`      | ligado  | Baixa/Média   |
+| Atualizar lançamentos          | `financeiro:update`                                               | desligado | Média       |
 | Excluir lançamentos            | `financeiro:delete`                                               | desligado | **Alta**    |
 
-> `financeiro:delete` ainda **não existe** no edge function `financeiro-openclaw`. Precisa ser implementado no backend antes de aparecer na UI. Se aparecer prematuramente, o token gerado será inútil para essa ação.
+> `financeiro:update` e `financeiro:delete` foram implementados em `financeiro-openclaw` v9 (2026-05-09). Tokens com esses scopes têm acesso às 14 actions documentadas em `docs/openclaw-financeiro-api.md`.
 
 #### Box Feedbacks
 
@@ -200,8 +201,20 @@ Centralizar isso permite que o backend (`admin-api-tokens` `AVAILABLE_SCOPES`) l
 - Adicionar confirmação para ações de alta sensibilidade.
 - Atualizar tabela de tokens existentes com badges agrupadas.
 
-### Fase 2 — Implementar scopes faltantes no backend
-- `financeiro:delete` no edge function `financeiro-openclaw`.
+### Fase 2 — Implementar scopes faltantes no backend ✅ Concluída (2026-05-09)
+
+**Implementado em `financeiro-openclaw` v9:**
+
+- `financeiro:update` adicionado: 3 actions (`atualizar_lancamento`, `confirmar_pendente`, `reclassificar_categoria`).
+- `financeiro:delete` adicionado: 2 actions (`deletar_lancamento`, `restaurar_lancamento`).
+- Soft delete via `fin_transacoes.deleted_at`, com janela de 30 dias para reversão.
+- Tabela `fin_delete_confirmations` (RLS service_role only) armazena tokens de dry_run com hash sha256 anti-bait-and-switch e TTL 5min.
+- Tier de leitura também ampliado: `listar_lancamentos`, `listar_clientes`, `listar_fornecedores`, `resumo_periodo`. `listar_contas` agora inclui `saldo_atual` e totais agregados.
+
+**Documentação completa das 14 actions:** `docs/openclaw-financeiro-api.md`.
+
+**Pendente:**
+
 - Avaliar `feedback:delete` (apagar feedback duplicado / spam).
 
 ### Fase 3 — Boxes "Em breve" viram disponíveis
