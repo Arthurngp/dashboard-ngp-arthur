@@ -41,14 +41,19 @@ serve(async (req: Request) => {
 
         // Saldo real: saldo_inicial + todas as transações confirmadas (sem filtro de data).
         // PostgREST limita a 1000 rows por request — paginar para somar TUDO.
+        // .is('deleted_at', null): ignora lançamentos com soft delete.
+        // PostgREST limita 1000 rows por request — paginar para somar TUDO.
+        // Lê da VIEW fin_transacoes_ativas (já filtra deleted_at IS NULL).
+        // .order('id') estabiliza paginação.
         const txs: Array<{ account_id: string; tipo: string; valor: number }> = []
         let off = 0
         while (true) {
           const { data: txPage, error: txErr } = await sb
-            .from('fin_transacoes')
+            .from('fin_transacoes_ativas')
             .select('account_id, tipo, valor')
             .eq('status', 'confirmado')
             .not('account_id', 'is', null)
+            .order('id', { ascending: true })
             .range(off, off + 999)
           if (txErr) return json(req, { error: 'Erro ao calcular saldos.' }, 500)
           if (!txPage || txPage.length === 0) break
