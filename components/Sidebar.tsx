@@ -209,7 +209,7 @@ function getSetoresNavItems(): NavItem[] {
     {
       icon: <Ico><path d="M12 2v20" /><path d="M17 6.5c0-1.9-2.2-3.5-5-3.5s-5 1.6-5 3.5 2.2 3.5 5 3.5 5 1.6 5 3.5-2.2 3.5-5 3.5-5-1.6-5-3.5" /></Ico>,
       label: 'Financeiro',
-      href: '/financeiro',
+      href: '/financeiro/dashboard',
     },
     {
       icon: <Ico><circle cx="9" cy="8" r="3" /><path d="M3 19c0-3.3 2.7-6 6-6s6 2.7 6 6" /><circle cx="18" cy="9" r="2.5" /><path d="M15.5 19c.3-2.1 2.1-3.8 4.3-4.1" /></Ico>,

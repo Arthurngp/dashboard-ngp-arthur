@@ -53,7 +53,7 @@ function DashboardInner() {
   const [authorized, setAuthorized] = useState(false)
   const [showAuthModal, setShowAuthModal] = useState(false)
 
-  const [view, setView] = useState<ViewMode>('competencia')
+  const [view, setView] = useState<ViewMode>('caixa')
   const [data, setData] = useState<DashboardData | null>(null)
   const [loading, setLoading] = useState(false)
   const [msg, setMsg] = useState<{ type: 'ok' | 'err'; text: string } | null>(null)
