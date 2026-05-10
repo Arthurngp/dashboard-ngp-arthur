@@ -29,35 +29,71 @@ serve(async (req: Request) => {
         const { show_archived = false } = payload
         let q = sb
           .from('fin_accounts')
-          .select('id, nome, tipo, saldo_inicial')
+          .select('id, nome, tipo, saldo_inicial, incluir_no_saldo')
           .order('nome')
 
         q = show_archived
           ? q.eq('ativo', false)
           : q.or('ativo.is.null,ativo.eq.true')
 
-        const { data, error } = await q
+        const { data: rawAccounts, error } = await q
         if (error) return json(req, { error: 'Erro ao buscar contas.' }, 500)
 
-        // Saldo real: saldo_inicial + todas as transações confirmadas (sem filtro de data)
-        const { data: txs } = await sb
-          .from('fin_transacoes')
-          .select('account_id, tipo, valor')
-          .eq('status', 'confirmado')
-          .not('account_id', 'is', null)
+        // Saldo real: saldo_inicial + todas as transações confirmadas (sem filtro de data).
+        // PostgREST limita a 1000 rows por request — paginar para somar TUDO.
+        const txs: Array<{ account_id: string; tipo: string; valor: number }> = []
+        let off = 0
+        while (true) {
+          const { data: txPage, error: txErr } = await sb
+            .from('fin_transacoes')
+            .select('account_id, tipo, valor')
+            .eq('status', 'confirmado')
+            .not('account_id', 'is', null)
+            .range(off, off + 999)
+          if (txErr) return json(req, { error: 'Erro ao calcular saldos.' }, 500)
+          if (!txPage || txPage.length === 0) break
+          txs.push(...txPage)
+          if (txPage.length < 1000) break
+          off += 1000
+        }
 
         const saldos: Record<string, number> = {}
-        for (const t of (txs ?? [])) {
+        for (const t of txs) {
           if (!saldos[t.account_id]) saldos[t.account_id] = 0
           saldos[t.account_id] += t.tipo === 'entrada' ? Number(t.valor) : -Number(t.valor)
         }
 
-        const accounts = (data ?? []).map((a: any) => ({
+        const accounts = (rawAccounts ?? []).map((a: any) => ({
           ...a,
+          incluir_no_saldo: a.incluir_no_saldo !== false,
           saldo_atual: Number(a.saldo_inicial) + (saldos[a.id] ?? 0),
         }))
 
-        return json(req, { accounts })
+        // Totais agregados — mesma fórmula do Dashboard (financeiro-agent dashboard_load):
+        // saldo_total       = só conta_corrente/banco com incluir_no_saldo=true
+        // saldo_investimentos = só investimento com incluir_no_saldo=true
+        // saldo_poupanca    = só poupanca com incluir_no_saldo=true
+        const isContaCorrente = (t: string) => t === 'conta_corrente' || t === 'banco'
+        const saldo_total = accounts
+          .filter((a: any) => a.incluir_no_saldo && isContaCorrente(a.tipo))
+          .reduce((s: number, a: any) => s + a.saldo_atual, 0)
+        const saldo_investimentos = accounts
+          .filter((a: any) => a.incluir_no_saldo && a.tipo === 'investimento')
+          .reduce((s: number, a: any) => s + a.saldo_atual, 0)
+        const saldo_poupanca = accounts
+          .filter((a: any) => a.incluir_no_saldo && a.tipo === 'poupanca')
+          .reduce((s: number, a: any) => s + a.saldo_atual, 0)
+        const contas_inclusas = accounts.filter((a: any) => a.incluir_no_saldo && isContaCorrente(a.tipo)).length
+        const contas_excluidas = accounts.filter((a: any) => !a.incluir_no_saldo).length
+
+        return json(req, {
+          accounts,
+          saldo_total,
+          saldo_investimentos,
+          saldo_poupanca,
+          contas_inclusas,
+          contas_excluidas,
+        })
       }
 
       if (action === 'criar') {

@@ -24,7 +24,7 @@ export interface FinCliente {
 }
 
 export interface FinFornecedor { id: string; nome: string; documento?: string; telefone?: string; email?: string; observacoes?: string }
-export interface FinAccount { id: string; nome: string; tipo: string; saldo_inicial: number; saldo_atual: number }
+export interface FinAccount { id: string; nome: string; tipo: string; saldo_inicial: number; saldo_atual: number; incluir_no_saldo?: boolean }
 export interface FinCostCenter { id: string; nome: string; descricao?: string }
 export interface FinProduct { id: string; nome: string; tipo: string; valor_padrao?: number | null }
 

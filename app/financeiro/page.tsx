@@ -107,6 +107,13 @@ function FinanceiroInner() {
   const [clientes, setClientes]         = useState<FinCliente[]>([])
   const [fornecedores, setFornecedores] = useState<FinFornecedor[]>([])
   const [accounts, setAccounts]         = useState<FinAccount[]>([])
+  const [accountsTotais, setAccountsTotais] = useState<{
+    saldo_total: number
+    saldo_investimentos: number
+    saldo_poupanca: number
+    contas_inclusas: number
+    contas_excluidas: number
+  }>({ saldo_total: 0, saldo_investimentos: 0, saldo_poupanca: 0, contas_inclusas: 0, contas_excluidas: 0 })
   const [costCenters, setCostCenters]   = useState<FinCostCenter[]>([])
   const [products, setProducts]         = useState<FinProduct[]>([])
 
@@ -292,10 +299,18 @@ function FinanceiroInner() {
     });
     if (d?.error) {
       setAccounts([])
+      setAccountsTotais({ saldo_total: 0, saldo_investimentos: 0, saldo_poupanca: 0, contas_inclusas: 0, contas_excluidas: 0 })
       showMsg('err', d.error)
       return
     }
     if (d?.accounts) setAccounts(d.accounts)
+    setAccountsTotais({
+      saldo_total: Number(d?.saldo_total || 0),
+      saldo_investimentos: Number(d?.saldo_investimentos || 0),
+      saldo_poupanca: Number(d?.saldo_poupanca || 0),
+      contas_inclusas: Number(d?.contas_inclusas || 0),
+      contas_excluidas: Number(d?.contas_excluidas || 0),
+    })
   }, [callFn, showArchivedAccounts])
   const fetchCostCenters  = useCallback(async () => { const d = await callFn('financeiro-aux', { entity: 'cost_centers', action: 'listar' }); if (d?.cost_centers) setCostCenters(d.cost_centers)   }, [callFn])
   const fetchProducts     = useCallback(async () => { const d = await callFn('financeiro-aux', { entity: 'products',     action: 'listar' }); if (d?.products)     setProducts(d.products)         }, [callFn])
@@ -334,11 +349,13 @@ function FinanceiroInner() {
       .filter(t => t.tipo === 'saida')
       .reduce((sum, t) => sum + Number(t.valor || 0), 0)
     const selectedAccount = accountFilterId ? accounts.find(a => a.id === accountFilterId) || null : null
+    // Quando uma conta específica está selecionada → saldo individual dela.
+    // Caso contrário → saldo geral calculado pelo backend (mesma fórmula do Dashboard).
     const saldo = selectedAccount
       ? Number(selectedAccount.saldo_atual || 0)
-      : accounts.reduce((sum, a) => sum + Number(a.saldo_atual || 0), 0)
+      : accountsTotais.saldo_total
     return { entradas, saidas, saldo }
-  }, [accounts, accountFilterId, transacoes])
+  }, [accounts, accountFilterId, accountsTotais.saldo_total, transacoes])
 
   useEffect(() => {
     setResumo(resumoComputado)
