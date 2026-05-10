@@ -312,6 +312,24 @@ function FinanceiroInner() {
       contas_excluidas: Number(d?.contas_excluidas || 0),
     })
   }, [callFn, showArchivedAccounts])
+
+  const toggleAccountSaldo = useCallback(async (accountId: string, currentlyIncluded: boolean) => {
+    // Otimista: atualiza estado local antes da resposta do servidor
+    setAccounts(prev => prev.map(a => a.id === accountId ? { ...a, incluir_no_saldo: !currentlyIncluded } : a))
+    const resp = await callFn('financeiro-agent', {
+      action: 'dashboard_toggle_saldo',
+      account_id: accountId,
+      incluir: !currentlyIncluded,
+    })
+    if (resp?.error) {
+      showMsg('err', `Falha ao atualizar conta: ${resp.error}`)
+      void fetchAccounts() // reverte recarregando
+      return
+    }
+    // Recarrega para que totais agregados sejam recalculados pelo backend
+    void fetchAccounts()
+  }, [callFn, fetchAccounts])
+
   const fetchCostCenters  = useCallback(async () => { const d = await callFn('financeiro-aux', { entity: 'cost_centers', action: 'listar' }); if (d?.cost_centers) setCostCenters(d.cost_centers)   }, [callFn])
   const fetchProducts     = useCallback(async () => { const d = await callFn('financeiro-aux', { entity: 'products',     action: 'listar' }); if (d?.products)     setProducts(d.products)         }, [callFn])
 
@@ -1644,7 +1662,12 @@ function FinanceiroInner() {
             <>
               <div className={styles.toolbar}>
                 <div className={styles.toolbarLeft}>
-                  <span style={{ fontSize: 13, color: '#8E8E93' }}>{accounts.length} conta{accounts.length !== 1 ? 's' : ''}</span>
+                  <span style={{ fontSize: 13, color: '#8E8E93' }}>
+                    {accounts.length} conta{accounts.length !== 1 ? 's' : ''}
+                    {!showArchivedAccounts && accountsTotais.contas_excluidas > 0 && (
+                      <> · {accountsTotais.contas_inclusas} no saldo · {accountsTotais.contas_excluidas} ocultas</>
+                    )}
+                  </span>
                   <button type="button" className={styles.filtroBtn} onClick={() => setShowArchivedAccounts(!showArchivedAccounts)}>
                     {showArchivedAccounts ? 'Ver Ativas' : 'Ver Arquivadas'}
                   </button>
@@ -1653,45 +1676,60 @@ function FinanceiroInner() {
               </div>
               {accounts.length === 0 ? <div className={styles.empty}>Nenhuma conta bancária cadastrada. Adicione uma para controlar seu saldo real.</div> : (
                 <div className={styles.listWrap}>
-                  {accounts.map(a => (
-                    <div
-                      key={a.id}
-                      className={`${styles.listRow} ${styles.listRowClickable}`}
-                      style={accountMenuOpenId === a.id ? { zIndex: 50 } : undefined}
-                      onClick={() => openAccountTransacoes(a)}
-                    >
-                      <div className={styles.listMain}>
-                        <div className={styles.cadastroNome}>{a.nome}</div>
-                        <div className={styles.listMeta}>
-                          <span>{a.tipo}</span>
-                          <span>Saldo inicial: {fmtBRL(a.saldo_inicial)}</span>
-                        </div>
-                      </div>
-                      <div className={styles.accountRowAside}>
-                        <div className={styles.listValue} style={{ color: a.saldo_atual >= 0 ? '#059669' : '#DC2626' }}>
-                          {fmtBRL(a.saldo_atual)}
-                        </div>
-                        {mesFiltro > 0 && <div className={styles.tdSub} style={{ fontSize: 10, textAlign: 'right' }}>em {MESES[mesFiltro-1]} {anoFiltro}</div>}
-                        <div className={styles.accountMenuWrap}>
-                          <button className={styles.iconMenuBtn} type="button" onClick={(e) => { e.stopPropagation(); openAccountMenu(a.id) }} aria-label="Ações da conta">
-                            ⋯
+                  {accounts.map(a => {
+                    const oculta = a.incluir_no_saldo === false
+                    return (
+                      <div
+                        key={a.id}
+                        className={`${styles.listRow} ${styles.listRowClickable}${oculta ? ` ${styles.listRowOculta}` : ''}`}
+                        style={accountMenuOpenId === a.id ? { zIndex: 50 } : undefined}
+                        onClick={() => openAccountTransacoes(a)}
+                      >
+                        {!showArchivedAccounts && (
+                          <button
+                            type="button"
+                            className={styles.accountEyeBtn}
+                            onClick={e => { e.stopPropagation(); void toggleAccountSaldo(a.id, !oculta) }}
+                            title={oculta ? 'Incluir no saldo geral' : 'Excluir do saldo geral'}
+                            aria-label={oculta ? 'Incluir no saldo geral' : 'Excluir do saldo geral'}
+                          >
+                            {oculta ? '🚫' : '👁'}
                           </button>
-                          {accountMenuOpenId === a.id && (
-                            <div className={styles.accountMenu} onClick={e => e.stopPropagation()}>
-                              <button type="button" className={styles.accountMenuItem} onClick={() => openEditarConta(a)}>Editar conta</button>
-                              <button type="button" className={styles.accountMenuItem} onClick={() => router.push(`/financeiro/conciliacao/${a.id}`)}>🔀 Conciliar extrato</button>
-                              <button type="button" className={styles.accountMenuItem} onClick={() => void exportAccountCsv(a)}>Exportar CSV</button>
-                              {showArchivedAccounts ? (
-                                <button type="button" className={styles.accountMenuItem} onClick={() => void restaurarConta(a)}>Restaurar conta</button>
-                              ) : (
-                                <button type="button" className={`${styles.accountMenuItem} ${styles.accountMenuItemDanger}`} onClick={() => void deletarConta(a)}>Arquivar conta</button>
-                              )}
-                            </div>
-                          )}
+                        )}
+                        <div className={styles.listMain}>
+                          <div className={styles.cadastroNome}>{a.nome}</div>
+                          <div className={styles.listMeta}>
+                            <span>{a.tipo}</span>
+                            <span>Saldo inicial: {fmtBRL(a.saldo_inicial)}</span>
+                            {oculta && <span className={styles.foraDoSaldo}>fora do saldo</span>}
+                          </div>
+                        </div>
+                        <div className={styles.accountRowAside}>
+                          <div className={styles.listValue} style={{ color: a.saldo_atual >= 0 ? '#059669' : '#DC2626' }}>
+                            {fmtBRL(a.saldo_atual)}
+                          </div>
+                          {mesFiltro > 0 && <div className={styles.tdSub} style={{ fontSize: 10, textAlign: 'right' }}>em {MESES[mesFiltro-1]} {anoFiltro}</div>}
+                          <div className={styles.accountMenuWrap}>
+                            <button className={styles.iconMenuBtn} type="button" onClick={(e) => { e.stopPropagation(); openAccountMenu(a.id) }} aria-label="Ações da conta">
+                              ⋯
+                            </button>
+                            {accountMenuOpenId === a.id && (
+                              <div className={styles.accountMenu} onClick={e => e.stopPropagation()}>
+                                <button type="button" className={styles.accountMenuItem} onClick={() => openEditarConta(a)}>Editar conta</button>
+                                <button type="button" className={styles.accountMenuItem} onClick={() => router.push(`/financeiro/conciliacao/${a.id}`)}>🔀 Conciliar extrato</button>
+                                <button type="button" className={styles.accountMenuItem} onClick={() => void exportAccountCsv(a)}>Exportar CSV</button>
+                                {showArchivedAccounts ? (
+                                  <button type="button" className={styles.accountMenuItem} onClick={() => void restaurarConta(a)}>Restaurar conta</button>
+                                ) : (
+                                  <button type="button" className={`${styles.accountMenuItem} ${styles.accountMenuItemDanger}`} onClick={() => void deletarConta(a)}>Arquivar conta</button>
+                                )}
+                              </div>
+                            )}
+                          </div>
                         </div>
                       </div>
-                    </div>
-                  ))}
+                    )
+                  })}
                 </div>
               )}
             </>

@@ -765,6 +765,44 @@
   flex-shrink: 0;
 }
 
+/* Conta oculta do saldo geral (incluir_no_saldo=false) — visual igual ao do Dashboard */
+.listRowOculta {
+  opacity: 0.55;
+  background: #F9FAFB;
+}
+.listRowOculta:hover { opacity: 0.85; }
+
+.accountEyeBtn {
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  background: transparent;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  flex-shrink: 0;
+  transition: background 0.15s, border-color 0.15s;
+}
+.accountEyeBtn:hover {
+  background: #F3F4F6;
+  border-color: #E5E7EB;
+}
+
+.foraDoSaldo {
+  display: inline-block;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: #FEF3C7;
+  color: #92400E;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+}
+
 .accountMenuWrap {
   position: relative;
   z-index: 6;
