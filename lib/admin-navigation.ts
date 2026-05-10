@@ -1,4 +1,4 @@
-export type AdminNavId = 'cadastros' | 'contas' | 'clientes-arquivados' | 'setores-tarefas' | 'integracoes' | 'feedback'
+export type AdminNavId = 'cadastros' | 'contas' | 'clientes-arquivados' | 'setores-tarefas' | 'integracoes' | 'api-docs' | 'feedback'
 
 export interface AdminNavigationItem {
   id: AdminNavId
@@ -40,6 +40,13 @@ const ADMIN_NAV_ITEMS: AdminNavigationItem[] = [
     label: 'Integrações',
     href: '/admin/integracoes',
     description: 'Gere tokens de API para ferramentas externas como OpenClaw.',
+    adminOnly: true,
+  },
+  {
+    id: 'api-docs',
+    label: 'Documentação de API',
+    href: '/admin/api-docs',
+    description: 'Endpoints, scopes, exemplos de uso e instruções para agentes externos.',
     adminOnly: true,
   },
   {

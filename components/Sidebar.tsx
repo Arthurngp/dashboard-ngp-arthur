@@ -175,6 +175,9 @@ function getAdminNavItems(role?: string): NavItem[] {
       case 'integracoes':
         icon = <Ico><path d="M12 3v4" /><path d="M12 17v4" /><path d="M3 12h4" /><path d="M17 12h4" /><circle cx="12" cy="12" r="4" /></Ico>
         break
+      case 'api-docs':
+        icon = <Ico><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z" /><polyline points="14 2 14 8 20 8" /><line x1="9" y1="13" x2="15" y2="13" /><line x1="9" y1="17" x2="13" y2="17" /></Ico>
+        break
       case 'feedback':
         icon = <Ico><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z" /></Ico>
         break

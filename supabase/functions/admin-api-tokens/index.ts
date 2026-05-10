@@ -3,12 +3,9 @@ import { createClient } from "supabase"
 import { handleCors, json } from "../_shared/cors.ts"
 import { isAdmin, validateSession } from "../_shared/roles.ts"
 import { sha256Hex, tokenPrefix } from "../_shared/api_tokens.ts"
+import { ALL_SCOPES } from "../_shared/api_scopes.ts"
 
-const AVAILABLE_SCOPES = [
-  'financeiro:read',
-  'financeiro:create',
-  'financeiro:reports',
-]
+const AVAILABLE_SCOPES = ALL_SCOPES
 
 const ALLOWED_EXPIRATION_DAYS = new Set([5, 15, 30, 60, 90, 180, 365])
 
