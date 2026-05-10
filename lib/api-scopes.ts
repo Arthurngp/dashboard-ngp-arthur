@@ -55,6 +55,12 @@ export const SETOR_BOXES: SetorBox[] = [
     },
     acoesDelicadas: [
       {
+        id: 'financeiro:update',
+        label: 'Atualizar lançamentos',
+        description: 'Permite alterar campos de lançamentos existentes (descrição, valor, status, data, categoria, conta) e reclassificar em massa.',
+        sensibilidade: 'media',
+      },
+      {
         id: 'financeiro:delete',
         label: 'Excluir lançamentos',
         description: 'Ação destrutiva. Permite apagar registros financeiros pela API (soft delete com janela de 30 dias para restauração).',

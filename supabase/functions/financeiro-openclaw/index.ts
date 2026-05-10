@@ -521,6 +521,406 @@ serve(async (req: Request) => {
       return json(req, response)
     }
 
+    // ─── atualizar_lancamento ────────────────────────────────────────────────
+    // Atualiza campos de UM lançamento existente.
+    // Scope: financeiro:update
+    // Campos editáveis: descricao, valor, status, competence_date, payment_date,
+    //                   categoria_id, account_id, cliente_id, fornecedor_id,
+    //                   observacoes, source_tag.
+    // Refuse: tipo (não dá pra mudar entrada↔saida sem recriar) e id.
+    if (action === 'atualizar_lancamento') {
+      if (!hasScope(apiToken, 'financeiro:update')) return json(req, { error: 'Permissão insuficiente. Token precisa de scope financeiro:update.' }, 403)
+
+      const id = typeof payload.id === 'string' ? payload.id : null
+      if (!id || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)) {
+        const response = { error: 'id obrigatório (UUID).' }
+        await safeAudit(sb, apiToken.id, req, action, 'error', body, response)
+        return json(req, response, 400)
+      }
+
+      // Busca o lançamento atual (não deletado) para gravar before/after no audit
+      const { data: before, error: beforeErr } = await sb
+        .from('fin_transacoes')
+        .select('id, tipo, descricao, valor, status, competence_date, payment_date, categoria_id, account_id, cliente_id, fornecedor_id, observacoes, source_tag, deleted_at')
+        .eq('id', id)
+        .is('deleted_at', null)
+        .maybeSingle()
+      if (beforeErr || !before) {
+        const response = { error: 'Lançamento não encontrado ou está apagado.' }
+        await safeAudit(sb, apiToken.id, req, action, 'error', body, response)
+        return json(req, response, 404)
+      }
+
+      // Constrói patch SOMENTE com campos enviados, com validação por campo
+      const patch: Record<string, unknown> = {}
+
+      if (typeof payload.descricao === 'string') {
+        const d = normalizeText(payload.descricao)
+        if (!d) return json(req, { error: 'descricao não pode ser vazia.' }, 400)
+        patch.descricao = d
+      }
+      if (payload.valor !== undefined) {
+        const v = parseCurrencyInput(payload.valor)
+        if (v == null || v <= 0) return json(req, { error: 'Valor inválido.' }, 400)
+        patch.valor = v
+      }
+      if (payload.status !== undefined) {
+        if (payload.status !== 'confirmado' && payload.status !== 'pendente') {
+          return json(req, { error: 'status deve ser "confirmado" ou "pendente".' }, 400)
+        }
+        patch.status = payload.status
+        // Se virou pendente e veio sem payment_date explícito → limpa payment_date
+        if (payload.status === 'pendente' && payload.payment_date === undefined) {
+          patch.payment_date = null
+        }
+      }
+      if (payload.competence_date !== undefined) {
+        const d = normalizeDateOnly(payload.competence_date)
+        if (!d) return json(req, { error: 'competence_date inválida (use YYYY-MM-DD).' }, 400)
+        patch.competence_date = d
+      }
+      if (payload.payment_date !== undefined) {
+        if (payload.payment_date === null) patch.payment_date = null
+        else {
+          const d = normalizeDateOnly(payload.payment_date)
+          if (!d) return json(req, { error: 'payment_date inválida (use YYYY-MM-DD ou null).' }, 400)
+          patch.payment_date = d
+        }
+      }
+      if (payload.categoria_id !== undefined) {
+        if (payload.categoria_id !== null && typeof payload.categoria_id !== 'string') {
+          return json(req, { error: 'categoria_id deve ser UUID ou null.' }, 400)
+        }
+        patch.categoria_id = payload.categoria_id
+      }
+      if (payload.account_id !== undefined) {
+        if (typeof payload.account_id !== 'string') {
+          return json(req, { error: 'account_id deve ser UUID.' }, 400)
+        }
+        patch.account_id = payload.account_id
+      }
+      if (payload.cliente_id !== undefined) {
+        if (payload.cliente_id !== null && typeof payload.cliente_id !== 'string') {
+          return json(req, { error: 'cliente_id deve ser UUID ou null.' }, 400)
+        }
+        patch.cliente_id = payload.cliente_id
+      }
+      if (payload.fornecedor_id !== undefined) {
+        if (payload.fornecedor_id !== null && typeof payload.fornecedor_id !== 'string') {
+          return json(req, { error: 'fornecedor_id deve ser UUID ou null.' }, 400)
+        }
+        patch.fornecedor_id = payload.fornecedor_id
+      }
+      if (payload.observacoes !== undefined) {
+        patch.observacoes = payload.observacoes === null ? null : normalizeText(payload.observacoes)
+      }
+      if (payload.source_tag !== undefined) {
+        patch.source_tag = payload.source_tag === null ? null : normalizeText(payload.source_tag)
+      }
+
+      if (Object.keys(patch).length === 0) {
+        const response = { error: 'Nenhum campo enviado para atualização.' }
+        await safeAudit(sb, apiToken.id, req, action, 'error', body, response)
+        return json(req, response, 400)
+      }
+
+      const { data: updated, error: updErr } = await sb
+        .from('fin_transacoes')
+        .update(patch)
+        .eq('id', id)
+        .is('deleted_at', null)
+        .select('id, tipo, descricao, valor, status, competence_date, payment_date, categoria_id, account_id, cliente_id, fornecedor_id, observacoes, source_tag')
+        .single()
+      if (updErr || !updated) {
+        const response = { error: 'Erro ao atualizar lançamento.' }
+        await safeAudit(sb, apiToken.id, req, action, 'error', body, response)
+        return json(req, response, 500)
+      }
+
+      const response = {
+        ok: true,
+        transacao: updated,
+        changed_fields: Object.keys(patch),
+        message: `Lançamento atualizado (${Object.keys(patch).length} campo(s)).`,
+      }
+      // Audit grava before+after pra rastrear o diff
+      await safeAudit(sb, apiToken.id, req, action, 'success', body, { id, before, after: updated, changed_fields: Object.keys(patch) })
+      return json(req, response)
+    }
+
+    // ─── confirmar_pendente ──────────────────────────────────────────────────
+    // Atalho para passar status='pendente' → 'confirmado' + define payment_date.
+    // Scope: financeiro:update
+    // Aceita ids[] (max 50). Lança que já está confirmado é ignorado silenciosamente.
+    if (action === 'confirmar_pendente') {
+      if (!hasScope(apiToken, 'financeiro:update')) return json(req, { error: 'Permissão insuficiente. Token precisa de scope financeiro:update.' }, 403)
+
+      const MAX_ITEMS = 50
+      const ids: string[] = Array.isArray(payload.ids)
+        ? payload.ids.filter((x: unknown) => typeof x === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(x))
+        : []
+      if (ids.length === 0) {
+        const response = { error: 'Informe ids: [<uuid>, ...].' }
+        await safeAudit(sb, apiToken.id, req, action, 'error', body, response)
+        return json(req, response, 400)
+      }
+      if (ids.length > MAX_ITEMS) {
+        const response = { error: `Máximo ${MAX_ITEMS} ids por chamada.` }
+        await safeAudit(sb, apiToken.id, req, action, 'error', body, response)
+        return json(req, response, 400)
+      }
+
+      // payment_date opcional — se não enviado, usa data de hoje (UTC)
+      const paymentDate = normalizeDateOnly(payload.payment_date) || todayISO()
+
+      // Busca pendentes (ignora confirmados / deletados)
+      const { data: alvos, error: selErr } = await sb
+        .from('fin_transacoes')
+        .select('id, tipo, descricao, valor, competence_date')
+        .in('id', ids)
+        .eq('status', 'pendente')
+        .is('deleted_at', null)
+      if (selErr) {
+        const response = { error: 'Erro ao buscar lançamentos.' }
+        await safeAudit(sb, apiToken.id, req, action, 'error', body, response)
+        return json(req, response, 500)
+      }
+
+      const idsParaConfirmar = (alvos ?? []).map((a: any) => a.id)
+      if (idsParaConfirmar.length === 0) {
+        const response = {
+          confirmed_count: 0,
+          message: 'Nenhum dos ids está pendente (já confirmado ou não encontrado).',
+        }
+        await safeAudit(sb, apiToken.id, req, action, 'success', body, { confirmed_count: 0 })
+        return json(req, response)
+      }
+
+      const { error: updErr } = await sb
+        .from('fin_transacoes')
+        .update({ status: 'confirmado', payment_date: paymentDate })
+        .in('id', idsParaConfirmar)
+      if (updErr) {
+        const response = { error: 'Erro ao confirmar lançamentos.' }
+        await safeAudit(sb, apiToken.id, req, action, 'error', body, response)
+        return json(req, response, 500)
+      }
+
+      const totalValue = (alvos ?? []).reduce((s: number, a: any) => s + Number(a.valor || 0), 0)
+      const response = {
+        confirmed_count: idsParaConfirmar.length,
+        confirmed_ids: idsParaConfirmar,
+        payment_date: paymentDate,
+        total_value: totalValue,
+        message: `${idsParaConfirmar.length} lançamento(s) confirmado(s) (R$ ${totalValue.toFixed(2)}) com payment_date=${paymentDate}.`,
+      }
+      await safeAudit(sb, apiToken.id, req, action, 'success', body, response)
+      return json(req, response)
+    }
+
+    // ─── reclassificar_categoria ─────────────────────────────────────────────
+    // Reclassificação em massa: muda categoria_id de N lançamentos.
+    // Scope: financeiro:update
+    // Mesma proteção do delete: dry_run obrigatório + confirmation_token.
+    // Filtros aceitos: ids[] OU (start, end, tipo, status, account_id,
+    //                            categoria_id_atual, cliente_id, fornecedor_id, view)
+    // Required: nova_categoria_id (uuid OU null para "sem categoria")
+    if (action === 'reclassificar_categoria') {
+      if (!hasScope(apiToken, 'financeiro:update')) return json(req, { error: 'Permissão insuficiente. Token precisa de scope financeiro:update.' }, 403)
+
+      const dryRun = payload.dry_run !== false  // default true
+      const MAX_ITEMS = 50
+
+      // nova_categoria_id é obrigatório (em ambos os modos)
+      const novaCategoria = payload.nova_categoria_id
+      if (novaCategoria !== null && (typeof novaCategoria !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(novaCategoria))) {
+        const response = { error: 'nova_categoria_id obrigatório (UUID ou null para "sem categoria").' }
+        await safeAudit(sb, apiToken.id, req, action, 'error', body, response)
+        return json(req, response, 400)
+      }
+
+      let confirmationToken: string | null = null
+      if (!dryRun) {
+        confirmationToken = typeof payload.confirmation_token === 'string' ? payload.confirmation_token : null
+        if (!confirmationToken) {
+          const response = { error: 'confirmation_token obrigatório quando dry_run=false. Faça primeiro um dry_run.' }
+          await safeAudit(sb, apiToken.id, req, action, 'error', body, response)
+          return json(req, response, 400)
+        }
+      }
+
+      // Constrói query (aceita ids OU filtros, mesma lógica do deletar)
+      const view: 'caixa' | 'competencia' = payload.view === 'caixa' ? 'caixa' : 'competencia'
+      const dateField = view === 'caixa' ? 'payment_date' : 'competence_date'
+      const start = normalizeDateOnly(payload.start)
+      const end = normalizeDateOnly(payload.end)
+
+      const idsExplicitos: string[] = Array.isArray(payload.ids)
+        ? payload.ids.filter((x: unknown) => typeof x === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(x))
+        : []
+
+      let q = sb.from('fin_transacoes')
+        .select('id, tipo, descricao, valor, status, competence_date, payment_date, categoria_id')
+        .is('deleted_at', null)
+        .order('id', { ascending: true })
+        .limit(MAX_ITEMS + 1)
+
+      if (idsExplicitos.length > 0) {
+        if (idsExplicitos.length > MAX_ITEMS) {
+          const response = { error: `Máximo ${MAX_ITEMS} ids por chamada.` }
+          await safeAudit(sb, apiToken.id, req, action, 'error', body, response)
+          return json(req, response, 400)
+        }
+        q = q.in('id', idsExplicitos)
+      } else {
+        if (start) q = q.gte(dateField, start)
+        if (end) q = q.lte(dateField, end)
+        if (payload.tipo === 'entrada' || payload.tipo === 'saida') q = q.eq('tipo', payload.tipo)
+        if (payload.status === 'confirmado' || payload.status === 'pendente') q = q.eq('status', payload.status)
+        if (payload.account_id) q = q.eq('account_id', payload.account_id)
+        if (payload.categoria_id_atual) q = q.eq('categoria_id', payload.categoria_id_atual)
+        if (payload.cliente_id) q = q.eq('cliente_id', payload.cliente_id)
+        if (payload.fornecedor_id) q = q.eq('fornecedor_id', payload.fornecedor_id)
+      }
+
+      const { data: candidatos, error: selErr } = await q
+      if (selErr) {
+        const response = { error: 'Erro ao buscar lançamentos.' }
+        await safeAudit(sb, apiToken.id, req, action, 'error', body, response)
+        return json(req, response, 500)
+      }
+
+      const matched = candidatos ?? []
+      if (matched.length > MAX_ITEMS) {
+        const response = { error: `Filtro retornou mais de ${MAX_ITEMS} itens. Refine ou use ids explícitos.`, count_estimado: matched.length }
+        await safeAudit(sb, apiToken.id, req, action, 'error', body, response)
+        return json(req, response, 400)
+      }
+
+      // Hash dos ids ordenados + nova_categoria_id (anti-bait-and-switch também
+      // detecta se trocaram a categoria-alvo entre dry-run e commit)
+      const idsOrdenados = matched.map((m) => m.id).sort()
+      const targetHash = await sha256Hex(idsOrdenados.join(',') + '|' + (novaCategoria ?? 'null'))
+      const totalValue = matched.reduce((s, t) => s + Number(t.valor || 0), 0)
+
+      // ── DRY-RUN ────────────────────────────────────────────────────────────
+      if (dryRun) {
+        if (matched.length === 0) {
+          const response = { dry_run: true, count: 0, would_update: [], confirmation_token: null, message: 'Nenhum lançamento encontrado com esses filtros.' }
+          await safeAudit(sb, apiToken.id, req, action, 'success', body, { count: 0 })
+          return json(req, response)
+        }
+
+        const filtrosSnapshot = {
+          ids: idsExplicitos.length > 0 ? idsExplicitos : null,
+          start, end,
+          tipo: payload.tipo ?? null,
+          status: payload.status ?? null,
+          account_id: payload.account_id ?? null,
+          categoria_id_atual: payload.categoria_id_atual ?? null,
+          cliente_id: payload.cliente_id ?? null,
+          fornecedor_id: payload.fornecedor_id ?? null,
+          view,
+          nova_categoria_id: novaCategoria,
+        }
+
+        // Reusa a tabela fin_delete_confirmations (mesma estrutura serve)
+        const insertConfirm = await sb.from('fin_delete_confirmations').insert({
+          api_token_id: apiToken.id,
+          target_ids: idsOrdenados,
+          target_hash: targetHash,
+          filtros_snapshot: filtrosSnapshot,
+          total_value: totalValue,
+        }).select('id, expires_at').single()
+        if (insertConfirm.error || !insertConfirm.data) {
+          const response = { error: 'Erro ao gerar token de confirmação.' }
+          await safeAudit(sb, apiToken.id, req, action, 'error', body, response)
+          return json(req, response, 500)
+        }
+
+        const response = {
+          dry_run: true,
+          count: matched.length,
+          total_value: totalValue,
+          nova_categoria_id: novaCategoria,
+          would_update: matched.map((m) => ({
+            id: m.id,
+            tipo: m.tipo,
+            descricao: m.descricao,
+            valor: Number(m.valor),
+            status: m.status,
+            categoria_id_atual: m.categoria_id,
+          })),
+          confirmation_token: insertConfirm.data.id,
+          expires_at: insertConfirm.data.expires_at,
+          message: `${matched.length} lançamento(s) seriam reclassificados para categoria_id=${novaCategoria ?? '(sem categoria)'}. Para confirmar, chame de novo com dry_run:false e o confirmation_token.`,
+        }
+        await safeAudit(sb, apiToken.id, req, action, 'success', body, { dry_run: true, count: matched.length, confirmation_token: insertConfirm.data.id })
+        return json(req, response)
+      }
+
+      // ── COMMIT ─────────────────────────────────────────────────────────────
+      const { data: confirmRow, error: confirmErr } = await sb
+        .from('fin_delete_confirmations')
+        .select('id, target_hash, expires_at, consumed_at, api_token_id')
+        .eq('id', confirmationToken!)
+        .maybeSingle()
+
+      if (confirmErr || !confirmRow) {
+        const response = { error: 'confirmation_token inválido ou não encontrado.' }
+        await safeAudit(sb, apiToken.id, req, action, 'error', body, response)
+        return json(req, response, 400)
+      }
+      if (confirmRow.api_token_id !== apiToken.id) {
+        const response = { error: 'confirmation_token pertence a outro API token.' }
+        await safeAudit(sb, apiToken.id, req, action, 'error', body, response)
+        return json(req, response, 403)
+      }
+      if (confirmRow.consumed_at) {
+        const response = { error: 'confirmation_token já foi usado. Faça um novo dry_run.' }
+        await safeAudit(sb, apiToken.id, req, action, 'error', body, response)
+        return json(req, response, 409)
+      }
+      if (new Date(confirmRow.expires_at).getTime() < Date.now()) {
+        const response = { error: 'confirmation_token expirado. Faça um novo dry_run.' }
+        await safeAudit(sb, apiToken.id, req, action, 'error', body, response)
+        return json(req, response, 410)
+      }
+      if (targetHash !== confirmRow.target_hash) {
+        const response = {
+          error: 'Conjunto de IDs ou nova categoria mudou desde o dry_run. Faça um novo dry_run para confirmar.',
+          dry_run_target_hash: confirmRow.target_hash,
+          current_target_hash: targetHash,
+        }
+        await safeAudit(sb, apiToken.id, req, action, 'error', body, response)
+        return json(req, response, 409)
+      }
+
+      const nowIso = new Date().toISOString()
+      const { error: updErr } = await sb
+        .from('fin_transacoes')
+        .update({ categoria_id: novaCategoria })
+        .in('id', idsOrdenados)
+      if (updErr) {
+        const response = { error: 'Erro ao reclassificar lançamentos.' }
+        await safeAudit(sb, apiToken.id, req, action, 'error', body, response)
+        return json(req, response, 500)
+      }
+
+      await sb.from('fin_delete_confirmations').update({ consumed_at: nowIso }).eq('id', confirmationToken!)
+
+      const response = {
+        dry_run: false,
+        updated_count: idsOrdenados.length,
+        nova_categoria_id: novaCategoria,
+        updated_ids: idsOrdenados,
+        total_value: totalValue,
+        message: `${idsOrdenados.length} lançamento(s) reclassificados para categoria_id=${novaCategoria ?? '(sem categoria)'} (R$ ${totalValue.toFixed(2)}).`,
+      }
+      await safeAudit(sb, apiToken.id, req, action, 'success', body, { dry_run: false, updated_count: idsOrdenados.length, nova_categoria_id: novaCategoria })
+      return json(req, response)
+    }
+
     // ─── deletar_lancamento ──────────────────────────────────────────────────
     // Soft delete (deleted_at = now). Fluxo em 2 etapas anti-bait-and-switch:
     //  1) dry_run: true  → retorna { would_delete[], count, total_value, confirmation_token }
