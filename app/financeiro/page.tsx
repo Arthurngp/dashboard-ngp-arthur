@@ -358,6 +358,17 @@ function FinanceiroInner() {
     if (authorized && activeTab === 'transacoes') fetchTransacoes()
   }, [authorized, activeTab, fetchTransacoes])
 
+  // Lista ordenada para a aba Contas: incluídas no saldo primeiro, ocultas no fim.
+  // Dentro de cada grupo, mantém a ordem alfabética que o backend já retorna.
+  const accountsOrdenadas = useMemo(() => {
+    return [...accounts].sort((a, b) => {
+      const aOculta = a.incluir_no_saldo === false ? 1 : 0
+      const bOculta = b.incluir_no_saldo === false ? 1 : 0
+      if (aOculta !== bOculta) return aOculta - bOculta
+      return a.nome.localeCompare(b.nome, 'pt-BR')
+    })
+  }, [accounts])
+
   const resumoComputado = useMemo(() => {
     const semInternas = transacoes.filter(t => !isInternalTransferTransaction(t))
     const entradas = semInternas
@@ -1676,7 +1687,7 @@ function FinanceiroInner() {
               </div>
               {accounts.length === 0 ? <div className={styles.empty}>Nenhuma conta bancária cadastrada. Adicione uma para controlar seu saldo real.</div> : (
                 <div className={styles.listWrap}>
-                  {accounts.map(a => {
+                  {accountsOrdenadas.map(a => {
                     const oculta = a.incluir_no_saldo === false
                     return (
                       <div
