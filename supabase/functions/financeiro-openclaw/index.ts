@@ -1,7 +1,7 @@
 import { serve } from "std/http/server"
 import { createClient } from "supabase"
 import { handleCors, json } from "../_shared/cors.ts"
-import { hasScope, validateApiToken } from "../_shared/api_tokens.ts"
+import { hasScope, sha256Hex, validateApiToken } from "../_shared/api_tokens.ts"
 import { normalizeText, parseCurrencyInput } from "../_shared/financeiro.ts"
 
 type Tipo = 'entrada' | 'saida'
@@ -521,8 +521,330 @@ serve(async (req: Request) => {
       return json(req, response)
     }
 
+    // ─── deletar_lancamento ──────────────────────────────────────────────────
+    // Soft delete (deleted_at = now). Fluxo em 2 etapas anti-bait-and-switch:
+    //  1) dry_run: true  → retorna { would_delete[], count, total_value, confirmation_token }
+    //                       confirmation_token = uuid de fin_delete_confirmations + hash dos ids
+    //  2) dry_run: false → exige confirmation_token, valida hash, faz soft delete
+    //
+    // Filtros aceitos (mesmos do listar_lancamentos):
+    //   ids[]  (deletar específicos por id, ignora outros filtros)
+    //   start, end, tipo, status, account_id, categoria_id, cliente_id, fornecedor_id, view
+    //
+    // Limite: 50 items por chamada.
+    // Source: por default só apaga source_type='api'. Token precisa ainda
+    //         de scope financeiro:delete + opt-in `permitir_origem_externa: true`
+    //         para apagar lançamentos manuais ou de import_csv.
+    // Transferências: se filtro pegar uma ponta de transferência, a contraparte
+    //                 é incluída automaticamente (saldos das contas não divergem).
+    if (action === 'deletar_lancamento') {
+      if (!hasScope(apiToken, 'financeiro:delete')) return json(req, { error: 'Permissão insuficiente. Token precisa de scope financeiro:delete.' }, 403)
+
+      const dryRun = payload.dry_run !== false  // default true (segurança)
+      const permitirExterno = payload.permitir_origem_externa === true
+      const MAX_ITEMS = 50
+
+      // ── Modo COMMIT: validar confirmation_token ANTES de qualquer trabalho ──
+      let confirmationToken: string | null = null
+      if (!dryRun) {
+        confirmationToken = typeof payload.confirmation_token === 'string' ? payload.confirmation_token : null
+        if (!confirmationToken) {
+          const response = { error: 'confirmation_token obrigatório quando dry_run=false. Faça primeiro um dry_run.' }
+          await safeAudit(sb, apiToken.id, req, action, 'error', body, response)
+          return json(req, response, 400)
+        }
+      }
+
+      // ── Construir query de seleção (mesmos filtros do listar_lancamentos) ──
+      const view: 'caixa' | 'competencia' = payload.view === 'caixa' ? 'caixa' : 'competencia'
+      const dateField = view === 'caixa' ? 'payment_date' : 'competence_date'
+      const start = normalizeDateOnly(payload.start)
+      const end = normalizeDateOnly(payload.end)
+
+      const idsExplicitos: string[] = Array.isArray(payload.ids)
+        ? payload.ids.filter((id: unknown) => typeof id === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id))
+        : []
+
+      let q = sb.from('fin_transacoes')
+        .select('id, tipo, valor, descricao, status, competence_date, payment_date, account_id, source_type')
+        .is('deleted_at', null)  // não tenta apagar o que já foi soft-deleted
+        .order('id', { ascending: true })
+        .limit(MAX_ITEMS + 1)  // +1 para detectar overflow
+
+      if (idsExplicitos.length > 0) {
+        if (idsExplicitos.length > MAX_ITEMS) {
+          const response = { error: `Máximo ${MAX_ITEMS} ids por chamada. Recebidos: ${idsExplicitos.length}.` }
+          await safeAudit(sb, apiToken.id, req, action, 'error', body, response)
+          return json(req, response, 400)
+        }
+        q = q.in('id', idsExplicitos)
+      } else {
+        // Sem ids explícitos → aplica filtros de busca
+        if (start) q = q.gte(dateField, start)
+        if (end) q = q.lte(dateField, end)
+        if (payload.tipo === 'entrada' || payload.tipo === 'saida' || payload.tipo === 'transferencia') q = q.eq('tipo', payload.tipo)
+        if (payload.status === 'confirmado' || payload.status === 'pendente') q = q.eq('status', payload.status)
+        if (payload.account_id) q = q.eq('account_id', payload.account_id)
+        if (payload.categoria_id) q = q.eq('categoria_id', payload.categoria_id)
+        if (payload.cliente_id) q = q.eq('cliente_id', payload.cliente_id)
+        if (payload.fornecedor_id) q = q.eq('fornecedor_id', payload.fornecedor_id)
+        if (!permitirExterno) q = q.eq('source_type', 'api')
+      }
+
+      const { data: candidatos, error: selErr } = await q
+      if (selErr) {
+        const response = { error: 'Erro ao buscar lançamentos.' }
+        await safeAudit(sb, apiToken.id, req, action, 'error', body, response)
+        return json(req, response, 500)
+      }
+
+      const matched = candidatos ?? []
+      if (matched.length > MAX_ITEMS) {
+        const response = {
+          error: `Filtro retornou mais de ${MAX_ITEMS} itens. Refine os filtros ou use ids explícitos.`,
+          count_estimado: matched.length,
+        }
+        await safeAudit(sb, apiToken.id, req, action, 'error', body, response)
+        return json(req, response, 400)
+      }
+
+      // ── Detecção de transferência em par ────────────────────────────────────
+      // Se algum item for tipo='transferencia', busca a contraparte (mesmo
+      // descricao + valor + data de competência, account_id diferente, ainda
+      // não na lista) e adiciona à lista de delete.
+      const transferenciasNaoCasadas: Array<typeof matched[0]> = []
+      for (const t of matched) {
+        if (t.tipo === 'transferencia') {
+          // Verifica se contraparte já está na lista
+          const temPar = matched.some((other) =>
+            other.id !== t.id &&
+            other.tipo === 'transferencia' &&
+            other.descricao === t.descricao &&
+            Number(other.valor) === Number(t.valor) &&
+            other.competence_date === t.competence_date &&
+            other.account_id !== t.account_id
+          )
+          if (!temPar) transferenciasNaoCasadas.push(t)
+        }
+      }
+
+      const idsExtrasParesTransferencia: string[] = []
+      if (transferenciasNaoCasadas.length > 0) {
+        for (const t of transferenciasNaoCasadas) {
+          const { data: par } = await sb.from('fin_transacoes')
+            .select('id, tipo, valor, descricao, status, competence_date, payment_date, account_id, source_type')
+            .is('deleted_at', null)
+            .eq('tipo', 'transferencia')
+            .eq('descricao', t.descricao)
+            .eq('valor', t.valor)
+            .eq('competence_date', t.competence_date)
+            .neq('account_id', t.account_id)
+            .neq('id', t.id)
+            .limit(1)
+            .maybeSingle()
+          if (par && !matched.some((m) => m.id === par.id)) {
+            matched.push(par)
+            idsExtrasParesTransferencia.push(par.id)
+          }
+        }
+      }
+
+      // Ordena ids para hash determinístico
+      const idsOrdenados = matched.map((m) => m.id).sort()
+      const targetHash = await sha256Hex(idsOrdenados.join(','))
+      const totalValue = matched.reduce((s, t) => s + Number(t.valor || 0), 0)
+
+      // ── DRY-RUN: cria token de confirmação e retorna preview ───────────────
+      if (dryRun) {
+        if (matched.length === 0) {
+          const response = { dry_run: true, count: 0, total_value: 0, would_delete: [], confirmation_token: null, expires_at: null, message: 'Nenhum lançamento encontrado com esses filtros.' }
+          await safeAudit(sb, apiToken.id, req, action, 'success', body, { count: 0 })
+          return json(req, response)
+        }
+
+        const filtrosSnapshot = {
+          ids: idsExplicitos.length > 0 ? idsExplicitos : null,
+          start, end,
+          tipo: payload.tipo ?? null,
+          status: payload.status ?? null,
+          account_id: payload.account_id ?? null,
+          categoria_id: payload.categoria_id ?? null,
+          cliente_id: payload.cliente_id ?? null,
+          fornecedor_id: payload.fornecedor_id ?? null,
+          view,
+          permitir_origem_externa: permitirExterno,
+        }
+
+        const insertConfirm = await sb.from('fin_delete_confirmations').insert({
+          api_token_id: apiToken.id,
+          target_ids: idsOrdenados,
+          target_hash: targetHash,
+          filtros_snapshot: filtrosSnapshot,
+          total_value: totalValue,
+        }).select('id, expires_at').single()
+
+        if (insertConfirm.error || !insertConfirm.data) {
+          const response = { error: 'Erro ao gerar token de confirmação.' }
+          await safeAudit(sb, apiToken.id, req, action, 'error', body, response)
+          return json(req, response, 500)
+        }
+
+        const response = {
+          dry_run: true,
+          count: matched.length,
+          total_value: totalValue,
+          would_delete: matched.map((m) => ({
+            id: m.id,
+            tipo: m.tipo,
+            descricao: m.descricao,
+            valor: Number(m.valor),
+            status: m.status,
+            competence_date: m.competence_date,
+            payment_date: m.payment_date,
+            source_type: m.source_type,
+          })),
+          confirmation_token: insertConfirm.data.id,
+          expires_at: insertConfirm.data.expires_at,
+          transferencia_pares_inclusos: idsExtrasParesTransferencia,
+          message: `${matched.length} lançamento(s) seriam apagados (R$ ${totalValue.toFixed(2)}). Para confirmar, chame de novo com dry_run:false e o confirmation_token retornado.`,
+        }
+        await safeAudit(sb, apiToken.id, req, action, 'success', body, { dry_run: true, count: matched.length, total_value: totalValue, confirmation_token: insertConfirm.data.id })
+        return json(req, response)
+      }
+
+      // ── COMMIT: valida confirmation_token e aplica soft delete ─────────────
+      const { data: confirmRow, error: confirmErr } = await sb
+        .from('fin_delete_confirmations')
+        .select('id, target_ids, target_hash, expires_at, consumed_at, api_token_id')
+        .eq('id', confirmationToken!)
+        .maybeSingle()
+
+      if (confirmErr || !confirmRow) {
+        const response = { error: 'confirmation_token inválido ou não encontrado.' }
+        await safeAudit(sb, apiToken.id, req, action, 'error', body, response)
+        return json(req, response, 400)
+      }
+      if (confirmRow.api_token_id !== apiToken.id) {
+        const response = { error: 'confirmation_token pertence a outro API token.' }
+        await safeAudit(sb, apiToken.id, req, action, 'error', body, response)
+        return json(req, response, 403)
+      }
+      if (confirmRow.consumed_at) {
+        const response = { error: 'confirmation_token já foi usado. Faça um novo dry_run.' }
+        await safeAudit(sb, apiToken.id, req, action, 'error', body, response)
+        return json(req, response, 409)
+      }
+      if (new Date(confirmRow.expires_at).getTime() < Date.now()) {
+        const response = { error: 'confirmation_token expirado. Faça um novo dry_run.' }
+        await safeAudit(sb, apiToken.id, req, action, 'error', body, response)
+        return json(req, response, 410)
+      }
+
+      // Anti-bait-and-switch: re-aplicou filtros agora, gerou novo hash, compara com o gravado.
+      if (targetHash !== confirmRow.target_hash) {
+        const response = {
+          error: 'Conjunto de IDs mudou desde o dry_run. Os filtros enviados agora retornam um conjunto diferente. Faça um novo dry_run para confirmar.',
+          dry_run_target_hash: confirmRow.target_hash,
+          current_target_hash: targetHash,
+        }
+        await safeAudit(sb, apiToken.id, req, action, 'error', body, response)
+        return json(req, response, 409)
+      }
+
+      // ── Soft delete + marcar confirmation como consumed ────────────────────
+      const nowIso = new Date().toISOString()
+      const { error: updErr } = await sb
+        .from('fin_transacoes')
+        .update({ deleted_at: nowIso, deleted_by_token_id: apiToken.id })
+        .in('id', idsOrdenados)
+      if (updErr) {
+        const response = { error: 'Erro ao executar soft delete.' }
+        await safeAudit(sb, apiToken.id, req, action, 'error', body, response)
+        return json(req, response, 500)
+      }
+
+      // Marca confirmação como consumida (idempotência: não pode reusar)
+      await sb.from('fin_delete_confirmations').update({ consumed_at: nowIso }).eq('id', confirmationToken!)
+
+      const response = {
+        dry_run: false,
+        deleted_count: idsOrdenados.length,
+        total_value: totalValue,
+        deleted_ids: idsOrdenados,
+        deleted_at: nowIso,
+        message: `${idsOrdenados.length} lançamento(s) marcados como apagados (R$ ${totalValue.toFixed(2)}). Use restaurar_lancamento dentro de 30 dias para reverter.`,
+      }
+      await safeAudit(sb, apiToken.id, req, action, 'success', body, { dry_run: false, deleted_count: idsOrdenados.length, total_value: totalValue, deleted_ids: idsOrdenados })
+      return json(req, response)
+    }
+
+    // ─── restaurar_lancamento ────────────────────────────────────────────────
+    // Reverte soft delete: deleted_at = NULL, deleted_by_token_id = NULL.
+    // Aceita ids[] (no máximo MAX_ITEMS).
+    // NÃO requer dry-run / confirmation_token (ação restauradora, não destrutiva).
+    if (action === 'restaurar_lancamento') {
+      if (!hasScope(apiToken, 'financeiro:delete')) return json(req, { error: 'Permissão insuficiente. Token precisa de scope financeiro:delete.' }, 403)
+
+      const MAX_ITEMS = 50
+      const ids: string[] = Array.isArray(payload.ids)
+        ? payload.ids.filter((id: unknown) => typeof id === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id))
+        : []
+      if (ids.length === 0) {
+        const response = { error: 'Informe ids: [<uuid>, ...] (lançamentos a restaurar).' }
+        await safeAudit(sb, apiToken.id, req, action, 'error', body, response)
+        return json(req, response, 400)
+      }
+      if (ids.length > MAX_ITEMS) {
+        const response = { error: `Máximo ${MAX_ITEMS} ids por chamada.` }
+        await safeAudit(sb, apiToken.id, req, action, 'error', body, response)
+        return json(req, response, 400)
+      }
+
+      // Só restaura o que está realmente soft-deleted
+      const { data: alvo, error: selErr } = await sb
+        .from('fin_transacoes')
+        .select('id, descricao, valor, deleted_at')
+        .in('id', ids)
+        .not('deleted_at', 'is', null)
+      if (selErr) {
+        const response = { error: 'Erro ao buscar lançamentos.' }
+        await safeAudit(sb, apiToken.id, req, action, 'error', body, response)
+        return json(req, response, 500)
+      }
+
+      const idsParaRestaurar = (alvo ?? []).map((a: any) => a.id)
+      if (idsParaRestaurar.length === 0) {
+        const response = {
+          restored_count: 0,
+          message: 'Nenhum dos ids informados está em estado deletado (já ativos ou não encontrados).',
+        }
+        await safeAudit(sb, apiToken.id, req, action, 'success', body, { restored_count: 0 })
+        return json(req, response)
+      }
+
+      const { error: updErr } = await sb
+        .from('fin_transacoes')
+        .update({ deleted_at: null, deleted_by_token_id: null })
+        .in('id', idsParaRestaurar)
+      if (updErr) {
+        const response = { error: 'Erro ao restaurar lançamentos.' }
+        await safeAudit(sb, apiToken.id, req, action, 'error', body, response)
+        return json(req, response, 500)
+      }
+
+      const totalValue = (alvo ?? []).reduce((s: number, a: any) => s + Number(a.valor || 0), 0)
+      const response = {
+        restored_count: idsParaRestaurar.length,
+        restored_ids: idsParaRestaurar,
+        total_value: totalValue,
+        message: `${idsParaRestaurar.length} lançamento(s) restaurados (R$ ${totalValue.toFixed(2)}).`,
+      }
+      await safeAudit(sb, apiToken.id, req, action, 'success', body, response)
+      return json(req, response)
+    }
+
     return json(req, { error: 'Ação inválida.' }, 400)
-  } catch (e) {
+  } catch (e: any) {
     console.error('[financeiro-openclaw]', e)
     if (apiToken?.id) {
       await safeAudit(sb, apiToken.id, req, body?.action || 'unknown', 'error', body, { error: String(e?.message || e) })

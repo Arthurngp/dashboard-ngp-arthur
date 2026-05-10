@@ -40,7 +40,15 @@ export const SETOR_BOXES: SetorBox[] = [
       scopes: ['financeiro:read', 'financeiro:create', 'financeiro:reports'],
       sensibilidade: 'media',
     },
-    acoesDelicadas: [],
+    acoesDelicadas: [
+      {
+        id: 'financeiro:delete',
+        label: 'Excluir lançamentos',
+        description: 'Ação destrutiva. Permite apagar registros financeiros pela API (soft delete com janela de 30 dias para restauração).',
+        sensibilidade: 'alta',
+        requerConfirmacao: true,
+      },
+    ],
   },
   {
     id: 'feedback',
