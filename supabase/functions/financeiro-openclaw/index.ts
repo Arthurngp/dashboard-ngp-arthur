@@ -97,6 +97,33 @@ function summarizeTransactions(rows: any[]) {
   }, { entradas: 0, saidas: 0, saldo: 0, a_receber: 0, a_pagar: 0 })
 }
 
+// PostgREST limita a 1000 rows por request — paginar todas as transações confirmadas
+// para somar saldos sem truncar.
+async function fetchAllConfirmedTx(sb: any): Promise<Array<{ account_id: string; tipo: string; valor: number }>> {
+  const out: Array<{ account_id: string; tipo: string; valor: number }> = []
+  let off = 0
+  while (true) {
+    const { data, error } = await sb
+      .from('fin_transacoes')
+      .select('account_id, tipo, valor')
+      .eq('status', 'confirmado')
+      .not('account_id', 'is', null)
+      .range(off, off + 999)
+    if (error) throw error
+    if (!data || data.length === 0) break
+    out.push(...data)
+    if (data.length < 1000) break
+    off += 1000
+  }
+  return out
+}
+
+function clampLimit(value: unknown, def = 100, max = 500): number {
+  const n = Number(value)
+  if (!Number.isFinite(n) || n <= 0) return def
+  return Math.min(Math.floor(n), max)
+}
+
 serve(async (req: Request) => {
   const cors = handleCors(req)
   if (cors) return cors
@@ -114,9 +141,51 @@ serve(async (req: Request) => {
 
     if (action === 'listar_contas') {
       if (!hasScope(apiToken, 'financeiro:read')) return json(req, { error: 'Permissão insuficiente.' }, 403)
-      const { data, error } = await sb.from('fin_accounts').select('id,nome,tipo,saldo_inicial').or('ativo.is.null,ativo.eq.true').order('nome')
+      const { data: rawAccounts, error } = await sb
+        .from('fin_accounts')
+        .select('id,nome,tipo,saldo_inicial,incluir_no_saldo')
+        .or('ativo.is.null,ativo.eq.true')
+        .order('nome')
       if (error) return json(req, { error: 'Erro ao listar contas.' }, 500)
-      const response = { accounts: data ?? [] }
+
+      // Saldo real: saldo_inicial + soma de todas as transações confirmadas
+      let txs: Array<{ account_id: string; tipo: string; valor: number }> = []
+      try { txs = await fetchAllConfirmedTx(sb) }
+      catch (_) { return json(req, { error: 'Erro ao calcular saldos.' }, 500) }
+
+      const saldoByAccount: Record<string, number> = {}
+      for (const t of txs) {
+        if (!saldoByAccount[t.account_id]) saldoByAccount[t.account_id] = 0
+        saldoByAccount[t.account_id] += t.tipo === 'entrada' ? Number(t.valor) : -Number(t.valor)
+      }
+
+      const accounts = (rawAccounts ?? []).map((a: any) => ({
+        id: a.id,
+        nome: a.nome,
+        tipo: a.tipo,
+        saldo_inicial: Number(a.saldo_inicial),
+        saldo_atual: Number(a.saldo_inicial) + (saldoByAccount[a.id] ?? 0),
+        incluir_no_saldo: a.incluir_no_saldo !== false,
+      }))
+
+      // Totais agregados (mesma fórmula do Dashboard / financeiro-aux)
+      const isContaCorrente = (t: string) => t === 'conta_corrente' || t === 'banco'
+      const saldo_total = accounts
+        .filter((a: any) => a.incluir_no_saldo && isContaCorrente(a.tipo))
+        .reduce((s: number, a: any) => s + a.saldo_atual, 0)
+      const saldo_investimentos = accounts
+        .filter((a: any) => a.incluir_no_saldo && a.tipo === 'investimento')
+        .reduce((s: number, a: any) => s + a.saldo_atual, 0)
+      const saldo_poupanca = accounts
+        .filter((a: any) => a.incluir_no_saldo && a.tipo === 'poupanca')
+        .reduce((s: number, a: any) => s + a.saldo_atual, 0)
+
+      const response = {
+        accounts,
+        saldo_total,
+        saldo_investimentos,
+        saldo_poupanca,
+      }
       await safeAudit(sb, apiToken.id, req, action, 'success', body, response)
       return json(req, response)
     }
@@ -209,6 +278,212 @@ serve(async (req: Request) => {
         message: `Lançamento criado: ${tipo} de R$ ${Number(valor).toFixed(2)} em ${data.account?.nome || payload.conta_nome}.`,
       }
       await safeAudit(sb, apiToken.id, req, action, 'success', body, response)
+      return json(req, response)
+    }
+
+    // ─── listar_lancamentos ──────────────────────────────────────────────────
+    // Filtros: start, end (YYYY-MM-DD), tipo, status, account_id, categoria_id,
+    //          cliente_id, fornecedor_id, view ('caixa'|'competencia'),
+    //          limit (default 100, max 500), offset (paginação manual).
+    if (action === 'listar_lancamentos') {
+      if (!hasScope(apiToken, 'financeiro:read')) return json(req, { error: 'Permissão insuficiente.' }, 403)
+
+      const view: 'caixa' | 'competencia' = payload.view === 'caixa' ? 'caixa' : 'competencia'
+      const dateField = view === 'caixa' ? 'payment_date' : 'competence_date'
+      const start = normalizeDateOnly(payload.start)
+      const end = normalizeDateOnly(payload.end)
+      const limit = clampLimit(payload.limit, 100, 500)
+      const offset = Number.isFinite(Number(payload.offset)) && Number(payload.offset) >= 0 ? Math.floor(Number(payload.offset)) : 0
+
+      let q = sb.from('fin_transacoes')
+        .select([
+          'id,tipo,descricao,valor,status,competence_date,payment_date,observacoes,source_type,source_tag',
+          'account:fin_accounts(id,nome,tipo)',
+          'categoria:fin_categorias(id,nome,tipo)',
+          'cliente:fin_clientes(id,nome)',
+          'fornecedor:fin_fornecedores(id,nome)',
+        ].join(','), { count: 'exact' })
+        .order(dateField, { ascending: false })
+        .range(offset, offset + limit - 1)
+
+      if (start) q = q.gte(dateField, start)
+      if (end) q = q.lte(dateField, end)
+      if (payload.tipo === 'entrada' || payload.tipo === 'saida') q = q.eq('tipo', payload.tipo)
+      if (payload.status === 'confirmado' || payload.status === 'pendente') q = q.eq('status', payload.status)
+      if (payload.account_id) q = q.eq('account_id', payload.account_id)
+      if (payload.categoria_id) q = q.eq('categoria_id', payload.categoria_id)
+      if (payload.cliente_id) q = q.eq('cliente_id', payload.cliente_id)
+      if (payload.fornecedor_id) q = q.eq('fornecedor_id', payload.fornecedor_id)
+
+      const { data, error, count } = await q
+      if (error) {
+        const response = { error: 'Erro ao listar lançamentos.' }
+        await safeAudit(sb, apiToken.id, req, action, 'error', body, response)
+        return json(req, response, 500)
+      }
+
+      const lancamentos = data ?? []
+      const resumo = summarizeTransactions(lancamentos)
+      const response = {
+        period: start || end ? { start, end } : null,
+        view,
+        total: count ?? lancamentos.length,
+        limit,
+        offset,
+        has_more: (count ?? 0) > offset + lancamentos.length,
+        lancamentos,
+        resumo,
+      }
+      await safeAudit(sb, apiToken.id, req, action, 'success', body, { ...response, lancamentos: `[${lancamentos.length} items]` })
+      return json(req, response)
+    }
+
+    // ─── listar_clientes ─────────────────────────────────────────────────────
+    // Retorna clientes ativos com saldo_a_receber (soma de pendentes de entrada).
+    if (action === 'listar_clientes') {
+      if (!hasScope(apiToken, 'financeiro:read')) return json(req, { error: 'Permissão insuficiente.' }, 403)
+
+      const limit = clampLimit(payload.limit, 200, 500)
+      const { data: clientes, error: cErr } = await sb
+        .from('fin_clientes')
+        .select('id, nome, documento, telefone, email, mensalidade_valor, mensalidade_descricao, dia_cobranca, assinatura_ativa')
+        .or('ativo.is.null,ativo.eq.true')
+        .order('nome')
+        .limit(limit)
+      if (cErr) {
+        const response = { error: 'Erro ao listar clientes.' }
+        await safeAudit(sb, apiToken.id, req, action, 'error', body, response)
+        return json(req, response, 500)
+      }
+
+      // Soma a_receber por cliente_id (pendentes de entrada)
+      const { data: pendentes, error: pErr } = await sb
+        .from('fin_transacoes')
+        .select('cliente_id, valor')
+        .eq('status', 'pendente')
+        .eq('tipo', 'entrada')
+        .not('cliente_id', 'is', null)
+      if (pErr) {
+        const response = { error: 'Erro ao calcular saldo a receber.' }
+        await safeAudit(sb, apiToken.id, req, action, 'error', body, response)
+        return json(req, response, 500)
+      }
+
+      const aReceberByCliente: Record<string, number> = {}
+      for (const t of (pendentes ?? [])) {
+        const k = t.cliente_id
+        aReceberByCliente[k] = (aReceberByCliente[k] || 0) + Number(t.valor || 0)
+      }
+
+      const result = (clientes ?? []).map((c: any) => ({
+        ...c,
+        saldo_a_receber: Number((aReceberByCliente[c.id] ?? 0).toFixed(2)),
+      }))
+
+      const response = { clientes: result, total: result.length }
+      await safeAudit(sb, apiToken.id, req, action, 'success', body, { total: result.length })
+      return json(req, response)
+    }
+
+    // ─── listar_fornecedores ─────────────────────────────────────────────────
+    // Retorna fornecedores ativos com saldo_a_pagar (soma de pendentes de saída).
+    if (action === 'listar_fornecedores') {
+      if (!hasScope(apiToken, 'financeiro:read')) return json(req, { error: 'Permissão insuficiente.' }, 403)
+
+      const limit = clampLimit(payload.limit, 200, 500)
+      const { data: fornecedores, error: fErr } = await sb
+        .from('fin_fornecedores')
+        .select('id, nome, documento, telefone, email')
+        .or('ativo.is.null,ativo.eq.true')
+        .order('nome')
+        .limit(limit)
+      if (fErr) {
+        const response = { error: 'Erro ao listar fornecedores.' }
+        await safeAudit(sb, apiToken.id, req, action, 'error', body, response)
+        return json(req, response, 500)
+      }
+
+      const { data: pendentes, error: pErr } = await sb
+        .from('fin_transacoes')
+        .select('fornecedor_id, valor')
+        .eq('status', 'pendente')
+        .eq('tipo', 'saida')
+        .not('fornecedor_id', 'is', null)
+      if (pErr) {
+        const response = { error: 'Erro ao calcular saldo a pagar.' }
+        await safeAudit(sb, apiToken.id, req, action, 'error', body, response)
+        return json(req, response, 500)
+      }
+
+      const aPagarByFornecedor: Record<string, number> = {}
+      for (const t of (pendentes ?? [])) {
+        const k = t.fornecedor_id
+        aPagarByFornecedor[k] = (aPagarByFornecedor[k] || 0) + Number(t.valor || 0)
+      }
+
+      const result = (fornecedores ?? []).map((f: any) => ({
+        ...f,
+        saldo_a_pagar: Number((aPagarByFornecedor[f.id] ?? 0).toFixed(2)),
+      }))
+
+      const response = { fornecedores: result, total: result.length }
+      await safeAudit(sb, apiToken.id, req, action, 'success', body, { total: result.length })
+      return json(req, response)
+    }
+
+    // ─── resumo_periodo ──────────────────────────────────────────────────────
+    // Generaliza briefing_diario / resumo_semanal aceitando start/end arbitrários.
+    // Pagina internamente para suportar períodos longos.
+    if (action === 'resumo_periodo') {
+      if (!hasScope(apiToken, 'financeiro:reports')) return json(req, { error: 'Permissão insuficiente.' }, 403)
+
+      const start = normalizeDateOnly(payload.start)
+      const end = normalizeDateOnly(payload.end)
+      if (!start || !end) return json(req, { error: 'Informe start e end (YYYY-MM-DD).' }, 400)
+      if (start > end) return json(req, { error: 'start deve ser menor ou igual a end.' }, 400)
+
+      const view: 'caixa' | 'competencia' = payload.view === 'caixa' ? 'caixa' : 'competencia'
+      const dateField = view === 'caixa' ? 'payment_date' : 'competence_date'
+
+      // Pagina para suportar períodos longos (>1000 transações)
+      const transacoes: any[] = []
+      let off = 0
+      while (true) {
+        let q = sb.from('fin_transacoes')
+          .select([
+            'id,tipo,descricao,valor,status,competence_date,payment_date',
+            'account:fin_accounts!inner(id,nome,ativo)',
+            'categoria:fin_categorias(id,nome,tipo)',
+          ].join(','))
+          .gte(dateField, start)
+          .lte(dateField, end)
+          .eq('account.ativo', true)
+          .order(dateField, { ascending: true })
+          .range(off, off + 999)
+        if (payload.account_id) q = q.eq('account_id', payload.account_id)
+        const { data, error } = await q
+        if (error) {
+          const response = { error: 'Erro ao buscar lançamentos.' }
+          await safeAudit(sb, apiToken.id, req, action, 'error', body, response)
+          return json(req, response, 500)
+        }
+        if (!data || data.length === 0) break
+        transacoes.push(...data)
+        if (data.length < 1000) break
+        off += 1000
+      }
+
+      const resumo = summarizeTransactions(transacoes)
+      const response = {
+        period: { start, end },
+        view,
+        total: transacoes.length,
+        resumo,
+        a_pagar: transacoes.filter((tx: any) => tx.status === 'pendente' && tx.tipo === 'saida'),
+        a_receber: transacoes.filter((tx: any) => tx.status === 'pendente' && tx.tipo === 'entrada'),
+        realizado: transacoes.filter((tx: any) => tx.status === 'confirmado'),
+      }
+      await safeAudit(sb, apiToken.id, req, action, 'success', body, { period: response.period, total: response.total, resumo })
       return json(req, response)
     }
 
