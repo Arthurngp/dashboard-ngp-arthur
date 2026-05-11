@@ -870,8 +870,8 @@ serve(async (req: Request) => {
     // ─── CARTÕES: lista cartões de crédito com fatura calculada ──────────────
     if (action === 'cartoes_listar') {
       const cartoesRes = await sb.from('fin_accounts')
-        .select('id,nome,ativo,limite_credito,dia_fechamento,dia_vencimento,saldo_inicial')
-        .eq('tipo', 'cartao_credito')
+        .select('id,nome,ativo,limite_credito,dia_fechamento,dia_vencimento,saldo_inicial,tipo')
+        .in('tipo', ['cartao_credito', 'cartao'])
         .order('nome')
       const cartoes = cartoesRes.data || []
       if (cartoes.length === 0) return json(req, { cartoes: [] })
@@ -953,6 +953,286 @@ serve(async (req: Request) => {
       })
 
       return json(req, { cartoes: result, computed_at: new Date().toISOString() })
+    }
+
+    // Helper: dado competence_date (YYYY-MM-DD) e dia_fechamento, devolve o
+    // primeiro dia do mês de referência da fatura (YYYY-MM-01).
+    function faturaMesRef(competenceISO: string, diaFech: number | null): string {
+      const d = new Date(competenceISO + 'T00:00:00')
+      let y = d.getFullYear()
+      let m = d.getMonth()
+      // Se passou do fechamento do mês, vai pra fatura seguinte.
+      if (diaFech && d.getDate() > diaFech) {
+        m += 1
+        if (m > 11) { m = 0; y += 1 }
+      }
+      const mm = String(m + 1).padStart(2, '0')
+      return `${y}-${mm}-01`
+    }
+
+    function mesRefLabel(mesRef: string): string {
+      const d = new Date(mesRef + 'T00:00:00')
+      return d.toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' })
+    }
+
+    // ─── CARTÕES: lista 12 faturas do cartão (status, valor) ─────────────────
+    if (action === 'cartoes_faturas_listar') {
+      const { cartao_id, ano } = body as { cartao_id?: string; ano?: number }
+      if (!cartao_id) return json(req, { error: 'cartao_id é obrigatório.' }, 400)
+      const anoNum = Number(ano) || new Date().getFullYear()
+
+      const cartRes = await sb.from('fin_accounts')
+        .select('id,nome,dia_fechamento,dia_vencimento,limite_credito')
+        .eq('id', cartao_id)
+        .in('tipo', ['cartao_credito', 'cartao'])
+        .single()
+      if (cartRes.error || !cartRes.data) return json(req, { error: 'Cartão não encontrado.' }, 404)
+      const cart = cartRes.data
+
+      // Carrega todas as transações do cartão (lib paginação).
+      const txAll: any[] = []
+      let off = 0
+      while (true) {
+        const { data, error } = await sb.from('fin_transacoes_ativas')
+          .select('id,tipo,valor,status,competence_date,payment_date')
+          .eq('account_id', cartao_id)
+          .range(off, off + 999)
+        if (error) return json(req, { error: 'Erro ao buscar transações do cartão.' }, 500)
+        if (!data || data.length === 0) break
+        txAll.push(...data)
+        if (data.length < 1000) break
+        off += 1000
+      }
+
+      // Status registrados (pagas) para o ano.
+      const startAno = `${anoNum}-01-01`
+      const endAno = `${anoNum}-12-01`
+      const faturasRes = await sb.from('fin_cartao_faturas')
+        .select('mes_ref,status,valor,valor_pago,paid_at,paid_account_id')
+        .eq('cartao_id', cartao_id)
+        .gte('mes_ref', startAno)
+        .lte('mes_ref', endAno)
+      const faturasMap = new Map<string, any>()
+      for (const f of faturasRes.data || []) faturasMap.set(String(f.mes_ref), f)
+
+      const meses = []
+      for (let m = 0; m < 12; m++) {
+        const mes_ref = `${anoNum}-${String(m + 1).padStart(2, '0')}-01`
+        let valor = 0
+        for (const t of txAll) {
+          const dRef = t.competence_date
+          if (!dRef) continue
+          if (faturaMesRef(dRef, cart.dia_fechamento) !== mes_ref) continue
+          const v = Math.abs(Number(t.valor || 0))
+          if (t.tipo === 'saida') valor += v
+          else if (t.tipo === 'entrada') valor -= v
+        }
+        const registrado = faturasMap.get(mes_ref)
+        meses.push({
+          mes_ref,
+          label: mesRefLabel(mes_ref),
+          valor,
+          status: registrado?.status || 'aberta',
+          valor_pago: Number(registrado?.valor_pago || 0),
+          paid_at: registrado?.paid_at || null,
+          paid_account_id: registrado?.paid_account_id || null,
+        })
+      }
+
+      return json(req, {
+        cartao: { id: cart.id, nome: cart.nome, dia_fechamento: cart.dia_fechamento, dia_vencimento: cart.dia_vencimento, limite_credito: cart.limite_credito != null ? Number(cart.limite_credito) : null },
+        ano: anoNum,
+        faturas: meses,
+      })
+    }
+
+    // ─── CARTÕES: detalhe (lançamentos) de uma fatura específica ────────────
+    if (action === 'cartoes_fatura_detalhe') {
+      const { cartao_id, mes_ref } = body as { cartao_id?: string; mes_ref?: string }
+      if (!cartao_id || !mes_ref) return json(req, { error: 'cartao_id e mes_ref são obrigatórios.' }, 400)
+      if (!/^\d{4}-\d{2}-01$/.test(mes_ref)) return json(req, { error: 'mes_ref inválido (esperado YYYY-MM-01).' }, 400)
+
+      const cartRes = await sb.from('fin_accounts')
+        .select('id,nome,dia_fechamento,dia_vencimento,limite_credito')
+        .eq('id', cartao_id)
+        .in('tipo', ['cartao_credito', 'cartao'])
+        .single()
+      if (cartRes.error || !cartRes.data) return json(req, { error: 'Cartão não encontrado.' }, 404)
+      const cart = cartRes.data
+
+      const txAll: any[] = []
+      let off = 0
+      while (true) {
+        const { data, error } = await sb.from('fin_transacoes_ativas')
+          .select('id,tipo,descricao,valor,status,competence_date,payment_date,installment_index,installment_total,categoria:fin_categorias(id,nome,cor),fornecedor:fin_fornecedores(id,nome)')
+          .eq('account_id', cartao_id)
+          .range(off, off + 999)
+        if (error) return json(req, { error: 'Erro ao buscar lançamentos do cartão.' }, 500)
+        if (!data || data.length === 0) break
+        txAll.push(...data)
+        if (data.length < 1000) break
+        off += 1000
+      }
+
+      const lancamentos = txAll
+        .filter(t => t.competence_date && faturaMesRef(t.competence_date, cart.dia_fechamento) === mes_ref)
+        .sort((a, b) => (a.competence_date || '').localeCompare(b.competence_date || ''))
+
+      let totalSaidas = 0
+      let totalEntradas = 0
+      for (const t of lancamentos) {
+        const v = Math.abs(Number(t.valor || 0))
+        if (t.tipo === 'saida') totalSaidas += v
+        else if (t.tipo === 'entrada') totalEntradas += v
+      }
+
+      // Saldo da fatura anterior (mês anterior, mesmo cartão).
+      const mesRefD = new Date(mes_ref + 'T00:00:00')
+      const anteriorD = new Date(mesRefD.getFullYear(), mesRefD.getMonth() - 1, 1)
+      const anteriorISO = `${anteriorD.getFullYear()}-${String(anteriorD.getMonth() + 1).padStart(2, '0')}-01`
+      const anteriorRes = await sb.from('fin_cartao_faturas')
+        .select('valor,valor_pago,status')
+        .eq('cartao_id', cartao_id)
+        .eq('mes_ref', anteriorISO)
+        .maybeSingle()
+      const saldoAnterior = anteriorRes.data
+        ? Number(anteriorRes.data.valor) - Number(anteriorRes.data.valor_pago)
+        : 0
+
+      const faturaRes = await sb.from('fin_cartao_faturas')
+        .select('id,status,valor,valor_pago,paid_at,paid_account_id,observacoes')
+        .eq('cartao_id', cartao_id)
+        .eq('mes_ref', mes_ref)
+        .maybeSingle()
+
+      // Vencimento: dia_vencimento no mês ref (ou último dia se mês não tiver).
+      let vencimento: string | null = null
+      if (cart.dia_vencimento) {
+        const vencD = new Date(mesRefD.getFullYear(), mesRefD.getMonth(), cart.dia_vencimento)
+        // Se overflow (ex: 31 de fev), Date corrige para próximo mês — voltar p/ último dia do mês ref.
+        if (vencD.getMonth() !== mesRefD.getMonth()) vencD.setDate(0)
+        vencimento = vencD.toISOString().slice(0, 10)
+      }
+
+      return json(req, {
+        cartao: { id: cart.id, nome: cart.nome, dia_fechamento: cart.dia_fechamento, dia_vencimento: cart.dia_vencimento, limite_credito: cart.limite_credito != null ? Number(cart.limite_credito) : null },
+        mes_ref,
+        label: mesRefLabel(mes_ref),
+        vencimento,
+        saldo_anterior: saldoAnterior,
+        total_saidas: totalSaidas,
+        total_entradas: totalEntradas,
+        valor_fatura: totalSaidas - totalEntradas,
+        fatura: faturaRes.data || null,
+        lancamentos,
+      })
+    }
+
+    // ─── CARTÕES: marcar fatura como paga ────────────────────────────────────
+    // Cria uma saída na conta bancária + registra na fin_cartao_faturas.
+    if (action === 'cartoes_fatura_marcar_paga') {
+      const { cartao_id, mes_ref, paid_account_id, paid_at, valor_pago } = body as {
+        cartao_id?: string; mes_ref?: string; paid_account_id?: string; paid_at?: string; valor_pago?: number
+      }
+      if (!cartao_id || !mes_ref || !paid_account_id) {
+        return json(req, { error: 'cartao_id, mes_ref e paid_account_id são obrigatórios.' }, 400)
+      }
+      if (!/^\d{4}-\d{2}-01$/.test(mes_ref)) return json(req, { error: 'mes_ref inválido.' }, 400)
+
+      const cartRes = await sb.from('fin_accounts')
+        .select('id,nome,dia_fechamento')
+        .eq('id', cartao_id)
+        .in('tipo', ['cartao_credito', 'cartao'])
+        .single()
+      if (cartRes.error || !cartRes.data) return json(req, { error: 'Cartão não encontrado.' }, 404)
+
+      // Calcula valor da fatura se não enviado.
+      let valor = Number(valor_pago)
+      if (!Number.isFinite(valor) || valor <= 0) {
+        const txAll: any[] = []
+        let off = 0
+        while (true) {
+          const { data, error } = await sb.from('fin_transacoes_ativas')
+            .select('tipo,valor,competence_date')
+            .eq('account_id', cartao_id)
+            .range(off, off + 999)
+          if (error) return json(req, { error: 'Erro ao buscar lançamentos do cartão.' }, 500)
+          if (!data || data.length === 0) break
+          txAll.push(...data)
+          if (data.length < 1000) break
+          off += 1000
+        }
+        let total = 0
+        for (const t of txAll) {
+          if (!t.competence_date) continue
+          if (faturaMesRef(t.competence_date, cartRes.data.dia_fechamento) !== mes_ref) continue
+          const v = Math.abs(Number(t.valor || 0))
+          total += t.tipo === 'saida' ? v : (t.tipo === 'entrada' ? -v : 0)
+        }
+        valor = total
+      }
+
+      if (valor <= 0) return json(req, { error: 'Fatura sem valor positivo a pagar.' }, 400)
+
+      const dataPag = paid_at && /^\d{4}-\d{2}-\d{2}$/.test(paid_at) ? paid_at : new Date().toISOString().slice(0, 10)
+
+      // Cria a transação de pagamento da fatura (saída na conta bancária).
+      // is_card_payment=true: marca como pagamento de fatura para não duplicar no DRE
+      // (as despesas individuais do cartão já entram com suas categorias).
+      const txInsert = await sb.from('fin_transacoes').insert({
+        tipo: 'saida',
+        descricao: `Pagamento fatura ${mesRefLabel(mes_ref)} — ${cartRes.data.nome}`,
+        valor,
+        data_transacao: dataPag,
+        competence_date: dataPag,
+        payment_date: dataPag,
+        account_id: paid_account_id,
+        status: 'confirmado',
+        observacoes: null,
+        created_by: user.usuario_id,
+        is_card_payment: true,
+      }).select('id').single()
+      if (txInsert.error || !txInsert.data) return json(req, { error: 'Erro ao registrar pagamento.' }, 500)
+
+      // Upsert na fin_cartao_faturas.
+      const fatUpsert = await sb.from('fin_cartao_faturas').upsert({
+        cartao_id, mes_ref,
+        status: 'paga',
+        valor,
+        valor_pago: valor,
+        paid_at: dataPag,
+        paid_account_id,
+        pagamento_tx_id: txInsert.data.id,
+        updated_at: new Date().toISOString(),
+      }, { onConflict: 'cartao_id,mes_ref' }).select().single()
+      if (fatUpsert.error) {
+        // rollback da tx
+        await sb.from('fin_transacoes').delete().eq('id', txInsert.data.id)
+        return json(req, { error: 'Erro ao registrar fatura paga.' }, 500)
+      }
+
+      return json(req, { fatura: fatUpsert.data, transacao_id: txInsert.data.id })
+    }
+
+    // ─── CARTÕES: marcar fatura como aberta (desfazer pagamento) ─────────────
+    if (action === 'cartoes_fatura_marcar_aberta') {
+      const { cartao_id, mes_ref } = body as { cartao_id?: string; mes_ref?: string }
+      if (!cartao_id || !mes_ref) return json(req, { error: 'cartao_id e mes_ref são obrigatórios.' }, 400)
+
+      const fatRes = await sb.from('fin_cartao_faturas')
+        .select('id,pagamento_tx_id')
+        .eq('cartao_id', cartao_id)
+        .eq('mes_ref', mes_ref)
+        .maybeSingle()
+      if (!fatRes.data) return json(req, { ok: true })
+
+      if (fatRes.data.pagamento_tx_id) {
+        await sb.from('fin_transacoes').delete().eq('id', fatRes.data.pagamento_tx_id)
+      }
+      await sb.from('fin_cartao_faturas').update({
+        status: 'aberta', valor_pago: 0, paid_at: null, paid_account_id: null, pagamento_tx_id: null, updated_at: new Date().toISOString(),
+      }).eq('id', fatRes.data.id)
+      return json(req, { ok: true })
     }
 
     // ─── DASHBOARD: alterna inclusão de uma conta no saldo geral ──────────────

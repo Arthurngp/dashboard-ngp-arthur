@@ -45,12 +45,12 @@ serve(async (req: Request) => {
         // PostgREST limita 1000 rows por request — paginar para somar TUDO.
         // Lê da VIEW fin_transacoes_ativas (já filtra deleted_at IS NULL).
         // .order('id') estabiliza paginação.
-        const txs: Array<{ account_id: string; tipo: string; valor: number }> = []
+        const txs: Array<{ account_id: string; tipo: string; valor: number; transfer_direction?: string | null }> = []
         let off = 0
         while (true) {
           const { data: txPage, error: txErr } = await sb
             .from('fin_transacoes_ativas')
-            .select('account_id, tipo, valor')
+            .select('account_id, tipo, valor, transfer_direction')
             .eq('status', 'confirmado')
             .not('account_id', 'is', null)
             .order('id', { ascending: true })
@@ -65,7 +65,12 @@ serve(async (req: Request) => {
         const saldos: Record<string, number> = {}
         for (const t of txs) {
           if (!saldos[t.account_id]) saldos[t.account_id] = 0
-          saldos[t.account_id] += t.tipo === 'entrada' ? Number(t.valor) : -Number(t.valor)
+          const v = Number(t.valor)
+          if (t.tipo === 'transferencia') {
+            saldos[t.account_id] += t.transfer_direction === 'in' ? v : -v
+          } else {
+            saldos[t.account_id] += t.tipo === 'entrada' ? v : -v
+          }
         }
 
         const accounts = (rawAccounts ?? []).map((a: any) => ({
@@ -102,21 +107,28 @@ serve(async (req: Request) => {
       }
 
       if (action === 'criar') {
-        const { nome, tipo, saldo_inicial } = payload
+        const { nome, tipo, saldo_inicial, limite_credito, dia_fechamento, dia_vencimento } = payload
         const normalizedNome = normalizeText(nome)
         const normalizedTipo = normalizeText(tipo)
         const parsedSaldoInicial = parseCurrencyInput(saldo_inicial ?? 0)
         if (!normalizedNome || !normalizedTipo) return json(req, { error: 'nome e tipo são obrigatórios.' }, 400)
         if (parsedSaldoInicial == null) return json(req, { error: 'Saldo inicial inválido.' }, 400)
-        const { data, error } = await sb.from('fin_accounts').insert({
+
+        const row: Record<string, any> = {
           nome: normalizedNome, tipo: normalizedTipo, saldo_inicial: parsedSaldoInicial, ativo: true,
-        }).select().single()
+        }
+        // Campos opcionais (cartão de crédito).
+        if (limite_credito !== undefined) row.limite_credito = limite_credito == null ? null : Number(limite_credito)
+        if (dia_fechamento !== undefined) row.dia_fechamento = dia_fechamento == null ? null : Number(dia_fechamento)
+        if (dia_vencimento !== undefined) row.dia_vencimento = dia_vencimento == null ? null : Number(dia_vencimento)
+
+        const { data, error } = await sb.from('fin_accounts').insert(row).select().single()
         if (error) return json(req, { error: 'Erro ao criar conta.' }, 500)
         return json(req, { account: data })
       }
 
       if (action === 'atualizar') {
-        const { id, nome, tipo, saldo_inicial } = payload
+        const { id, nome, tipo, saldo_inicial, limite_credito, dia_fechamento, dia_vencimento } = payload
         const normalizedNome = normalizeText(nome)
         const normalizedTipo = normalizeText(tipo)
         const parsedSaldoInicial = parseCurrencyInput(saldo_inicial ?? 0)
@@ -124,12 +136,17 @@ serve(async (req: Request) => {
         if (!normalizedNome || !normalizedTipo) return json(req, { error: 'nome e tipo são obrigatórios.' }, 400)
         if (parsedSaldoInicial == null) return json(req, { error: 'Saldo inicial inválido.' }, 400)
 
+        const update: Record<string, any> = {
+          nome: normalizedNome,
+          tipo: normalizedTipo,
+          saldo_inicial: parsedSaldoInicial,
+        }
+        if (limite_credito !== undefined) update.limite_credito = limite_credito == null ? null : Number(limite_credito)
+        if (dia_fechamento !== undefined) update.dia_fechamento = dia_fechamento == null ? null : Number(dia_fechamento)
+        if (dia_vencimento !== undefined) update.dia_vencimento = dia_vencimento == null ? null : Number(dia_vencimento)
+
         const { data, error } = await sb.from('fin_accounts')
-          .update({
-            nome: normalizedNome,
-            tipo: normalizedTipo,
-            saldo_inicial: parsedSaldoInicial,
-          })
+          .update(update)
           .eq('id', id)
           .select()
           .single()

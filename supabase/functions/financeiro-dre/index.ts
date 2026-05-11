@@ -27,11 +27,15 @@ serve(async (req: Request) => {
     const end = `${anoNum}-12-31`
     const dateField = view === 'caixa' ? 'payment_date' : 'competence_date'
 
-    // Busca todas as transações do ano
+    // Busca todas as transações do ano. Exclui:
+    // - transferências entre contas (não são receita/despesa)
+    // - pagamentos de fatura de cartão (as compras individuais já entram com suas categorias)
     let q = sb.from('fin_transacoes')
       .select('tipo, valor, status, competence_date, payment_date, categoria_id, categoria:fin_categorias(id, nome, tipo), account:fin_accounts!inner(id,ativo)')
       .gte(dateField, start)
       .lte(dateField, end)
+      .neq('tipo', 'transferencia')
+      .eq('is_card_payment', false)
 
     // No modo caixa, só confirmadas com payment_date
     if (view === 'caixa') {

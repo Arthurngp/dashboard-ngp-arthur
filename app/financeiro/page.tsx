@@ -96,6 +96,16 @@ function FinanceiroInner() {
   const [viewMode, setViewMode]     = useState<ViewMode>('competencia')
   const [contatoFiltro, setContatoFiltro] = useState<ContatoFiltro>('todos')
   const [accountFilterId, setAccountFilterId] = useState('')
+
+  // Filtros avançados (popover) — todos client-side, multi-select via Set<string>.
+  // Para categoria, o sentinel '__sem_categoria__' representa "Sem categoria".
+  const [filtroCategorias, setFiltroCategorias] = useState<Set<string>>(new Set())
+  const [filtroStatus,     setFiltroStatus]     = useState<Set<'confirmado' | 'pendente'>>(new Set())
+  const [filtroClientes,   setFiltroClientes]   = useState<Set<string>>(new Set())
+  const [filtroFornecedores, setFiltroFornecedores] = useState<Set<string>>(new Set())
+  const [filtroCentros,    setFiltroCentros]    = useState<Set<string>>(new Set())
+  const [filtroCriadores,  setFiltroCriadores]  = useState<Set<string>>(new Set())
+  const [filtrosPanelOpen, setFiltrosPanelOpen] = useState(false)
   const [transacaoSort, setTransacaoSort] = useState<{ field: TransacaoSortField; direction: SortDirection }>({
     field: 'payment_date',
     direction: 'desc',
@@ -130,6 +140,7 @@ function FinanceiroInner() {
   const [fCliente, setFCliente]       = useState('')
   const [fFornecedor, setFFornecedor] = useState('')
   const [fAccount, setFAccount]       = useState('')
+  const [fAccountDestino, setFAccountDestino] = useState('')
   const [fCostCenter, setFCostCenter] = useState('')
   const [fProduct, setFProduct]       = useState('')
   const [fStatus, setFStatus]         = useState<'confirmado' | 'pendente'>('pendente')
@@ -408,7 +419,7 @@ function FinanceiroInner() {
     setFTipo('saida'); setFDesc(''); setFValor('')
     setFCompDate(todayISO()); setFPayDate(todayISO())
     setFCat(''); setFCliente(''); setFFornecedor('')
-    setFAccount(''); setFCostCenter(''); setFProduct('')
+    setFAccount(''); setFAccountDestino(''); setFCostCenter(''); setFProduct('')
     setFStatus('pendente'); setFObs('')
   }
 
@@ -430,10 +441,22 @@ function FinanceiroInner() {
     setFCompDate(t.competence_date || t.data_transacao)
     setFPayDate(t.payment_date || todayISO())
     setFCat(t.categoria?.id || ''); setFCliente(t.cliente?.id || '')
-    setFFornecedor(t.fornecedor?.id || ''); setFAccount(t.account?.id || '')
+    setFFornecedor(t.fornecedor?.id || '')
     setFCostCenter(t.cost_center?.id || ''); setFProduct(t.product?.id || '')
     setFStatus(t.status === 'pendente' ? 'pendente' : 'confirmado')
     setFObs(t.observacoes || '')
+
+    if (t.tipo === 'transferencia' && t.transfer_pair_id) {
+      // Procura o par (a outra linha) para reconstruir origem/destino do formulário.
+      const par = transacoes.find(x => x.transfer_pair_id === t.transfer_pair_id && x.id !== t.id)
+      const origin = t.transfer_direction === 'out' ? t : par
+      const destination = t.transfer_direction === 'in' ? t : par
+      setFAccount(origin?.account?.id || '')
+      setFAccountDestino(destination?.account?.id || '')
+    } else {
+      setFAccount(t.account?.id || '')
+      setFAccountDestino('')
+    }
     setShowForm(true)
   }
 
@@ -601,6 +624,16 @@ function FinanceiroInner() {
       showMsg('err', 'Informe um valor monetário válido maior que zero.')
       return
     }
+    if (fTipo === 'transferencia') {
+      if (!fAccount || !fAccountDestino) {
+        showMsg('err', 'Selecione conta de origem e conta de destino.')
+        return
+      }
+      if (fAccount === fAccountDestino) {
+        showMsg('err', 'Conta de origem e destino não podem ser iguais.')
+        return
+      }
+    }
     setSaving(true)
     try {
       const payload: Record<string, unknown> = {
@@ -608,8 +641,11 @@ function FinanceiroInner() {
         valor,
         competence_date: fCompDate,
         payment_date: fStatus === 'confirmado' ? fPayDate : null,
-        categoria_id: fCat || null, cliente_id: fCliente || null,
-        fornecedor_id: fFornecedor || null, account_id: fAccount || null,
+        categoria_id: fTipo === 'transferencia' ? null : (fCat || null),
+        cliente_id: fTipo === 'transferencia' ? null : (fCliente || null),
+        fornecedor_id: fTipo === 'transferencia' ? null : (fFornecedor || null),
+        account_id: fAccount || null,
+        account_destination_id: fTipo === 'transferencia' ? (fAccountDestino || null) : null,
         cost_center_id: fCostCenter || null,
         product_id: fTipo === 'entrada' ? (fProduct || null) : null,
         status: fStatus, observacoes: fObs || null,
@@ -1258,6 +1294,16 @@ function FinanceiroInner() {
   const transacoesFiltradas = useMemo(() =>
     transacoes
       .filter(t => tipoFiltro === 'todos' || t.tipo === tipoFiltro)
+      .filter(t => {
+        if (filtroCategorias.size === 0) return true
+        const key = t.categoria?.id || '__sem_categoria__'
+        return filtroCategorias.has(key)
+      })
+      .filter(t => filtroStatus.size === 0 || filtroStatus.has(t.status as 'confirmado' | 'pendente'))
+      .filter(t => filtroClientes.size === 0 || (t.cliente?.id ? filtroClientes.has(t.cliente.id) : false))
+      .filter(t => filtroFornecedores.size === 0 || (t.fornecedor?.id ? filtroFornecedores.has(t.fornecedor.id) : false))
+      .filter(t => filtroCentros.size === 0 || (t.cost_center?.id ? filtroCentros.has(t.cost_center.id) : false))
+      .filter(t => filtroCriadores.size === 0 || (t.creator?.id ? filtroCriadores.has(t.creator.id) : false))
       .sort((a, b) => {
         const aValue = getTransacaoSortValue(a, transacaoSort.field)
         const bValue = getTransacaoSortValue(b, transacaoSort.field)
@@ -1267,7 +1313,43 @@ function FinanceiroInner() {
         const comparison = String(aValue).localeCompare(String(bValue), 'pt-BR', { numeric: true, sensitivity: 'base' })
         return transacaoSort.direction === 'asc' ? comparison : -comparison
       }),
-  [transacoes, tipoFiltro, transacaoSort])
+  [transacoes, tipoFiltro, filtroCategorias, filtroStatus, filtroClientes, filtroFornecedores, filtroCentros, filtroCriadores, transacaoSort])
+
+  // Lista de criadores únicos vinda das transações já carregadas — evita endpoint extra.
+  const criadoresDisponiveis = useMemo(() => {
+    const map = new Map<string, string>()
+    for (const t of transacoes) {
+      if (t.creator?.id && !map.has(t.creator.id)) map.set(t.creator.id, t.creator.nome)
+    }
+    return Array.from(map.entries()).map(([id, nome]) => ({ id, nome })).sort((a, b) => a.nome.localeCompare(b.nome, 'pt-BR'))
+  }, [transacoes])
+
+  // Contagem de "dimensões" ativas (categoria com 3 selecionadas conta como 1).
+  const filtrosAtivosCount =
+    (filtroCategorias.size > 0 ? 1 : 0) +
+    (filtroStatus.size > 0 ? 1 : 0) +
+    (filtroClientes.size > 0 ? 1 : 0) +
+    (filtroFornecedores.size > 0 ? 1 : 0) +
+    (filtroCentros.size > 0 ? 1 : 0) +
+    (filtroCriadores.size > 0 ? 1 : 0)
+
+  function limparFiltrosAvancados() {
+    setFiltroCategorias(new Set())
+    setFiltroStatus(new Set())
+    setFiltroClientes(new Set())
+    setFiltroFornecedores(new Set())
+    setFiltroCentros(new Set())
+    setFiltroCriadores(new Set())
+  }
+
+  function toggleSetItem<T>(setter: React.Dispatch<React.SetStateAction<Set<T>>>, value: T) {
+    setter(prev => {
+      const next = new Set(prev)
+      if (next.has(value)) next.delete(value)
+      else next.add(value)
+      return next
+    })
+  }
 
   const catsFiltradas = useMemo(() => categorias.filter(c => c.tipo === fTipo), [categorias, fTipo])
 
@@ -1417,12 +1499,158 @@ function FinanceiroInner() {
                     )}
                   </div>
                   <div className={styles.filtroTipo}>
-                    {(['todos','entrada','saida'] as TipoFiltro[]).map(f => (
+                    {(['todos','entrada','saida','transferencia'] as TipoFiltro[]).map(f => (
                       <button key={f} className={`${styles.filtroBtn} ${tipoFiltro === f ? styles.filtroBtnActive : ''}`} onClick={() => setTipoFiltro(f)}>
-                        {f === 'todos' ? 'Todos' : f === 'entrada' ? 'Entradas' : 'Saídas'}
+                        {f === 'todos' ? 'Todos' : f === 'entrada' ? 'Entradas' : f === 'saida' ? 'Saídas' : 'Transferências'}
                       </button>
                     ))}
                   </div>
+
+                  <div className={styles.filtrosWrap}>
+                    <button
+                      type="button"
+                      className={`${styles.filtrosBtn} ${filtrosAtivosCount > 0 ? styles.filtrosBtnActive : ''}`}
+                      onClick={() => setFiltrosPanelOpen(o => !o)}
+                    >
+                      Filtros
+                      {filtrosAtivosCount > 0 && <span className={styles.filtrosBtnBadge}>{filtrosAtivosCount}</span>}
+                      <span aria-hidden="true">▾</span>
+                    </button>
+                    {filtrosPanelOpen && (
+                      <>
+                        <div
+                          style={{ position: 'fixed', inset: 0, zIndex: 55 }}
+                          onClick={() => setFiltrosPanelOpen(false)}
+                        />
+                        <div className={styles.filtrosPopover} onClick={e => e.stopPropagation()}>
+                          <div className={styles.filtrosGroup}>
+                            <span className={styles.filtrosGroupLabel}>Categoria</span>
+                            <div className={styles.filtrosList}>
+                              <label className={styles.filtrosCheckRow}>
+                                <input
+                                  type="checkbox"
+                                  checked={filtroCategorias.has('__sem_categoria__')}
+                                  onChange={() => toggleSetItem<string>(setFiltroCategorias, '__sem_categoria__')}
+                                />
+                                Sem categoria
+                              </label>
+                              {categorias.length === 0 ? (
+                                <span className={styles.filtrosListEmpty}>Nenhuma categoria cadastrada.</span>
+                              ) : categorias.map(c => (
+                                <label key={c.id} className={styles.filtrosCheckRow}>
+                                  <input
+                                    type="checkbox"
+                                    checked={filtroCategorias.has(c.id)}
+                                    onChange={() => toggleSetItem(setFiltroCategorias, c.id)}
+                                  />
+                                  <span className={styles.catDot} style={{ background: c.cor }} />
+                                  {c.nome}
+                                </label>
+                              ))}
+                            </div>
+                          </div>
+
+                          <div className={styles.filtrosGroup}>
+                            <span className={styles.filtrosGroupLabel}>Status</span>
+                            <div className={styles.filtrosList}>
+                              {(['confirmado','pendente'] as const).map(s => (
+                                <label key={s} className={styles.filtrosCheckRow}>
+                                  <input
+                                    type="checkbox"
+                                    checked={filtroStatus.has(s)}
+                                    onChange={() => toggleSetItem(setFiltroStatus, s)}
+                                  />
+                                  {s === 'confirmado' ? 'Pago' : 'Pendente'}
+                                </label>
+                              ))}
+                            </div>
+                          </div>
+
+                          <div className={styles.filtrosGroup}>
+                            <span className={styles.filtrosGroupLabel}>Cliente</span>
+                            <div className={styles.filtrosList}>
+                              {clientes.length === 0 ? (
+                                <span className={styles.filtrosListEmpty}>Nenhum cliente.</span>
+                              ) : clientes.map(c => (
+                                <label key={c.id} className={styles.filtrosCheckRow}>
+                                  <input
+                                    type="checkbox"
+                                    checked={filtroClientes.has(c.id)}
+                                    onChange={() => toggleSetItem(setFiltroClientes, c.id)}
+                                  />
+                                  {c.nome}
+                                </label>
+                              ))}
+                            </div>
+                          </div>
+
+                          <div className={styles.filtrosGroup}>
+                            <span className={styles.filtrosGroupLabel}>Fornecedor</span>
+                            <div className={styles.filtrosList}>
+                              {fornecedores.length === 0 ? (
+                                <span className={styles.filtrosListEmpty}>Nenhum fornecedor.</span>
+                              ) : fornecedores.map(f => (
+                                <label key={f.id} className={styles.filtrosCheckRow}>
+                                  <input
+                                    type="checkbox"
+                                    checked={filtroFornecedores.has(f.id)}
+                                    onChange={() => toggleSetItem(setFiltroFornecedores, f.id)}
+                                  />
+                                  {f.nome}
+                                </label>
+                              ))}
+                            </div>
+                          </div>
+
+                          <div className={styles.filtrosGroup}>
+                            <span className={styles.filtrosGroupLabel}>Centro de custo</span>
+                            <div className={styles.filtrosList}>
+                              {costCenters.length === 0 ? (
+                                <span className={styles.filtrosListEmpty}>Nenhum centro de custo.</span>
+                              ) : costCenters.map(cc => (
+                                <label key={cc.id} className={styles.filtrosCheckRow}>
+                                  <input
+                                    type="checkbox"
+                                    checked={filtroCentros.has(cc.id)}
+                                    onChange={() => toggleSetItem(setFiltroCentros, cc.id)}
+                                  />
+                                  {cc.nome}
+                                </label>
+                              ))}
+                            </div>
+                          </div>
+
+                          <div className={styles.filtrosGroup}>
+                            <span className={styles.filtrosGroupLabel}>Criado por</span>
+                            <div className={styles.filtrosList}>
+                              {criadoresDisponiveis.length === 0 ? (
+                                <span className={styles.filtrosListEmpty}>Sem informação no período.</span>
+                              ) : criadoresDisponiveis.map(u => (
+                                <label key={u.id} className={styles.filtrosCheckRow}>
+                                  <input
+                                    type="checkbox"
+                                    checked={filtroCriadores.has(u.id)}
+                                    onChange={() => toggleSetItem(setFiltroCriadores, u.id)}
+                                  />
+                                  {u.nome}
+                                </label>
+                              ))}
+                            </div>
+                          </div>
+
+                          <div className={styles.filtrosFooter}>
+                            <button type="button" className={styles.filtrosLimparBtn} onClick={limparFiltrosAvancados}>
+                              Limpar filtros
+                            </button>
+                            <button type="button" className={styles.filtrosFechar} onClick={() => setFiltrosPanelOpen(false)}>
+                              Fechar
+                            </button>
+                          </div>
+                        </div>
+                      </>
+                    )}
+                  </div>
+
                   <CustomSelect
                     value={accountFilterId}
                     options={[{ id: '', label: 'Todas as contas' }, ...accounts.map(account => ({ id: account.id, label: account.nome }))]}
@@ -1438,6 +1666,59 @@ function FinanceiroInner() {
                   Mostrando transações da conta <strong>{selectedAccountFilter.nome}</strong>.
                   <button type="button" className={styles.filterInfoAction} onClick={() => router.push(`/financeiro/conciliacao/${selectedAccountFilter.id}`)}>🔀 Conciliar extrato</button>
                   <button type="button" className={styles.filterInfoAction} onClick={() => setAccountFilterId('')}>Ver todas</button>
+                </div>
+              )}
+
+              {filtrosAtivosCount > 0 && (
+                <div className={styles.filtroChips}>
+                  {filtroCategorias.size > 0 && (
+                    <span className={styles.filtroChip}>
+                      Categoria: {filtroCategorias.size === 1
+                        ? (filtroCategorias.has('__sem_categoria__')
+                            ? 'Sem categoria'
+                            : (categorias.find(c => filtroCategorias.has(c.id))?.nome || '1 selecionada'))
+                        : `${filtroCategorias.size} selecionadas`}
+                      <button type="button" className={styles.filtroChipX} onClick={() => setFiltroCategorias(new Set())}>×</button>
+                    </span>
+                  )}
+                  {filtroStatus.size > 0 && (
+                    <span className={styles.filtroChip}>
+                      Status: {Array.from(filtroStatus).map(s => s === 'confirmado' ? 'Pago' : 'Pendente').join(', ')}
+                      <button type="button" className={styles.filtroChipX} onClick={() => setFiltroStatus(new Set())}>×</button>
+                    </span>
+                  )}
+                  {filtroClientes.size > 0 && (
+                    <span className={styles.filtroChip}>
+                      Cliente: {filtroClientes.size === 1
+                        ? (clientes.find(c => filtroClientes.has(c.id))?.nome || '1 selecionado')
+                        : `${filtroClientes.size} selecionados`}
+                      <button type="button" className={styles.filtroChipX} onClick={() => setFiltroClientes(new Set())}>×</button>
+                    </span>
+                  )}
+                  {filtroFornecedores.size > 0 && (
+                    <span className={styles.filtroChip}>
+                      Fornecedor: {filtroFornecedores.size === 1
+                        ? (fornecedores.find(f => filtroFornecedores.has(f.id))?.nome || '1 selecionado')
+                        : `${filtroFornecedores.size} selecionados`}
+                      <button type="button" className={styles.filtroChipX} onClick={() => setFiltroFornecedores(new Set())}>×</button>
+                    </span>
+                  )}
+                  {filtroCentros.size > 0 && (
+                    <span className={styles.filtroChip}>
+                      Centro de custo: {filtroCentros.size === 1
+                        ? (costCenters.find(cc => filtroCentros.has(cc.id))?.nome || '1 selecionado')
+                        : `${filtroCentros.size} selecionados`}
+                      <button type="button" className={styles.filtroChipX} onClick={() => setFiltroCentros(new Set())}>×</button>
+                    </span>
+                  )}
+                  {filtroCriadores.size > 0 && (
+                    <span className={styles.filtroChip}>
+                      Criado por: {filtroCriadores.size === 1
+                        ? (criadoresDisponiveis.find(u => filtroCriadores.has(u.id))?.nome || '1 selecionado')
+                        : `${filtroCriadores.size} selecionados`}
+                      <button type="button" className={styles.filtroChipX} onClick={() => setFiltroCriadores(new Set())}>×</button>
+                    </span>
+                  )}
                 </div>
               )}
 
@@ -1483,12 +1764,25 @@ function FinanceiroInner() {
                     <tbody>
                       {transacoesFiltradas.map(t => {
                         const isPago = t.status === 'confirmado'
+                        const isTransfer = t.tipo === 'transferencia'
+                        const transferIn = isTransfer && t.transfer_direction === 'in'
+                        const transferOut = isTransfer && t.transfer_direction === 'out'
+                        // Linha pareada (a outra conta envolvida na transferência)
+                        const pair = isTransfer && t.transfer_pair_id
+                          ? transacoes.find(x => x.transfer_pair_id === t.transfer_pair_id && x.id !== t.id)
+                          : null
+                        const transferLabel = transferOut
+                          ? `Transf. p/ ${pair?.account?.nome || '—'}`
+                          : transferIn
+                            ? `Transf. de ${pair?.account?.nome || '—'}`
+                            : null
                         return (
                         <tr key={t.id}>
                           <td className={styles.tdMuted}>{fmtDate(t.competence_date || t.data_transacao)}</td>
                           <td className={styles.tdMuted}>{fmtDate(t.payment_date)}</td>
                           <td>
                             <div className={styles.cellEllipsis} title={t.descricao}>{t.descricao}</div>
+                            {transferLabel && <div className={styles.tdSub}>{transferLabel}</div>}
                             {t.source_type === 'api' && (
                               <div className={styles.sourceTag} title={t.source_message || t.source_tag || 'Lançamento criado via API'}>
                                 {t.source_tag || 'API'}
@@ -1504,12 +1798,24 @@ function FinanceiroInner() {
                           <td className={styles.tdMuted}>{t.cost_center?.nome || '—'}</td>
                           <td className={styles.tdMuted}>{t.account?.nome || '—'}</td>
                           <td>
-                            <span className={`${styles.tipoBadge} ${t.tipo === 'entrada' ? styles.tipoEntrada : styles.tipoSaida}`}>
-                              {t.tipo === 'entrada' ? '↑ Entrada' : '↓ Saída'}
-                            </span>
+                            {isTransfer ? (
+                              <span className={`${styles.tipoBadge} ${styles.statusConfirmado}`}>
+                                ⇄ {transferIn ? 'Transf. entrada' : 'Transf. saída'}
+                              </span>
+                            ) : (
+                              <span className={`${styles.tipoBadge} ${t.tipo === 'entrada' ? styles.tipoEntrada : styles.tipoSaida}`}>
+                                {t.tipo === 'entrada' ? '↑ Entrada' : '↓ Saída'}
+                              </span>
+                            )}
                           </td>
-                          <td className={t.tipo === 'entrada' ? styles.valorEntrada : styles.valorSaida}>
-                            {t.tipo === 'entrada' ? '+' : '-'}{fmtBRL(t.valor)}
+                          <td className={
+                            isTransfer
+                              ? (transferIn ? styles.valorEntrada : styles.valorSaida)
+                              : (t.tipo === 'entrada' ? styles.valorEntrada : styles.valorSaida)
+                          }>
+                            {isTransfer
+                              ? (transferIn ? '+' : '-')
+                              : (t.tipo === 'entrada' ? '+' : '-')}{fmtBRL(t.valor)}
                           </td>
                           <td>
                             <span className={`${styles.statusBadge} ${
@@ -1962,9 +2268,11 @@ function FinanceiroInner() {
                   disabled={fStatus === 'pendente'}
                 />
 
-                {/* Conta Bancária com cadastro rápido */}
+                {/* Conta Bancária / Conta de origem com cadastro rápido */}
                 <SelectComCadastro
-                  label="Conta Bancária" value={fAccount} placeholder="Selecionar..."
+                  label={fTipo === 'transferencia' ? 'Conta de origem' : 'Conta Bancária'}
+                  value={fAccount}
+                  placeholder="Selecionar..."
                   menuFixed
                   options={accounts.map(a => ({ id: a.id, label: a.nome }))}
                   onChange={setFAccount}
@@ -1977,20 +2285,40 @@ function FinanceiroInner() {
                   onQuickCreate={quickCreateConta}
                 />
 
-                <SelectComCadastro
-                  label="Categoria"
-                  value={fCat}
-                  placeholder="Sem categoria"
-                  menuFixed
-                  options={[{ id: '', label: 'Sem categoria' }, ...catsFiltradas.map(c => ({ id: c.id, label: c.nome }))]}
-                  onChange={setFCat}
-                  createLabel="Cadastrar"
-                  createFields={[
-                    { key: 'nome', label: 'Nome da categoria', placeholder: 'Ex: Ferramentas', required: true },
-                    { key: 'cor', label: 'Cor', placeholder: '#6b7280' },
-                  ]}
-                  onQuickCreate={quickCreateCategoria}
-                />
+                {fTipo === 'transferencia' && (
+                  <SelectComCadastro
+                    label="Conta de destino"
+                    value={fAccountDestino}
+                    placeholder="Selecionar..."
+                    menuFixed
+                    options={accounts.filter(a => a.id !== fAccount).map(a => ({ id: a.id, label: a.nome }))}
+                    onChange={setFAccountDestino}
+                    createLabel="Nova conta"
+                    createFields={[
+                      { key: 'nome', label: 'Nome da conta', placeholder: 'Ex: Nubank PJ', required: true },
+                      { key: 'tipo', label: 'Tipo', placeholder: 'banco / carteira / cartao' },
+                      { key: 'saldo_inicial', label: 'Saldo inicial (R$)', placeholder: '0,00' },
+                    ]}
+                    onQuickCreate={quickCreateConta}
+                  />
+                )}
+
+                {fTipo !== 'transferencia' && (
+                  <SelectComCadastro
+                    label="Categoria"
+                    value={fCat}
+                    placeholder="Sem categoria"
+                    menuFixed
+                    options={[{ id: '', label: 'Sem categoria' }, ...catsFiltradas.map(c => ({ id: c.id, label: c.nome }))]}
+                    onChange={setFCat}
+                    createLabel="Cadastrar"
+                    createFields={[
+                      { key: 'nome', label: 'Nome da categoria', placeholder: 'Ex: Ferramentas', required: true },
+                      { key: 'cor', label: 'Cor', placeholder: '#6b7280' },
+                    ]}
+                    onQuickCreate={quickCreateCategoria}
+                  />
+                )}
 
                 {/* Cliente com cadastro rápido (só entrada) */}
                 {fTipo === 'entrada' && (

@@ -1,5 +1,5 @@
 export type Tab = 'transacoes' | 'contatos' | 'categorias' | 'contas' | 'dre'
-export type TipoFiltro = 'todos' | 'entrada' | 'saida'
+export type TipoFiltro = 'todos' | 'entrada' | 'saida' | 'transferencia'
 export type PeriodoTipo = 'hoje' | 'semana' | 'mes' | '30dias' | 'ultimo_mes' | 'trimestre' | 'ano' | 'mes_especifico' | 'personalizado' | 'tudo'
 export type ViewMode = 'competencia' | 'caixa'
 export type ContatoTipo = 'cliente' | 'fornecedor' | 'ambos'
@@ -94,6 +94,9 @@ export interface Transacao {
   account?: FinAccount | null
   cost_center?: FinCostCenter | null
   product?: FinProduct | null
+  transfer_pair_id?: string | null
+  transfer_direction?: 'in' | 'out' | null
+  creator?: { id: string; nome: string } | null
 }
 
 export interface DreCellValue { confirmado: number; pendente: number }

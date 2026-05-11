@@ -99,13 +99,13 @@ function summarizeTransactions(rows: any[]) {
 
 // PostgREST limita a 1000 rows por request — paginar todas as transações confirmadas
 // para somar saldos sem truncar.
-async function fetchAllConfirmedTx(sb: any): Promise<Array<{ account_id: string; tipo: string; valor: number }>> {
-  const out: Array<{ account_id: string; tipo: string; valor: number }> = []
+async function fetchAllConfirmedTx(sb: any): Promise<Array<{ account_id: string; tipo: string; valor: number; transfer_direction: string | null }>> {
+  const out: Array<{ account_id: string; tipo: string; valor: number; transfer_direction: string | null }> = []
   let off = 0
   while (true) {
     const { data, error } = await sb
       .from('fin_transacoes')
-      .select('account_id, tipo, valor')
+      .select('account_id, tipo, valor, transfer_direction')
       .eq('status', 'confirmado')
       .not('account_id', 'is', null)
       .range(off, off + 999)
@@ -156,7 +156,12 @@ serve(async (req: Request) => {
       const saldoByAccount: Record<string, number> = {}
       for (const t of txs) {
         if (!saldoByAccount[t.account_id]) saldoByAccount[t.account_id] = 0
-        saldoByAccount[t.account_id] += t.tipo === 'entrada' ? Number(t.valor) : -Number(t.valor)
+        const v = Number(t.valor)
+        if (t.tipo === 'transferencia') {
+          saldoByAccount[t.account_id] += t.transfer_direction === 'in' ? v : -v
+        } else {
+          saldoByAccount[t.account_id] += t.tipo === 'entrada' ? v : -v
+        }
       }
 
       const accounts = (rawAccounts ?? []).map((a: any) => ({

@@ -22,6 +22,10 @@ function normalizeSearchText(value: unknown): string {
 }
 
 function isInternalTransferTransaction(tx: any): boolean {
+  // Par de lançamentos vinculado: fonte primária da verdade.
+  if (tx?.tipo === 'transferencia') return true
+
+  // Fallback heurístico para lançamentos legados/importados que não usam o par.
   const combined = [
     tx?.descricao,
     tx?.observacoes,
@@ -632,6 +636,7 @@ serve(async (req: Request) => {
           'account:fin_accounts!inner(id,nome,tipo,ativo)',
           'cost_center:fin_cost_centers(id,nome)',
           'product:fin_products(id,nome,tipo)',
+          'creator:usuarios!fin_transacoes_created_by_fkey(id,nome)',
         ].join(','))
         .order(dateField, { ascending: false })
 
@@ -1021,8 +1026,8 @@ serve(async (req: Request) => {
       const {
         tipo, descricao, valor, competence_date, payment_date,
         categoria_id, cliente_id, fornecedor_id,
-        account_id, cost_center_id, product_id,
-        status, observacoes,
+        account_id, account_destination_id, cost_center_id, product_id,
+        status, observacoes, installments,
       } = payload
 
       const parsedValor = parseCurrencyInput(valor)
@@ -1038,6 +1043,112 @@ serve(async (req: Request) => {
       const resolvedPaymentDate = status === 'confirmado'
         ? (normalizedPaymentDate || normalizedCompetenceDate)
         : null
+
+      // Transferência entre contas: insere par (out na origem, in no destino) com o mesmo transfer_pair_id.
+      if (tipo === 'transferencia') {
+        if (!account_id || !account_destination_id) {
+          return json(req, { error: 'Transferência exige conta de origem e conta de destino.' }, 400)
+        }
+        if (account_id === account_destination_id) {
+          return json(req, { error: 'Conta de origem e destino não podem ser iguais.' }, 400)
+        }
+
+        const pairId = crypto.randomUUID()
+        const normalizedObs = normalizeText(observacoes)
+        const resolvedStatus = status || 'confirmado'
+        const baseRow = {
+          tipo: 'transferencia',
+          descricao: normalizedDescricao,
+          valor: parsedValor,
+          data_transacao: normalizedCompetenceDate,
+          competence_date: normalizedCompetenceDate,
+          payment_date: resolvedPaymentDate,
+          categoria_id: null,
+          cliente_id: null,
+          fornecedor_id: null,
+          cost_center_id: cost_center_id || null,
+          product_id: null,
+          status: resolvedStatus,
+          observacoes: normalizedObs,
+          created_by: user.usuario_id,
+          transfer_pair_id: pairId,
+        }
+
+        const { data, error } = await sb.from('fin_transacoes').insert([
+          { ...baseRow, account_id, transfer_direction: 'out' },
+          { ...baseRow, account_id: account_destination_id, transfer_direction: 'in' },
+        ]).select([
+          '*',
+          'categoria:fin_categorias(id,nome,cor)',
+          'account:fin_accounts(id,nome)',
+          'cost_center:fin_cost_centers(id,nome)',
+          'product:fin_products(id,nome)',
+        ].join(','))
+
+        if (error || !data || data.length !== 2) {
+          // Rollback manual: se uma das duas linhas foi gravada, remove o par inteiro.
+          await sb.from('fin_transacoes').delete().eq('transfer_pair_id', pairId)
+          return json(req, { error: 'Erro ao criar transferência.' }, 500)
+        }
+        return json(req, { transacao: data[0], par: data })
+      }
+
+      // Parcelas: gera N linhas (uma por parcela) com competência rolando mês a mês.
+      // Valor divide igualmente; centavos residuais entram na última parcela.
+      const parsedInstallments = Number(installments) | 0
+      if (parsedInstallments > 1) {
+        if (parsedInstallments > 60) {
+          return json(req, { error: 'Parcelamento máximo: 60x.' }, 400)
+        }
+        const groupId = crypto.randomUUID()
+        const cents = Math.round(parsedValor * 100)
+        const base = Math.floor(cents / parsedInstallments)
+        const remainder = cents - base * parsedInstallments
+        const baseDate = new Date(normalizedCompetenceDate + 'T00:00:00')
+        const rows: any[] = []
+        for (let i = 1; i <= parsedInstallments; i++) {
+          const parcelaCents = base + (i === parsedInstallments ? remainder : 0)
+          const parcelaValor = parcelaCents / 100
+          const parcelaDate = new Date(baseDate.getFullYear(), baseDate.getMonth() + (i - 1), baseDate.getDate())
+          // Trata "31 jan" → fevereiro: Date faz overflow para 03/mar. Voltar para último dia do mês alvo.
+          if (parcelaDate.getMonth() !== ((baseDate.getMonth() + (i - 1)) % 12 + 12) % 12) {
+            parcelaDate.setDate(0) // último dia do mês anterior
+          }
+          const parcelaISO = parcelaDate.toISOString().slice(0, 10)
+          rows.push({
+            tipo,
+            descricao: `${normalizedDescricao} (${i}/${parsedInstallments})`,
+            valor: parcelaValor,
+            data_transacao: parcelaISO,
+            competence_date: parcelaISO,
+            payment_date: null, // parcelas começam pendentes
+            categoria_id: categoria_id || null,
+            cliente_id: cliente_id || null,
+            fornecedor_id: fornecedor_id || null,
+            account_id: account_id || null,
+            cost_center_id: cost_center_id || null,
+            product_id: product_id || null,
+            status: 'pendente',
+            observacoes: normalizeText(observacoes),
+            created_by: user.usuario_id,
+            installment_group_id: groupId,
+            installment_index: i,
+            installment_total: parsedInstallments,
+          })
+        }
+        const { data, error } = await sb.from('fin_transacoes').insert(rows).select([
+          '*',
+          'categoria:fin_categorias(id,nome,cor)',
+          'account:fin_accounts(id,nome)',
+          'cost_center:fin_cost_centers(id,nome)',
+          'product:fin_products(id,nome)',
+        ].join(','))
+        if (error || !data || data.length !== parsedInstallments) {
+          await sb.from('fin_transacoes').delete().eq('installment_group_id', groupId)
+          return json(req, { error: 'Erro ao criar parcelamento.' }, 500)
+        }
+        return json(req, { transacao: data[0], parcelas: data })
+      }
 
       const { data, error } = await sb.from('fin_transacoes').insert({
         tipo,
@@ -1073,11 +1184,84 @@ serve(async (req: Request) => {
       if (!id) return json(req, { error: 'ID obrigatório.' }, 400)
 
       const currentResult = await sb.from('fin_transacoes')
-        .select('competence_date, payment_date, status')
+        .select('competence_date, payment_date, status, tipo, transfer_pair_id, transfer_direction, account_id')
         .eq('id', id)
         .single()
       if (currentResult.error || !currentResult.data) {
         return json(req, { error: 'Transação não encontrada.' }, 404)
+      }
+
+      const current = currentResult.data
+      const targetTipo = fields.tipo ?? current.tipo
+
+      // Conversão entre transferência ↔ entrada/saída não é suportada — exige excluir e recriar pelo usuário.
+      if ((current.tipo === 'transferencia') !== (targetTipo === 'transferencia')) {
+        return json(req, { error: 'Não é possível converter entre transferência e entrada/saída. Exclua e crie novamente.' }, 400)
+      }
+
+      // Transferência: deletar par e recriar como par (caminho mais simples e seguro).
+      if (current.tipo === 'transferencia' && current.transfer_pair_id) {
+        const parsedValor = parseCurrencyInput(fields.valor)
+        const normalizedDescricao = normalizeText(fields.descricao)
+        const normalizedCompetenceDate = normalizeDateOnly(fields.competence_date)
+        const normalizedPaymentDate = fields.payment_date != null ? normalizeDateOnly(fields.payment_date) : null
+        const newAccountOrigin = fields.account_id
+        const newAccountDestination = fields.account_destination_id
+
+        if (!normalizedDescricao || parsedValor == null || parsedValor <= 0 || !normalizedCompetenceDate) {
+          return json(req, { error: 'Campos obrigatórios: descricao, valor, competence_date.' }, 400)
+        }
+        if (!newAccountOrigin || !newAccountDestination) {
+          return json(req, { error: 'Transferência exige conta de origem e conta de destino.' }, 400)
+        }
+        if (newAccountOrigin === newAccountDestination) {
+          return json(req, { error: 'Conta de origem e destino não podem ser iguais.' }, 400)
+        }
+
+        const resolvedStatus = fields.status || current.status || 'confirmado'
+        const resolvedPaymentDate = resolvedStatus === 'confirmado'
+          ? (normalizedPaymentDate || normalizedCompetenceDate)
+          : null
+
+        // Apaga o par antigo.
+        const { error: delErr } = await sb.from('fin_transacoes').delete().eq('transfer_pair_id', current.transfer_pair_id)
+        if (delErr) return json(req, { error: 'Erro ao atualizar transferência.' }, 500)
+
+        const pairId = crypto.randomUUID()
+        const baseRow = {
+          tipo: 'transferencia',
+          descricao: normalizedDescricao,
+          valor: parsedValor,
+          data_transacao: normalizedCompetenceDate,
+          competence_date: normalizedCompetenceDate,
+          payment_date: resolvedPaymentDate,
+          categoria_id: null,
+          cliente_id: null,
+          fornecedor_id: null,
+          cost_center_id: fields.cost_center_id || null,
+          product_id: null,
+          status: resolvedStatus,
+          observacoes: normalizeText(fields.observacoes),
+          created_by: user.usuario_id,
+          transfer_pair_id: pairId,
+        }
+
+        const { data: parData, error: parErr } = await sb.from('fin_transacoes').insert([
+          { ...baseRow, account_id: newAccountOrigin, transfer_direction: 'out' },
+          { ...baseRow, account_id: newAccountDestination, transfer_direction: 'in' },
+        ]).select([
+          '*',
+          'categoria:fin_categorias(id,nome,cor)',
+          'account:fin_accounts(id,nome)',
+          'cost_center:fin_cost_centers(id,nome)',
+          'product:fin_products(id,nome)',
+        ].join(','))
+
+        if (parErr || !parData || parData.length !== 2) {
+          await sb.from('fin_transacoes').delete().eq('transfer_pair_id', pairId)
+          return json(req, { error: 'Erro ao recriar transferência.' }, 500)
+        }
+        return json(req, { transacao: parData[0], par: parData })
       }
 
       const allowed = [
@@ -1143,6 +1327,18 @@ serve(async (req: Request) => {
     if (action === 'deletar') {
       const { id } = payload
       if (!id) return json(req, { error: 'ID obrigatório.' }, 400)
+
+      // Se a transação pertence a um par de transferência, apaga as duas linhas.
+      const { data: existing } = await sb.from('fin_transacoes')
+        .select('transfer_pair_id')
+        .eq('id', id)
+        .single()
+      if (existing?.transfer_pair_id) {
+        const { error } = await sb.from('fin_transacoes').delete().eq('transfer_pair_id', existing.transfer_pair_id)
+        if (error) return json(req, { error: 'Erro ao deletar transferência.' }, 500)
+        return json(req, { ok: true })
+      }
+
       const { error } = await sb.from('fin_transacoes').delete().eq('id', id)
       if (error) return json(req, { error: 'Erro ao deletar transação.' }, 500)
       return json(req, { ok: true })
@@ -1195,7 +1391,7 @@ serve(async (req: Request) => {
       }
 
       let saldoTxQuery = sb.from('fin_transacoes')
-        .select('account_id, tipo, valor')
+        .select('account_id, tipo, valor, transfer_direction')
         .eq('status', 'confirmado')
         .not('account_id', 'is', null)
 
@@ -1206,7 +1402,12 @@ serve(async (req: Request) => {
       if (saldoTxsError) return json(req, { error: 'Erro ao buscar transações para o saldo geral.' }, 500)
 
       for (const tx of (saldoTxs ?? [])) {
-        saldoGeral += tx.tipo === 'entrada' ? Number(tx.valor || 0) : -Number(tx.valor || 0)
+        const v = Number(tx.valor || 0)
+        if (tx.tipo === 'transferencia') {
+          saldoGeral += tx.transfer_direction === 'in' ? v : -v
+        } else {
+          saldoGeral += tx.tipo === 'entrada' ? v : -v
+        }
       }
 
       return json(req, { entradas, saidas, saldo: saldoGeral, view })

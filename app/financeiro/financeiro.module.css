@@ -158,6 +158,159 @@
 .filtroBtn:hover { background: #F5F5F7; color: #1C1C1E; }
 .filtroBtnActive { background: #1C1C1E; color: #fff; border-color: #1C1C1E; }
 
+/* ── Popover de filtros avançados ── */
+.filtrosWrap { position: relative; }
+
+.filtrosBtn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border-radius: 7px;
+  border: 1px solid #E5E5EA;
+  background: #fff;
+  color: #1C1C1E;
+  font-size: 13px;
+  font-family: inherit;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.filtrosBtn:hover { background: #F5F5F7; }
+.filtrosBtnActive { background: #1C1C1E; color: #fff; border-color: #1C1C1E; }
+.filtrosBtnBadge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 9px;
+  background: #2563eb;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.filtrosPopover {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  z-index: 60;
+  width: 340px;
+  max-height: 70vh;
+  overflow-y: auto;
+  background: #fff;
+  border: 1px solid #E5E5EA;
+  border-radius: 12px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.12);
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.filtrosGroup { display: flex; flex-direction: column; gap: 6px; }
+.filtrosGroupLabel {
+  font-size: 11px;
+  font-weight: 600;
+  color: #6B7280;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.filtrosList {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 180px;
+  overflow-y: auto;
+  border: 1px solid #F1F5F9;
+  border-radius: 8px;
+  padding: 6px;
+}
+.filtrosListEmpty {
+  font-size: 12px;
+  color: #94a3b8;
+  padding: 6px 4px;
+}
+.filtrosCheckRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 6px;
+  border-radius: 6px;
+  font-size: 13px;
+  color: #1C1C1E;
+  cursor: pointer;
+}
+.filtrosCheckRow:hover { background: #F5F5F7; }
+.filtrosCheckRow input[type="checkbox"] { accent-color: #2563eb; cursor: pointer; }
+
+.filtrosFooter {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding-top: 8px;
+  border-top: 1px solid #F1F5F9;
+}
+.filtrosLimparBtn {
+  padding: 6px 12px;
+  border-radius: 7px;
+  border: 1px solid #E5E5EA;
+  background: #fff;
+  color: #6B7280;
+  font-size: 12px;
+  font-family: inherit;
+  cursor: pointer;
+}
+.filtrosLimparBtn:hover { background: #F5F5F7; color: #1C1C1E; }
+.filtrosFechar {
+  padding: 6px 12px;
+  border-radius: 7px;
+  border: none;
+  background: #1C1C1E;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+/* ── Chips de filtros ativos ── */
+.filtroChips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 10px 0 4px;
+}
+.filtroChip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 6px 4px 10px;
+  border-radius: 999px;
+  background: #EEF2FF;
+  color: #1e3a8a;
+  font-size: 12px;
+  border: 1px solid #C7D2FE;
+}
+.filtroChipX {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  border: none;
+  background: transparent;
+  color: #1e3a8a;
+  cursor: pointer;
+  font-size: 13px;
+  line-height: 1;
+  padding: 0;
+}
+.filtroChipX:hover { background: #C7D2FE; }
+
 .btnNovo {
   padding: 8px 18px;
   border-radius: 9px;
