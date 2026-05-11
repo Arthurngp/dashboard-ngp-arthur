@@ -198,7 +198,20 @@ function ConciliacaoInner() {
       for (const d of dups) {
         const reason = (d.reason || '').toUpperCase()
         const isInternalTransfer = reason.includes('TRANSFERÊNCIA INTERNA') || reason.includes('TRANSFERENCIA INTERNA')
-        actionsMap.set(d.csv_index, { action: isInternalTransfer ? 'transfer' : 'pending' })
+        // Pré-seleção:
+        // - transferência interna → 'transfer'
+        // - alta confiança → 'combine' (usuário pode desvincular clicando em outro botão ou Resetar)
+        // - outras → 'pending' (usuário decide)
+        const initialAction: DupAction = isInternalTransfer
+          ? 'transfer'
+          : d.confidence === 'high'
+            ? 'combine'
+            : 'pending'
+        const csvRow = rows[d.csv_index]
+        actionsMap.set(d.csv_index, {
+          action: initialAction,
+          chosenStatus: initialAction === 'combine' ? (csvRow?.status as 'confirmado' | 'pendente' | undefined) : undefined,
+        })
       }
       setImportDupActions(actionsMap)
     } finally {
@@ -613,6 +626,16 @@ function ConciliacaoInner() {
                           >
                             🔄 Transferência
                           </button>
+                          {dupState.action !== 'pending' && (
+                            <button
+                              type="button"
+                              onClick={() => setDupAction(dup.csv_index, 'pending')}
+                              title="Desvincular: volta a aguardar decisão"
+                              style={{ marginTop: 4, fontSize: 11, color: '#6b7280', background: 'none', border: 'none', cursor: 'pointer', textDecoration: 'underline', textAlign: 'left' }}
+                            >
+                              ↩ Resetar escolha
+                            </button>
+                          )}
                         </div>
                       </div>
                     )
