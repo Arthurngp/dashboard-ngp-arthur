@@ -192,6 +192,10 @@ function buildMonthRows(
   ano: number,
   usuarios: { id: string; nome: string }[],
   jornadas: Record<string, Jornada> = {},
+  // Mapa usuario_id -> ISO da primeira batida histórica (qualquer mês).
+  // Dias < primeira batida do usuário NÃO entram (ele ainda não 'existia').
+  // Se o usuário não tem nenhuma batida histórica, ele não rende linhas.
+  firstByUser: Record<string, string> = {},
 ): DayRow[] {
   // 1) Agrupar records por (usuario_id, dateStr)
   const groups: Record<string, PontoRecord[]> = {}
@@ -211,8 +215,17 @@ function buildMonthRows(
   const hojeBrt = new Date(hojeBrtMs).toISOString().split('T')[0]
 
   for (const usuario of usuarios) {
+    // Cutoff: primeira batida histórica desse usuário (em formato YYYY-MM-DD BRT).
+    // Sem batida nenhuma → pula o usuário inteiro.
+    const firstIso = firstByUser[usuario.id]
+    if (!firstIso) continue
+    const firstBrtMs = new Date(firstIso).getTime() + BRT_OFFSET
+    const firstDateStr = new Date(firstBrtMs).toISOString().split('T')[0]
+
     for (let d = 1; d <= daysInMonth; d++) {
       const dateStr = `${ano}-${String(mes).padStart(2,'0')}-${String(d).padStart(2,'0')}`
+      // Pula dias anteriores à primeira batida do colaborador.
+      if (dateStr < firstDateStr) continue
       const isHistorico = dateStr < hojeBrt    // ontem ou antes
       const key = `${usuario.id}__${dateStr}`
       const recs = (groups[key] || []).sort((a,b) => a.created_at.localeCompare(b.created_at))
@@ -370,6 +383,9 @@ export default function RegistrosPage() {
   const [filterStatus, setFilterStatus] = useState('')
 
   const [allRecords, setAllRecords] = useState<PontoRecord[]>([])
+  // Mapa usuario_id -> ISO da primeira batida histórica (qualquer mês).
+  // Dias antes disso não aparecem na tabela.
+  const [firstByUser, setFirstByUser] = useState<Record<string, string>>({})
   const [jornadasMap, setJornadasMap] = useState<Record<string, Jornada>>({})
   const [minhaJornada, setMinhaJornada] = useState<Jornada>(DEFAULT_JORNADA_NGP)
   const [loading, setLoading]     = useState(false)
@@ -432,6 +448,7 @@ export default function RegistrosPage() {
       const data = await res.json()
       if (!data.error) {
         const records: PontoRecord[] = data.records || []
+        setFirstByUser(data.first_by_user || {})
 
         // Busca jornadas: union(usuários dos records, usuários ativos quando admin).
         const idsFromRecords = records.map(r => r.usuario_id)
@@ -530,8 +547,11 @@ export default function RegistrosPage() {
 
   const allRows = useMemo<DayRow[]>(() => {
     if (usuariosParaSintetizar.length === 0) return []
-    return buildMonthRows(allRecords, selMes, selAno, usuariosParaSintetizar, jornadasMap)
-  }, [allRecords, selMes, selAno, usuariosParaSintetizar, jornadasMap])
+    return buildMonthRows(
+      allRecords, selMes, selAno,
+      usuariosParaSintetizar, jornadasMap, firstByUser,
+    )
+  }, [allRecords, selMes, selAno, usuariosParaSintetizar, jornadasMap, firstByUser])
 
   // Fechar menu "Mais" ao clicar fora ou apertar Esc.
   useEffect(() => {
