@@ -623,3 +623,61 @@
 .linkAnexo:hover {
   background: rgba(245, 158, 11, 0.2);
 }
+
+/* ── Menu "Mais" (dropdown contextual por linha) ─────────────────────── */
+.maisMenu {
+  position: fixed;
+  z-index: 9998;
+  width: 220px;
+  background: #1C1C1E;
+  border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 10px;
+  padding: 6px;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.35);
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  font-family: 'Sora', sans-serif;
+}
+
+.maisMenuHeader {
+  padding: 6px 10px 8px;
+  font-size: 10px;
+  font-weight: 600;
+  color: #8E8E93;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  border-bottom: 1px solid rgba(255,255,255,0.06);
+  margin-bottom: 4px;
+}
+
+.maisMenuItem {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  background: transparent;
+  border: none;
+  border-radius: 6px;
+  color: #f1f5f9;
+  font-size: 13px;
+  font-weight: 500;
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.12s;
+  font-family: inherit;
+}
+.maisMenuItem:hover {
+  background: rgba(255,255,255,0.06);
+}
+.maisMenuItem span {
+  width: 18px;
+  text-align: center;
+  font-size: 14px;
+}
+
+.maisMenuDivider {
+  height: 1px;
+  background: rgba(255,255,255,0.06);
+  margin: 4px 0;
+}

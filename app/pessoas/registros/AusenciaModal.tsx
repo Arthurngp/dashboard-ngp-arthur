@@ -30,6 +30,7 @@ interface Props {
   usuarios: UsuarioOption[]
   defaultUsuarioId?: string
   defaultData?: string         // YYYY-MM-DD
+  defaultTipo?: string         // atestado | feriado | folga | falta_justificada
   // Quando presente, abre em modo "gerenciar anexo de ausência existente"
   manageRecord?: ManageRecord
   onClose: () => void
@@ -80,10 +81,10 @@ function fileToBase64(f: File): Promise<string> {
   })
 }
 
-export default function AusenciaModal({ usuarios, defaultUsuarioId, defaultData, manageRecord, onClose, onSaved }: Props) {
+export default function AusenciaModal({ usuarios, defaultUsuarioId, defaultData, defaultTipo, manageRecord, onClose, onSaved }: Props) {
   const [usuarioId, setUsuarioId] = useState(defaultUsuarioId || (usuarios[0]?.id ?? ''))
   const [data, setData]           = useState(defaultData || new Date().toISOString().split('T')[0])
-  const [tipo, setTipo]           = useState('atestado')
+  const [tipo, setTipo]           = useState(defaultTipo || 'atestado')
   const [escopo, setEscopo]       = useState<'dia' | 'faixa'>('dia')
   const [horaInicio, setHoraInicio] = useState('13:00')
   const [horaFim, setHoraFim]       = useState('17:00')

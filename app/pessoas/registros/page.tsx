@@ -1,5 +1,5 @@
 'use client'
-import { useEffect, useState, useCallback, useRef } from 'react'
+import { useEffect, useState, useCallback, useRef, useMemo } from 'react'
 import CustomSelect, { SelectOption } from '@/components/CustomSelect'
 import { useRouter } from 'next/navigation'
 import { getSession } from '@/lib/auth'
@@ -53,7 +53,7 @@ interface DayRow {
   extraSaida: string | null
   totalMins: number
   extrasMins: number
-  status: 'complete' | 'overtime' | 'below' | 'incomplete' | 'empty' | 'absent' | 'partial_absent'
+  status: 'complete' | 'overtime' | 'below' | 'incomplete' | 'empty' | 'absent' | 'partial_absent' | 'negative' | 'pending'
   hasAusencia: boolean
   observacaoAusencia: string | null
   recordsByTipo: RecordsByTipo
@@ -103,7 +103,12 @@ function targetMinsForDow(jornada: Jornada, dow: number): number {
   }
 }
 
-function calcBalance(records: PontoRecord[], jornada: Jornada = DEFAULT_JORNADA_NGP): { totalMins: number; status: DayRow['status']; extrasMins: number } {
+function calcBalance(
+  records: PontoRecord[],
+  jornada: Jornada = DEFAULT_JORNADA_NGP,
+  dateStr?: string,
+  isHistorico: boolean = true,    // dia já passou? (false = hoje ou futuro)
+): { totalMins: number; status: DayRow['status']; extrasMins: number } {
   // Ignora 'ausencia' no cálculo de horas — é só rótulo do dia.
   const real = records.filter(r => r.tipo_registro !== 'ausencia')
   const hasAusencia = records.some(r => r.tipo_registro === 'ausencia')
@@ -126,10 +131,16 @@ function calcBalance(records: PontoRecord[], jornada: Jornada = DEFAULT_JORNADA_
 
   const totalMins = Math.floor(totalMs / 60000)
 
-  // Carga prevista vem da jornada do colaborador (ou padrão NGP).
-  const firstRec = records[0]
-  const date = firstRec ? new Date(new Date(firstRec.created_at).getTime() + BRT_OFFSET) : new Date()
-  const dayOfWeek = date.getUTCDay()
+  // Carga prevista: usa dateStr explícito quando dado; fallback p/ primeiro record.
+  let dayOfWeek: number
+  if (dateStr) {
+    const [y, mo, d] = dateStr.split('-').map(Number)
+    dayOfWeek = new Date(Date.UTC(y, mo - 1, d, 12)).getUTCDay()
+  } else {
+    const firstRec = records[0]
+    const date = firstRec ? new Date(new Date(firstRec.created_at).getTime() + BRT_OFFSET) : new Date()
+    dayOfWeek = date.getUTCDay()
+  }
   const TARGET = targetMinsForDow(jornada, dayOfWeek)
 
   const diffMins = totalMins - TARGET
@@ -142,8 +153,18 @@ function calcBalance(records: PontoRecord[], jornada: Jornada = DEFAULT_JORNADA_
   if (!hasEntrada && hasAusencia) {
     return { totalMins: 0, status: 'absent', extrasMins: 0 }
   }
-  // Sem batidas e sem ausência → empty
-  if (!hasEntrada) return { totalMins: 0, status: 'empty', extrasMins: 0 }
+  // Sem batidas e sem ausência:
+  //   - FDS (TARGET = 0): 'empty' (nada esperado)
+  //   - dia útil passado: 'negative' (devendo a jornada inteira)
+  //   - dia útil hoje/futuro: 'pending' (ainda pode bater, sem peso negativo)
+  if (!hasEntrada) {
+    if (TARGET === 0) return { totalMins: 0, status: 'empty', extrasMins: 0 }
+    return {
+      totalMins: 0,
+      status: isHistorico ? 'negative' : 'pending',
+      extrasMins: 0,
+    }
+  }
 
   // Tem batidas E ausência → parcial
   if (hasAusencia) {
@@ -160,7 +181,19 @@ function calcBalance(records: PontoRecord[], jornada: Jornada = DEFAULT_JORNADA_
 const DAYS   = ['Dom','Seg','Ter','Qua','Qui','Sex','Sáb']
 const MONTHS = ['Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez']
 
-function groupByDay(records: PontoRecord[], jornadas: Record<string, Jornada> = {}): DayRow[] {
+/**
+ * Gera 1 linha por (usuario × dia do mês). Mescla com os records do banco.
+ * Dias úteis sem nenhum registro saem com status 'negative' (devendo jornada).
+ * FDS sem registro saem como 'empty' (nada esperado).
+ */
+function buildMonthRows(
+  records: PontoRecord[],
+  mes: number,                      // 1..12
+  ano: number,
+  usuarios: { id: string; nome: string }[],
+  jornadas: Record<string, Jornada> = {},
+): DayRow[] {
+  // 1) Agrupar records por (usuario_id, dateStr)
   const groups: Record<string, PontoRecord[]> = {}
   for (const r of records) {
     const dateStr = new Date(new Date(r.created_at).getTime() + BRT_OFFSET).toISOString().split('T')[0]
@@ -168,21 +201,26 @@ function groupByDay(records: PontoRecord[], jornadas: Record<string, Jornada> = 
     if (!groups[key]) groups[key] = []
     groups[key].push(r)
   }
-  return Object.entries(groups)
-    .sort(([a],[b]) => {
-      const [,dA] = a.split('__'); const [,dB] = b.split('__')
-      return dB.localeCompare(dA) || a.localeCompare(b)
-    })
-    .map(([key, recs]) => {
-      recs.sort((a,b) => a.created_at.localeCompare(b.created_at))
-      const get = (t: TipoRegistro) => recs.find(r => r.tipo_registro === t)
-      const usuarioId = recs[0].usuario_id
-      const jornada = jornadas[usuarioId] || DEFAULT_JORNADA_NGP
-      const { totalMins, status, extrasMins } = calcBalance(recs, jornada)
-      const [,dateStr] = key.split('__')
-      const [y,mo,d] = dateStr.split('-').map(Number)
-      const dateObj = new Date(Date.UTC(y, mo-1, d, 12))
 
+  // 2) Iterar (usuario × dia do mês). Inclui usuários ausentes nos records também.
+  const daysInMonth = new Date(ano, mes, 0).getDate()
+  const rows: DayRow[] = []
+
+  // Hoje em BRT, em formato YYYY-MM-DD pra comparação textual.
+  const hojeBrtMs = Date.now() + BRT_OFFSET
+  const hojeBrt = new Date(hojeBrtMs).toISOString().split('T')[0]
+
+  for (const usuario of usuarios) {
+    for (let d = 1; d <= daysInMonth; d++) {
+      const dateStr = `${ano}-${String(mes).padStart(2,'0')}-${String(d).padStart(2,'0')}`
+      const isHistorico = dateStr < hojeBrt    // ontem ou antes
+      const key = `${usuario.id}__${dateStr}`
+      const recs = (groups[key] || []).sort((a,b) => a.created_at.localeCompare(b.created_at))
+      const get = (t: TipoRegistro) => recs.find(r => r.tipo_registro === t)
+      const jornada = jornadas[usuario.id] || DEFAULT_JORNADA_NGP
+      const { totalMins, status, extrasMins } = calcBalance(recs, jornada, dateStr, isHistorico)
+
+      const dateObj = new Date(Date.UTC(ano, mes - 1, d, 12))
       const ausencia = get('ausencia')
 
       const recordsByTipo: RecordsByTipo = {}
@@ -197,12 +235,12 @@ function groupByDay(records: PontoRecord[], jornadas: Record<string, Jornada> = 
         }
       }
 
-      return {
+      rows.push({
         key,
         dateStr,
-        dateLabel: `${DAYS[dateObj.getUTCDay()]}, ${d} ${MONTHS[mo-1]}`,
-        usuarioId:   recs[0].usuario_id,
-        usuarioNome: recs[0].usuario_nome || recs[0].usuario_id,
+        dateLabel: `${DAYS[dateObj.getUTCDay()]}, ${d} ${MONTHS[mes-1]}`,
+        usuarioId:   usuario.id,
+        usuarioNome: usuario.nome,
         entrada:       get('entrada')        ? toLocalTime(get('entrada')!.created_at)        : null,
         saidaAlmoco:   get('saida_almoco')   ? toLocalTime(get('saida_almoco')!.created_at)   : null,
         retornoAlmoco: get('retorno_almoco') ? toLocalTime(get('retorno_almoco')!.created_at) : null,
@@ -215,19 +253,29 @@ function groupByDay(records: PontoRecord[], jornadas: Record<string, Jornada> = 
         hasAusencia: !!ausencia,
         observacaoAusencia: ausencia?.observacao ?? null,
         recordsByTipo,
-      }
-    })
+      })
+    }
+  }
+
+  // Ordena: mais recente primeiro, usuário em ordem alfabética (quando empate).
+  rows.sort((a, b) => {
+    if (a.dateStr !== b.dateStr) return b.dateStr.localeCompare(a.dateStr)
+    return a.usuarioNome.localeCompare(b.usuarioNome)
+  })
+  return rows
 }
 
 const STATUS_LABEL: Record<string, string> = {
   complete: 'Completo', overtime: 'Hora extra',
   below: 'Abaixo da carga', incomplete: 'Em andamento', empty: '—',
   absent: 'Ausência', partial_absent: 'Ausência parcial',
+  negative: 'Sem registro', pending: 'Em aberto',
 }
 const STATUS_COLOR: Record<string, string> = {
   complete: '#059669', overtime: '#3b82f6',
   below: '#dc2626', incomplete: '#f59e0b', empty: '#8E8E93',
   absent: '#5a5a60', partial_absent: '#b45309',
+  negative: '#991b1b', pending: '#94a3b8',
 }
 
 const TIPO_LABEL: Record<string, string> = {
@@ -321,7 +369,7 @@ export default function RegistrosPage() {
   const [filterUser, setFilterUser] = useState('')
   const [filterStatus, setFilterStatus] = useState('')
 
-  const [allRows, setAllRows]     = useState<DayRow[]>([])
+  const [allRecords, setAllRecords] = useState<PontoRecord[]>([])
   const [jornadasMap, setJornadasMap] = useState<Record<string, Jornada>>({})
   const [minhaJornada, setMinhaJornada] = useState<Jornada>(DEFAULT_JORNADA_NGP)
   const [loading, setLoading]     = useState(false)
@@ -330,7 +378,7 @@ export default function RegistrosPage() {
   const [usuariosOpts, setUsuariosOpts] = useState<UsuarioOpt[]>([])
 
   type ModalState =
-    | { kind: 'absence'; usuarioId?: string; data?: string }
+    | { kind: 'absence'; usuarioId?: string; data?: string; tipoSugerido?: string }
     | { kind: 'batida_create'; usuarioId?: string; data?: string }
     | {
         kind: 'batida_edit'
@@ -355,6 +403,13 @@ export default function RegistrosPage() {
     | null
   const [modal, setModal] = useState<ModalState>(null)
 
+  // Estado do menu "Mais" — qual linha está aberta e em que posição (px).
+  const [maisMenu, setMaisMenu] = useState<{
+    rowKey: string
+    x: number
+    y: number
+  } | null>(null)
+
   // Auth
   useEffect(() => {
     const s = getSession()
@@ -365,7 +420,7 @@ export default function RegistrosPage() {
     setSess(s)
   }, [router])
 
-  const fetchRegistros = useCallback(async (mes: number, ano: number) => {
+  const fetchRegistros = useCallback(async (mes: number, ano: number, adminUsersIds?: string[]) => {
     const s = getSession()
     if (!s) return
     setLoading(true)
@@ -377,28 +432,31 @@ export default function RegistrosPage() {
       const data = await res.json()
       if (!data.error) {
         const records: PontoRecord[] = data.records || []
-        // Busca jornadas dos usuários distintos presentes (admin recebe todos;
-        // não admin recebe só o próprio — backend filtra).
-        const usuarioIds = Array.from(new Set(records.map(r => r.usuario_id))).filter(Boolean)
+
+        // Busca jornadas: union(usuários dos records, usuários ativos quando admin).
+        const idsFromRecords = records.map(r => r.usuario_id)
+        const ids = Array.from(new Set([...idsFromRecords, ...(adminUsersIds || [])])).filter(Boolean)
         let jornadasResp: Record<string, Jornada> = {}
-        if (usuarioIds.length > 0) {
+        if (ids.length > 0) {
           try {
             const jr = await fetch(`${SURL}/functions/v1/pessoas-jornada`, {
               method: 'POST', headers: efHeaders(),
-              body: JSON.stringify({ session_token: s.session, action: 'obter_bulk', usuario_ids: usuarioIds }),
+              body: JSON.stringify({ session_token: s.session, action: 'obter_bulk', usuario_ids: ids }),
             })
             const jd = await jr.json()
             if (jd?.jornadas) jornadasResp = jd.jornadas as Record<string, Jornada>
           } catch { /* silencioso — usa default */ }
         }
         setJornadasMap(jornadasResp)
-        // Para "meu ponto hoje": para usuário não admin, jornadasResp tem apenas
-        // o próprio; pega o único registro. Para admin, fica no default (admin
-        // não usa o card pessoal de carga).
-        const jornadaKeys = Object.keys(jornadasResp)
-        if (jornadaKeys.length === 1) setMinhaJornada(jornadasResp[jornadaKeys[0]])
-        else setMinhaJornada(DEFAULT_JORNADA_NGP)
-        setAllRows(groupByDay(records, jornadasResp))
+
+        // Jornada do próprio usuário pro card "Meu ponto hoje".
+        if (s.role !== 'admin') {
+          const jornadaKeys = Object.keys(jornadasResp)
+          if (jornadaKeys.length === 1) setMinhaJornada(jornadasResp[jornadaKeys[0]])
+          else setMinhaJornada(DEFAULT_JORNADA_NGP)
+        }
+
+        setAllRecords(records)
       }
     } catch { /* silencioso */ } finally {
       setLoading(false)
@@ -447,14 +505,52 @@ export default function RegistrosPage() {
   useEffect(() => {
     if (!sess) return
     fetchToday()
-    fetchRegistros(selMes, selAno)
-    if (isAdmin) fetchUsuarios()
-  }, [sess, selMes, selAno, fetchToday, isAdmin, fetchUsuarios]) // eslint-disable-line react-hooks/exhaustive-deps
+    const adminIds = isAdmin ? usuariosOpts.map(u => u.id) : undefined
+    fetchRegistros(selMes, selAno, adminIds)
+    if (isAdmin && usuariosOpts.length === 0) fetchUsuarios()
+  }, [sess, selMes, selAno, fetchToday, isAdmin, usuariosOpts, fetchUsuarios, fetchRegistros])
 
   const reload = useCallback(() => {
-    fetchRegistros(selMes, selAno)
+    const adminIds = isAdmin ? usuariosOpts.map(u => u.id) : undefined
+    fetchRegistros(selMes, selAno, adminIds)
     fetchToday()
-  }, [fetchRegistros, fetchToday, selMes, selAno])
+  }, [fetchRegistros, fetchToday, selMes, selAno, isAdmin, usuariosOpts])
+
+  // Lista de usuários pra sintetizar dias do mês:
+  //  - admin: todos ativos
+  //  - não-admin: só o próprio (extraído dos records, ou fallback do sess)
+  const usuariosParaSintetizar = useMemo<{ id: string; nome: string }[]>(() => {
+    if (isAdmin) return usuariosOpts
+    if (!sess) return []
+    // Tenta achar o nome nos records; senão usa o username.
+    const fromRec = allRecords.find(r => r.usuario_id === sess.user)
+    const nome = fromRec?.usuario_nome || sess.username || sess.user
+    return [{ id: sess.user, nome }]
+  }, [isAdmin, usuariosOpts, sess, allRecords])
+
+  const allRows = useMemo<DayRow[]>(() => {
+    if (usuariosParaSintetizar.length === 0) return []
+    return buildMonthRows(allRecords, selMes, selAno, usuariosParaSintetizar, jornadasMap)
+  }, [allRecords, selMes, selAno, usuariosParaSintetizar, jornadasMap])
+
+  // Fechar menu "Mais" ao clicar fora ou apertar Esc.
+  useEffect(() => {
+    if (!maisMenu) return
+    const onClick = (e: MouseEvent) => {
+      const t = e.target as HTMLElement
+      if (t && t.closest('[data-mais-menu]')) return
+      setMaisMenu(null)
+    }
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setMaisMenu(null)
+    }
+    document.addEventListener('mousedown', onClick)
+    document.addEventListener('keydown', onKey)
+    return () => {
+      document.removeEventListener('mousedown', onClick)
+      document.removeEventListener('keydown', onKey)
+    }
+  }, [maisMenu])
 
   useEffect(() => {
     const interval = setInterval(() => {
@@ -514,6 +610,8 @@ export default function RegistrosPage() {
   // Filtros aplicados
   const usuariosUnicos = Array.from(new Set(allRows.map(r => r.usuarioNome))).sort()
   const rows = allRows.filter(r => {
+    // FDS sem nada = ruído visual, não aparece. Dia útil 'negative' aparece sim.
+    if (r.status === 'empty') return false
     if (filterUser   && r.usuarioNome !== filterUser)  return false
     if (filterStatus && r.status      !== filterStatus) return false
     return true
@@ -529,21 +627,27 @@ export default function RegistrosPage() {
     const j = jornadasMap[r.usuarioId] || DEFAULT_JORNADA_NGP
     return targetMinsForDow(j, dow)
   }
-  // Dias considerados pra agregação: ignora 'empty' (sem dado) e 'absent' (ausência total).
-  // 'partial_absent' entra normalmente (tem batidas + ausência).
-  const diasAtivos = rows.filter(r => r.status !== 'empty' && r.status !== 'absent')
+  // Dias considerados pra agregação:
+  //  - 'empty' (FDS sem nada), 'absent' (ausência total) e 'pending' (hoje/futuro
+  //    sem registro) NÃO entram.
+  //  - 'negative' (dia útil passado sem registro) ENTRA — vai pra totalNegativas.
+  //  - 'partial_absent' entra normalmente.
+  const diasAtivos = rows.filter(r =>
+    r.status !== 'empty' && r.status !== 'absent' && r.status !== 'pending'
+  )
   const totalHoras = diasAtivos.reduce((acc, r) => acc + r.totalMins, 0)
   const totalExtras = diasAtivos.reduce((acc, r) => acc + r.extrasMins, 0)
   const totalNegativas = diasAtivos.reduce((acc, r) => {
     const target = targetForRow(r)
     if (target === 0) return acc
-    const diff = r.totalMins - target
+    const diff = r.totalMins - target  // negative tem totalMins=0, então diff = -target
     return acc + (diff < 0 ? -diff : 0)
   }, 0)
   const saldoMins = totalExtras - totalNegativas
   const diasCompletos = rows.filter(r => r.status === 'complete' || r.status === 'overtime').length
   const diasAbaixo    = rows.filter(r => r.status === 'below').length
   const diasIncompletos = rows.filter(r => r.status === 'incomplete').length
+  const diasSemRegistro = rows.filter(r => r.status === 'negative').length
   // "Ausências" = dias com qualquer marcação de ausência (total ou parcial).
   const diasAusencias = rows.filter(r => r.hasAusencia).length
 
@@ -707,6 +811,8 @@ export default function RegistrosPage() {
                   { id: 'overtime', label: 'Hora extra' },
                   { id: 'below', label: 'Abaixo da carga' },
                   { id: 'incomplete', label: 'Em andamento' },
+                  { id: 'negative', label: 'Sem registro' },
+                  { id: 'pending', label: 'Em aberto' },
                   { id: 'absent', label: 'Ausência' },
                   { id: 'partial_absent', label: 'Ausência parcial' },
                 ]}
@@ -775,6 +881,10 @@ export default function RegistrosPage() {
             <div className={styles.card}>
               <div className={styles.cardValue} style={{color:'#8E8E93'}}>{diasAusencias}</div>
               <div className={styles.cardLabel}>Ausências</div>
+            </div>
+            <div className={styles.card}>
+              <div className={styles.cardValue} style={{color:'#991b1b'}}>{diasSemRegistro}</div>
+              <div className={styles.cardLabel}>Sem registro</div>
             </div>
           </div>
 
@@ -858,7 +968,17 @@ export default function RegistrosPage() {
                             {row.extraSaida || <span className={styles.empty2}>--:--</span>}
                           </td>
                           <td className={styles.tdTotal}>
-                            {row.totalMins > 0 ? fmtMins(row.totalMins) : <span className={styles.empty2}>--</span>}
+                            {row.status === 'negative' ? (
+                              <span style={{ color: '#991b1b', fontWeight: 600 }}>
+                                −{fmtMins(targetForRow(row))}
+                              </span>
+                            ) : row.status === 'pending' ? (
+                              <span className={styles.empty2}>—</span>
+                            ) : row.totalMins > 0 ? (
+                              fmtMins(row.totalMins)
+                            ) : (
+                              <span className={styles.empty2}>--</span>
+                            )}
                           </td>
                           <td className={styles.tdTotal}>
                             {row.extrasMins > 0 ? fmtMins(row.extrasMins) : <span className={styles.empty2}>--</span>}
@@ -897,38 +1017,30 @@ export default function RegistrosPage() {
                           </td>
                           {isAdmin && (
                             <td>
-                              <div className={styles.tdActions}>
-                                {!isFds && (
-                                  <button
-                                    className={`${styles.btnAction} ${styles.btnActionDanger}`}
-                                    title="Marcar ausência (atestado/feriado/folga)"
-                                    onClick={() => setModal({
-                                      kind: 'absence',
-                                      usuarioId: row.usuarioId,
-                                      data: row.dateStr,
-                                    })}
-                                  >
-                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" width={14} height={14}>
-                                      <rect x="3" y="4" width="18" height="18" rx="2"/>
-                                      <line x1="9" y1="14" x2="15" y2="14"/>
-                                    </svg>
-                                  </button>
-                                )}
-                                <button
-                                  className={styles.btnAction}
-                                  title="Adicionar batida neste dia"
-                                  onClick={() => setModal({
-                                    kind: 'batida_create',
-                                    usuarioId: row.usuarioId,
-                                    data: row.dateStr,
-                                  })}
-                                >
-                                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" width={14} height={14}>
-                                    <line x1="12" y1="5" x2="12" y2="19"/>
-                                    <line x1="5" y1="12" x2="19" y2="12"/>
-                                  </svg>
-                                </button>
-                              </div>
+                              <button
+                                data-mais-menu
+                                className={styles.btnAction}
+                                title="Mais ações"
+                                onClick={(e) => {
+                                  e.stopPropagation()
+                                  if (maisMenu?.rowKey === row.key) {
+                                    setMaisMenu(null)
+                                    return
+                                  }
+                                  const rect = (e.currentTarget as HTMLButtonElement).getBoundingClientRect()
+                                  setMaisMenu({
+                                    rowKey: row.key,
+                                    x: rect.right - 220, // 220px = largura do menu
+                                    y: rect.bottom + 4,
+                                  })
+                                }}
+                              >
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" width={16} height={16}>
+                                  <circle cx="12" cy="5" r="1"/>
+                                  <circle cx="12" cy="12" r="1"/>
+                                  <circle cx="12" cy="19" r="1"/>
+                                </svg>
+                              </button>
                             </td>
                           )}
                         </tr>
@@ -948,6 +1060,7 @@ export default function RegistrosPage() {
           usuarios={usuariosOpts}
           defaultUsuarioId={modal.usuarioId}
           defaultData={modal.data}
+          defaultTipo={modal.tipoSugerido}
           onClose={() => setModal(null)}
           onSaved={reload}
         />
@@ -979,6 +1092,88 @@ export default function RegistrosPage() {
           onSaved={reload}
         />
       )}
+
+      {isAdmin && maisMenu && (() => {
+        const row = allRows.find(r => r.key === maisMenu.rowKey)
+        if (!row) return null
+        const [yy, mm, dd] = row.dateStr.split('-').map(Number)
+        const dow = new Date(Date.UTC(yy, mm - 1, dd, 12)).getUTCDay()
+        const isFds = dow === 0 || dow === 6
+        const ausenciaRec = row.recordsByTipo.ausencia
+
+        const closeAndDo = (fn: () => void) => () => { setMaisMenu(null); fn() }
+
+        const openAusencia = (tipoSugerido?: string) => closeAndDo(() => {
+          setModal({
+            kind: 'absence',
+            usuarioId: row.usuarioId,
+            data: row.dateStr,
+            tipoSugerido,
+          })
+        })
+
+        return (
+          <div
+            data-mais-menu
+            className={styles.maisMenu}
+            style={{ left: maisMenu.x, top: maisMenu.y }}
+          >
+            <div className={styles.maisMenuHeader}>{row.dateLabel} · {row.usuarioNome}</div>
+
+            <button
+              type="button"
+              className={styles.maisMenuItem}
+              onClick={closeAndDo(() => setModal({
+                kind: 'batida_create',
+                usuarioId: row.usuarioId,
+                data: row.dateStr,
+              }))}
+            >
+              <span>＋</span> Adicionar batida
+            </button>
+
+            {!isFds && (
+              <>
+                <div className={styles.maisMenuDivider}/>
+                <button type="button" className={styles.maisMenuItem} onClick={openAusencia('atestado')}>
+                  <span>🩺</span> Marcar atestado
+                </button>
+                <button type="button" className={styles.maisMenuItem} onClick={openAusencia('feriado')}>
+                  <span>📅</span> Marcar feriado
+                </button>
+                <button type="button" className={styles.maisMenuItem} onClick={openAusencia('folga')}>
+                  <span>🏖</span> Marcar folga
+                </button>
+                <button type="button" className={styles.maisMenuItem} onClick={openAusencia('falta_justificada')}>
+                  <span>⚠</span> Marcar falta justificada
+                </button>
+              </>
+            )}
+
+            {ausenciaRec && (
+              <>
+                <div className={styles.maisMenuDivider}/>
+                <button
+                  type="button"
+                  className={styles.maisMenuItem}
+                  onClick={closeAndDo(() => setModal({
+                    kind: 'manage_anexo',
+                    record: {
+                      id: ausenciaRec.id,
+                      observacao: ausenciaRec.observacao,
+                      anexo_path: ausenciaRec.anexo_path,
+                      anexo_mime: ausenciaRec.anexo_mime,
+                      anexo_size: ausenciaRec.anexo_size,
+                    },
+                  }))}
+                >
+                  <span>📎</span> {ausenciaRec.anexo_path ? 'Ver/gerenciar anexo' : 'Anexar arquivo'}
+                </button>
+              </>
+            )}
+          </div>
+        )
+      })()}
     </div>
   )
 }
