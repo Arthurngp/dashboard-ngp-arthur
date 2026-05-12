@@ -56,13 +56,21 @@ function findHeaderRow(rows: any[][]): number {
 }
 
 function findColIndex(headers: string[], candidates: string[]): number {
+  // Pass 1: match exato. Garante que candidate genérico "saida" prefira
+  // a coluna "Saída" (final do dia) antes de cair em "Saída intervalo".
+  for (let i = 0; i < headers.length; i++) {
+    const h = norm(headers[i])
+    if (!h) continue
+    for (const cand of candidates) {
+      if (h === norm(cand)) return i
+    }
+  }
+  // Pass 2: includes (fallback p/ variações como "Saída do trabalho").
   for (let i = 0; i < headers.length; i++) {
     const h = norm(headers[i])
     if (!h) continue
     for (const cand of candidates) {
       const c = norm(cand)
-      // Match exato OU h contém c (mais flexível)
-      if (h === c) return i
       if (h.includes(c) && c.length >= 4) return i
     }
   }
