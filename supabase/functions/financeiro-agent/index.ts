@@ -1269,7 +1269,7 @@ serve(async (req: Request) => {
       let off = 0
       while (true) {
         const { data, error } = await sb.from('fin_transacoes')
-          .select('id,tipo,valor,status,descricao,observacoes,account_id,competence_date,payment_date,categoria_id,fin_categorias(nome)')
+          .select('id,tipo,valor,status,descricao,observacoes,account_id,competence_date,payment_date,categoria_id,transfer_direction,fin_categorias(nome)')
           .eq('status', 'confirmado')
           .range(off, off + 999)
         if (error) return json(req, { error: 'Erro ao carregar transações.' }, 500)
@@ -1279,16 +1279,21 @@ serve(async (req: Request) => {
         off += 1000
       }
 
-      // Calcula saldo por conta (saldo_inicial + entradas - saídas, sem transferências para não dobrar)
+      // Calcula saldo por conta:
+      // - entrada/saida: somam/subtraem normalmente
+      // - transferencia: usa transfer_direction (in soma, out subtrai). Como cada
+      //   par tem uma linha em cada conta, o agregado total fica neutro.
       const saldoByAccount = new Map<string, number>()
       for (const a of accounts) saldoByAccount.set(a.id, Number(a.saldo_inicial || 0))
       for (const t of allConfirmed) {
         if (!t.account_id) continue
-        // Note: transferências SÃO incluídas aqui porque saldo da conta precisa refletir movimentação real (sai de uma, entra em outra).
         const v = Math.abs(Number(t.valor || 0))
         const cur = saldoByAccount.get(t.account_id) || 0
         if (t.tipo === 'entrada') saldoByAccount.set(t.account_id, cur + v)
         else if (t.tipo === 'saida') saldoByAccount.set(t.account_id, cur - v)
+        else if (t.tipo === 'transferencia') {
+          saldoByAccount.set(t.account_id, t.transfer_direction === 'in' ? cur + v : cur - v)
+        }
       }
 
       const contas = accounts.map((a: any) => ({
@@ -1326,6 +1331,9 @@ serve(async (req: Request) => {
         const dRef = dashView === 'caixa' ? t.payment_date : t.competence_date
         if (!dRef) continue
         if (dRef < ymStart || dRef > ymEnd) continue
+        // Transferências entre contas não são receita/despesa — pula pelo tipo
+        // direto e mantém heurística como fallback para linhas antigas.
+        if (t.tipo === 'transferencia') continue
         if (isInternalTransfer({ descricao: t.descricao, observacoes: t.observacoes, categoria_nome: t.fin_categorias?.nome })) continue
         const v = Math.abs(Number(t.valor || 0))
         if (t.tipo === 'entrada') { entMes += v; entMesCount++ }
