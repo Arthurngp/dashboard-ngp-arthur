@@ -39,10 +39,14 @@ serve(async (req) => {
     if (!isAdmin(user.role)) return json(req, { error: 'Apenas admins podem importar.' }, 403)
 
     if (action === 'listar_usuarios') {
-      // Helper para a tela de mapping: lista usuários ativos (id, nome, username).
+      // Lista colaboradores: ativos, não arquivados, com cargo preenchido.
+      // O cargo preenchido distingue colaborador real de cliente/placeholder/duplicata.
       const { data, error } = await sb.from('usuarios')
-        .select('id,nome,username')
+        .select('id,nome,username,cargo,funcao')
         .eq('ativo', true)
+        .is('archived_at', null)
+        .not('cargo', 'is', null)
+        .neq('cargo', '')
         .order('nome')
       if (error) return json(req, { error: 'Erro ao buscar usuários.' }, 500)
       return json(req, { usuarios: data || [] })
