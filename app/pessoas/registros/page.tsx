@@ -57,14 +57,35 @@ function fmtMins(mins: number): string {
   return `${Math.floor(mins / 60)}h${(mins % 60).toString().padStart(2,'0')}m`
 }
 
-function calcBalance(records: PontoRecord[]): { totalMins: number; status: DayRow['status']; extrasMins: number } {
+interface Jornada {
+  min_dom: number; min_seg: number; min_ter: number; min_qua: number;
+  min_qui: number; min_sex: number; min_sab: number
+}
+// Padrão NGP — usado como fallback se o colaborador não tem jornada custom.
+const DEFAULT_JORNADA_NGP: Jornada = {
+  min_dom: 0, min_seg: 540, min_ter: 540, min_qua: 540, min_qui: 540, min_sex: 480, min_sab: 0,
+}
+function targetMinsForDow(jornada: Jornada, dow: number): number {
+  switch (dow) {
+    case 0: return jornada.min_dom
+    case 1: return jornada.min_seg
+    case 2: return jornada.min_ter
+    case 3: return jornada.min_qua
+    case 4: return jornada.min_qui
+    case 5: return jornada.min_sex
+    case 6: return jornada.min_sab
+    default: return 0
+  }
+}
+
+function calcBalance(records: PontoRecord[], jornada: Jornada = DEFAULT_JORNADA_NGP): { totalMins: number; status: DayRow['status']; extrasMins: number } {
   const sorted = [...records].sort((a,b) => a.created_at.localeCompare(b.created_at))
   const ms = (iso: string) => new Date(iso).getTime()
   let totalMs = 0
-  
+
   const isEntry = (t: string) => ['entrada', 'retorno_almoco', 'extra_entrada'].includes(t)
   const isExit  = (t: string) => ['saida_almoco', 'saida', 'extra_saida'].includes(t)
-  
+
   let entryTime: number | null = null
   for (const r of sorted) {
     if (isEntry(r.tipo_registro)) entryTime = ms(r.created_at)
@@ -75,25 +96,16 @@ function calcBalance(records: PontoRecord[]): { totalMins: number; status: DayRo
   }
 
   const totalMins = Math.floor(totalMs / 60000)
-  
-  // Determine TARGET based on day of week (compensation for Saturdays)
-  // Seg-Qui: 9h (540m), Sex: 8h (480m)
+
+  // Carga prevista vem da jornada do colaborador (ou padrão NGP).
   const firstRec = records[0]
   const date = firstRec ? new Date(new Date(firstRec.created_at).getTime() + BRT_OFFSET) : new Date()
-  const dayOfWeek = date.getUTCDay() // 0=Dom, 1=Seg, ..., 5=Sex, 6=Sáb
-  
-  let TARGET = 8 * 60
-  if (dayOfWeek >= 1 && dayOfWeek <= 4) { // Seg a Qui
-    TARGET = 9 * 60
-  } else if (dayOfWeek === 5) { // Sex
-    TARGET = 8 * 60
-  } else {
-    TARGET = 8 * 60 
-  }
+  const dayOfWeek = date.getUTCDay()
+  const TARGET = targetMinsForDow(jornada, dayOfWeek)
 
   const diffMins = totalMins - TARGET
   const extrasMins = diffMins > 0 ? diffMins : 0
-  
+
   const hasEntrada = records.some(r => r.tipo_registro === 'entrada')
   const hasSaida   = records.some(r => r.tipo_registro === 'saida')
 
@@ -109,7 +121,7 @@ function calcBalance(records: PontoRecord[]): { totalMins: number; status: DayRo
 const DAYS   = ['Dom','Seg','Ter','Qua','Qui','Sex','Sáb']
 const MONTHS = ['Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez']
 
-function groupByDay(records: PontoRecord[]): DayRow[] {
+function groupByDay(records: PontoRecord[], jornadas: Record<string, Jornada> = {}): DayRow[] {
   const groups: Record<string, PontoRecord[]> = {}
   for (const r of records) {
     const dateStr = new Date(new Date(r.created_at).getTime() + BRT_OFFSET).toISOString().split('T')[0]
@@ -125,7 +137,9 @@ function groupByDay(records: PontoRecord[]): DayRow[] {
     .map(([key, recs]) => {
       recs.sort((a,b) => a.created_at.localeCompare(b.created_at))
       const get = (t: string) => recs.find(r => r.tipo_registro === t)
-      const { totalMins, status, extrasMins } = calcBalance(recs)
+      const usuarioId = recs[0].usuario_id
+      const jornada = jornadas[usuarioId] || DEFAULT_JORNADA_NGP
+      const { totalMins, status, extrasMins } = calcBalance(recs, jornada)
       const [,dateStr] = key.split('__')
       const [y,mo,d] = dateStr.split('-').map(Number)
       const dateObj = new Date(Date.UTC(y, mo-1, d, 12))
@@ -249,6 +263,8 @@ export default function RegistrosPage() {
   const [filterStatus, setFilterStatus] = useState('')
 
   const [allRows, setAllRows]     = useState<DayRow[]>([])
+  const [jornadasMap, setJornadasMap] = useState<Record<string, Jornada>>({})
+  const [minhaJornada, setMinhaJornada] = useState<Jornada>(DEFAULT_JORNADA_NGP)
   const [loading, setLoading]     = useState(false)
 
   // Auth
@@ -271,7 +287,31 @@ export default function RegistrosPage() {
         body: JSON.stringify({ session_token: s.session, mes, ano, admin_all: s.role === 'admin' }),
       })
       const data = await res.json()
-      if (!data.error) setAllRows(groupByDay(data.records || []))
+      if (!data.error) {
+        const records: PontoRecord[] = data.records || []
+        // Busca jornadas dos usuários distintos presentes (admin recebe todos;
+        // não admin recebe só o próprio — backend filtra).
+        const usuarioIds = Array.from(new Set(records.map(r => r.usuario_id))).filter(Boolean)
+        let jornadasResp: Record<string, Jornada> = {}
+        if (usuarioIds.length > 0) {
+          try {
+            const jr = await fetch(`${SURL}/functions/v1/pessoas-jornada`, {
+              method: 'POST', headers: efHeaders(),
+              body: JSON.stringify({ session_token: s.session, action: 'obter_bulk', usuario_ids: usuarioIds }),
+            })
+            const jd = await jr.json()
+            if (jd?.jornadas) jornadasResp = jd.jornadas as Record<string, Jornada>
+          } catch { /* silencioso — usa default */ }
+        }
+        setJornadasMap(jornadasResp)
+        // Para "meu ponto hoje": para usuário não admin, jornadasResp tem apenas
+        // o próprio; pega o único registro. Para admin, fica no default (admin
+        // não usa o card pessoal de carga).
+        const jornadaKeys = Object.keys(jornadasResp)
+        if (jornadaKeys.length === 1) setMinhaJornada(jornadasResp[jornadaKeys[0]])
+        else setMinhaJornada(DEFAULT_JORNADA_NGP)
+        setAllRows(groupByDay(records, jornadasResp))
+      }
     } catch { /* silencioso */ } finally {
       setLoading(false)
     }
@@ -367,10 +407,30 @@ export default function RegistrosPage() {
     return true
   })
 
-  // Totais
-  const totalHoras = rows.reduce((acc, r) => acc + r.totalMins, 0)
+  // Totais — agregados do período visível (após filtros de usuário/status).
+  // Carga prevista vem da jornada custom do colaborador; fallback para NGP.
+  // Ausências não entram no cálculo de horas extras/negativas.
+  function targetForRow(r: DayRow): number {
+    const [y, mo, d] = r.dateStr.split('-').map(Number)
+    const dt = new Date(Date.UTC(y, mo - 1, d, 12))
+    const dow = dt.getUTCDay()
+    const j = jornadasMap[r.usuarioId] || DEFAULT_JORNADA_NGP
+    return targetMinsForDow(j, dow)
+  }
+  const diasAtivos = rows.filter(r => r.status !== 'empty')
+  const totalHoras = diasAtivos.reduce((acc, r) => acc + r.totalMins, 0)
+  const totalExtras = diasAtivos.reduce((acc, r) => acc + r.extrasMins, 0)
+  const totalNegativas = diasAtivos.reduce((acc, r) => {
+    const target = targetForRow(r)
+    if (target === 0) return acc
+    const diff = r.totalMins - target
+    return acc + (diff < 0 ? -diff : 0)
+  }, 0)
+  const saldoMins = totalExtras - totalNegativas
   const diasCompletos = rows.filter(r => r.status === 'complete' || r.status === 'overtime').length
   const diasAbaixo    = rows.filter(r => r.status === 'below').length
+  const diasIncompletos = rows.filter(r => r.status === 'incomplete').length
+  const diasAusencias = rows.filter(r => r.status === 'empty').length
 
   // Export CSV
   const exportCSV = () => {
@@ -399,7 +459,7 @@ export default function RegistrosPage() {
   if (!sess) return <NGPLoading loading loadingText="Carregando registros..." />
 
   const nextAction = getNextAction(todayRecords)
-  const { totalMins: todayMins } = calcBalance(todayRecords)
+  const { totalMins: todayMins } = calcBalance(todayRecords, minhaJornada)
   const findToday = (tipo: string) => todayRecords.find((r) => r.tipo_registro === tipo)
 
   const sectorNav = [
@@ -407,6 +467,8 @@ export default function RegistrosPage() {
     { icon: <IcoTabela />,  label: 'Registros de Ponto', href: '/pessoas/registros' },
     { icon: <IcoCarreira />, label: 'Colaboradores', href: '/pessoas/carreira' },
     ...(isAdmin ? [{ icon: <IcoTabela />, label: 'Cadastros', href: '/pessoas/cadastros' }] : []),
+    ...(isAdmin ? [{ icon: <IcoTabela />, label: 'Relatório mensal', href: '/pessoas/registros/relatorio' }] : []),
+    ...(isAdmin ? [{ icon: <IcoTabela />, label: 'Importar histórico', href: '/pessoas/registros/import' }] : []),
     ...(isAdmin ? [{ icon: <IcoLixeira />, label: 'Lixeira', href: '/pessoas/lixeira' }] : []),
   ]
 
@@ -543,12 +605,22 @@ export default function RegistrosPage() {
           {/* Cards de resumo */}
           <div className={styles.cards}>
             <div className={styles.card}>
-              <div className={styles.cardValue}>{rows.length}</div>
-              <div className={styles.cardLabel}>Dias registrados</div>
-            </div>
-            <div className={styles.card}>
               <div className={styles.cardValue}>{fmtMins(totalHoras)}</div>
               <div className={styles.cardLabel}>Total de horas</div>
+            </div>
+            <div className={styles.card}>
+              <div className={styles.cardValue} style={{color:'#3b82f6'}}>{fmtMins(totalExtras)}</div>
+              <div className={styles.cardLabel}>Horas extras</div>
+            </div>
+            <div className={styles.card}>
+              <div className={styles.cardValue} style={{color:'#dc2626'}}>{fmtMins(totalNegativas)}</div>
+              <div className={styles.cardLabel}>Horas negativas</div>
+            </div>
+            <div className={styles.card}>
+              <div className={styles.cardValue} style={{color: saldoMins >= 0 ? '#059669' : '#dc2626'}}>
+                {saldoMins >= 0 ? '+' : '−'}{fmtMins(Math.abs(saldoMins))}
+              </div>
+              <div className={styles.cardLabel}>Saldo (extras − negativas)</div>
             </div>
             <div className={styles.card}>
               <div className={styles.cardValue} style={{color:'#059669'}}>{diasCompletos}</div>
@@ -557,6 +629,14 @@ export default function RegistrosPage() {
             <div className={styles.card}>
               <div className={styles.cardValue} style={{color:'#dc2626'}}>{diasAbaixo}</div>
               <div className={styles.cardLabel}>Abaixo da carga</div>
+            </div>
+            <div className={styles.card}>
+              <div className={styles.cardValue} style={{color:'#f59e0b'}}>{diasIncompletos}</div>
+              <div className={styles.cardLabel}>Em andamento</div>
+            </div>
+            <div className={styles.card}>
+              <div className={styles.cardValue} style={{color:'#8E8E93'}}>{diasAusencias}</div>
+              <div className={styles.cardLabel}>Ausências</div>
             </div>
           </div>
 
