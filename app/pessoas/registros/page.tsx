@@ -53,9 +53,12 @@ interface DayRow {
   extraSaida: string | null
   totalMins: number
   extrasMins: number
-  status: 'complete' | 'overtime' | 'below' | 'incomplete' | 'empty' | 'absent' | 'partial_absent' | 'negative' | 'pending'
+  status: 'complete' | 'overtime' | 'below' | 'incomplete' | 'empty' | 'absent' | 'partial_absent' | 'negative' | 'pending' | 'folga_descontada'
   hasAusencia: boolean
   observacaoAusencia: string | null
+  // Minutos a serem descontados do saldo por causa de folga compensatória neste dia.
+  // 0 quando não há folga compensatória, ou quando a folga é aniversário (brinde).
+  folgaDescontoMins: number
   recordsByTipo: RecordsByTipo
 }
 
@@ -103,15 +106,41 @@ function targetMinsForDow(jornada: Jornada, dow: number): number {
   }
 }
 
+// Classifica a observação de uma ausência. A edge function serializa o tipo
+// como prefixo MAIÚSCULO no campo observacao (ex.: 'FOLGA 13:00-17:00 | ...').
+// Importante: 'FOLGA ANIVERSARIO' tem que ser testado ANTES de 'FOLGA' senão
+// a folga aniversário cai no caso da compensatória.
+type FolgaKind = 'compensatoria' | 'aniversario' | null
+function classifyFolga(obs: string | null | undefined): FolgaKind {
+  if (!obs) return null
+  if (obs.startsWith('FOLGA ANIVERSARIO')) return 'aniversario'
+  if (obs.startsWith('FOLGA')) return 'compensatoria'
+  return null
+}
+
+// Extrai "HH:mm-HH:mm" da observação, se presente. Retorna minutos da faixa.
+// null quando é dia inteiro (sem faixa explícita).
+function extractFaixaMins(obs: string | null | undefined): number | null {
+  if (!obs) return null
+  const m = obs.match(/(\d{2}):(\d{2})-(\d{2}):(\d{2})/)
+  if (!m) return null
+  const ini = parseInt(m[1], 10) * 60 + parseInt(m[2], 10)
+  const fim = parseInt(m[3], 10) * 60 + parseInt(m[4], 10)
+  const diff = fim - ini
+  return diff > 0 ? diff : null
+}
+
 function calcBalance(
   records: PontoRecord[],
   jornada: Jornada = DEFAULT_JORNADA_NGP,
   dateStr?: string,
   isHistorico: boolean = true,    // dia já passou? (false = hoje ou futuro)
-): { totalMins: number; status: DayRow['status']; extrasMins: number } {
+): { totalMins: number; status: DayRow['status']; extrasMins: number; folgaDescontoMins: number } {
   // Ignora 'ausencia' no cálculo de horas — é só rótulo do dia.
   const real = records.filter(r => r.tipo_registro !== 'ausencia')
   const hasAusencia = records.some(r => r.tipo_registro === 'ausencia')
+  const ausenciaRec = records.find(r => r.tipo_registro === 'ausencia')
+  const folgaKind = classifyFolga(ausenciaRec?.observacao)
 
   const sorted = [...real].sort((a,b) => a.created_at.localeCompare(b.created_at))
   const ms = (iso: string) => new Date(iso).getTime()
@@ -149,33 +178,50 @@ function calcBalance(
   const hasEntrada = real.some(r => r.tipo_registro === 'entrada')
   const hasSaida   = real.some(r => r.tipo_registro === 'saida')
 
-  // Dia totalmente ocupado por ausência → status 'absent'
+  // Cálculo do desconto de folga compensatória (regra do Arthur):
+  //   - aniversário → brinde, não desconta nada
+  //   - dia inteiro → desconta a jornada do dia (TARGET)
+  //   - faixa       → desconta apenas a duração da faixa
+  // Em FDS (TARGET = 0) não há jornada a descontar.
+  let folgaDescontoMins = 0
+  if (folgaKind === 'compensatoria' && TARGET > 0) {
+    const faixaMins = extractFaixaMins(ausenciaRec?.observacao)
+    folgaDescontoMins = faixaMins ?? TARGET
+    // Cap defensivo: não desconta mais que a jornada do dia.
+    if (folgaDescontoMins > TARGET) folgaDescontoMins = TARGET
+  }
+
+  // Dia totalmente ocupado por ausência → status 'absent' ou 'folga_descontada'
   if (!hasEntrada && hasAusencia) {
-    return { totalMins: 0, status: 'absent', extrasMins: 0 }
+    const status: DayRow['status'] = folgaKind === 'compensatoria' && folgaDescontoMins > 0
+      ? 'folga_descontada'
+      : 'absent'
+    return { totalMins: 0, status, extrasMins: 0, folgaDescontoMins }
   }
   // Sem batidas e sem ausência:
   //   - FDS (TARGET = 0): 'empty' (nada esperado)
   //   - dia útil passado: 'negative' (devendo a jornada inteira)
   //   - dia útil hoje/futuro: 'pending' (ainda pode bater, sem peso negativo)
   if (!hasEntrada) {
-    if (TARGET === 0) return { totalMins: 0, status: 'empty', extrasMins: 0 }
+    if (TARGET === 0) return { totalMins: 0, status: 'empty', extrasMins: 0, folgaDescontoMins: 0 }
     return {
       totalMins: 0,
       status: isHistorico ? 'negative' : 'pending',
       extrasMins: 0,
+      folgaDescontoMins: 0,
     }
   }
 
-  // Tem batidas E ausência → parcial
+  // Tem batidas E ausência → parcial. Folga em faixa pode descontar junto.
   if (hasAusencia) {
-    return { totalMins, status: 'partial_absent', extrasMins }
+    return { totalMins, status: 'partial_absent', extrasMins, folgaDescontoMins }
   }
 
   const status: DayRow['status'] = !hasSaida ? 'incomplete'
     : diffMins > 0 ? 'overtime'
     : diffMins >= -5 ? 'complete'
     : 'below'
-  return { totalMins, status, extrasMins }
+  return { totalMins, status, extrasMins, folgaDescontoMins: 0 }
 }
 
 const DAYS   = ['Dom','Seg','Ter','Qua','Qui','Sex','Sáb']
@@ -231,7 +277,7 @@ function buildMonthRows(
       const recs = (groups[key] || []).sort((a,b) => a.created_at.localeCompare(b.created_at))
       const get = (t: TipoRegistro) => recs.find(r => r.tipo_registro === t)
       const jornada = jornadas[usuario.id] || DEFAULT_JORNADA_NGP
-      const { totalMins, status, extrasMins } = calcBalance(recs, jornada, dateStr, isHistorico)
+      const { totalMins, status, extrasMins, folgaDescontoMins } = calcBalance(recs, jornada, dateStr, isHistorico)
 
       const dateObj = new Date(Date.UTC(ano, mes - 1, d, 12))
       const ausencia = get('ausencia')
@@ -265,6 +311,7 @@ function buildMonthRows(
         status,
         hasAusencia: !!ausencia,
         observacaoAusencia: ausencia?.observacao ?? null,
+        folgaDescontoMins,
         recordsByTipo,
       })
     }
@@ -283,12 +330,14 @@ const STATUS_LABEL: Record<string, string> = {
   below: 'Abaixo da carga', incomplete: 'Em andamento', empty: '—',
   absent: 'Ausência', partial_absent: 'Ausência parcial',
   negative: 'Sem registro', pending: 'Em aberto',
+  folga_descontada: 'Folga (desconta)',
 }
 const STATUS_COLOR: Record<string, string> = {
   complete: '#059669', overtime: '#3b82f6',
   below: '#dc2626', incomplete: '#f59e0b', empty: '#8E8E93',
   absent: '#5a5a60', partial_absent: '#b45309',
   negative: '#991b1b', pending: '#94a3b8',
+  folga_descontada: '#b45309',
 }
 
 const TIPO_LABEL: Record<string, string> = {
@@ -648,20 +697,28 @@ export default function RegistrosPage() {
     return targetMinsForDow(j, dow)
   }
   // Dias considerados pra agregação:
-  //  - 'empty' (FDS sem nada), 'absent' (ausência total) e 'pending' (hoje/futuro
-  //    sem registro) NÃO entram.
+  //  - 'empty' (FDS sem nada), 'absent' (ausência total que NÃO desconta —
+  //    atestado, feriado, falta justificada, folga aniversário) e 'pending'
+  //    (hoje/futuro sem registro) NÃO entram.
   //  - 'negative' (dia útil passado sem registro) ENTRA — vai pra totalNegativas.
-  //  - 'partial_absent' entra normalmente.
+  //  - 'folga_descontada' (folga compensatória dia inteiro) ENTRA pra descontar.
+  //  - 'partial_absent' entra normalmente (e pode ter folga em faixa descontando).
   const diasAtivos = rows.filter(r =>
     r.status !== 'empty' && r.status !== 'absent' && r.status !== 'pending'
   )
   const totalHoras = diasAtivos.reduce((acc, r) => acc + r.totalMins, 0)
   const totalExtras = diasAtivos.reduce((acc, r) => acc + r.extrasMins, 0)
   const totalNegativas = diasAtivos.reduce((acc, r) => {
+    // Folga descontada (dia inteiro): desconta exatamente folgaDescontoMins.
+    if (r.status === 'folga_descontada') return acc + r.folgaDescontoMins
     const target = targetForRow(r)
-    if (target === 0) return acc
-    const diff = r.totalMins - target  // negative tem totalMins=0, então diff = -target
-    return acc + (diff < 0 ? -diff : 0)
+    if (target === 0) return acc + r.folgaDescontoMins
+    // Em dia com folga em faixa, a janela da folga já está dentro do déficit
+    // (target - totalMins). Evita double-counting subtraindo-a antes de somar.
+    const diff = r.totalMins - target
+    const deficit = diff < 0 ? -diff : 0
+    const realDeficit = Math.max(0, deficit - r.folgaDescontoMins)
+    return acc + realDeficit + r.folgaDescontoMins
   }, 0)
   const saldoMins = totalExtras - totalNegativas
   const diasCompletos = rows.filter(r => r.status === 'complete' || r.status === 'overtime').length
@@ -1162,7 +1219,10 @@ export default function RegistrosPage() {
                   <span>📅</span> Marcar feriado
                 </button>
                 <button type="button" className={styles.maisMenuItem} onClick={openAusencia('folga')}>
-                  <span>🏖</span> Marcar folga
+                  <span>🏖</span> Marcar folga compensatória
+                </button>
+                <button type="button" className={styles.maisMenuItem} onClick={openAusencia('folga_aniversario')}>
+                  <span>🎂</span> Marcar folga aniversário
                 </button>
                 <button type="button" className={styles.maisMenuItem} onClick={openAusencia('falta_justificada')}>
                   <span>⚠</span> Marcar falta justificada

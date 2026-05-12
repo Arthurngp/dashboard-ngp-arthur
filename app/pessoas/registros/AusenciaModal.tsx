@@ -40,13 +40,21 @@ interface Props {
 const TIPOS_OPTS = [
   { id: 'atestado',          label: 'Atestado' },
   { id: 'feriado',           label: 'Feriado' },
-  { id: 'folga',             label: 'Folga' },
+  { id: 'folga',             label: 'Folga compensatória (desconta horas)' },
+  { id: 'folga_aniversario', label: 'Folga aniversário (brinde — não desconta)' },
   { id: 'falta_justificada', label: 'Falta justificada' },
 ]
 
+const TIPO_LABEL_CURTO: Record<string, string> = {
+  atestado: 'Atestado',
+  feriado: 'Feriado',
+  folga: 'Folga compensatória',
+  folga_aniversario: 'Folga aniversário',
+  falta_justificada: 'Falta justificada',
+}
+
 function tipoLabel(tipo: string): string {
-  const f = TIPOS_OPTS.find(t => t.id === tipo)
-  return f ? f.label : tipo
+  return TIPO_LABEL_CURTO[tipo] ?? tipo
 }
 
 function tipoBatidaLabel(t: string): string {
@@ -99,6 +107,12 @@ export default function AusenciaModal({ usuarios, defaultUsuarioId, defaultData,
 
   useEffect(() => { setError(null) }, [tipo, escopo, usuarioId, data])
 
+  // Folga aniversário é sempre dia inteiro (brinde).
+  useEffect(() => {
+    if (tipo === 'folga_aniversario' && escopo !== 'dia') setEscopo('dia')
+  }, [tipo, escopo])
+
+  const lockEscopoDia = tipo === 'folga_aniversario'
   const canSubmit = !!usuarioId && !!data && !!tipo
     && (escopo === 'dia' || (horaInicio && horaFim && horaFim > horaInicio))
 
@@ -300,21 +314,23 @@ export default function AusenciaModal({ usuarios, defaultUsuarioId, defaultData,
             />
           </div>
 
-          <div className={styles.field}>
-            <label className={styles.label}>Período</label>
-            <div className={styles.toggleRow}>
-              <button
-                type="button"
-                className={`${styles.toggleBtn} ${escopo === 'dia' ? styles.toggleBtnActive : ''}`}
-                onClick={() => setEscopo('dia')}
-              >Dia inteiro</button>
-              <button
-                type="button"
-                className={`${styles.toggleBtn} ${escopo === 'faixa' ? styles.toggleBtnActive : ''}`}
-                onClick={() => setEscopo('faixa')}
-              >Faixa horária</button>
+          {!lockEscopoDia && (
+            <div className={styles.field}>
+              <label className={styles.label}>Período</label>
+              <div className={styles.toggleRow}>
+                <button
+                  type="button"
+                  className={`${styles.toggleBtn} ${escopo === 'dia' ? styles.toggleBtnActive : ''}`}
+                  onClick={() => setEscopo('dia')}
+                >Dia inteiro</button>
+                <button
+                  type="button"
+                  className={`${styles.toggleBtn} ${escopo === 'faixa' ? styles.toggleBtnActive : ''}`}
+                  onClick={() => setEscopo('faixa')}
+                >Faixa horária</button>
+              </div>
             </div>
-          </div>
+          )}
 
           {escopo === 'faixa' && (
             <div className={styles.fieldRow}>
