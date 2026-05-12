@@ -1,0 +1,469 @@
+.layout {
+  display: flex;
+  min-height: 100vh;
+  background: #F5F5F7;
+}
+
+.main {
+  flex: 1;
+  padding: 32px clamp(20px, 3vw, 48px);
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  overflow-y: auto;
+}
+
+.header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  flex-wrap: wrap;
+  gap: 16px;
+  padding-bottom: 20px;
+  border-bottom: 1px solid rgba(15, 23, 42, 0.06);
+}
+
+.title {
+  font-size: 26px;
+  font-weight: 700;
+  color: #0F172A;
+  margin: 0;
+  letter-spacing: -0.02em;
+}
+
+.subtitle {
+  font-size: 13px;
+  color: #64748B;
+  margin: 6px 0 0 0;
+}
+
+.headerActions {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+}
+
+.viewToggle {
+  display: inline-flex;
+  background: rgba(15, 23, 42, 0.04);
+  border-radius: 10px;
+  padding: 3px;
+}
+
+.viewToggleBtn {
+  padding: 8px 14px;
+  background: transparent;
+  border: none;
+  border-radius: 7px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #64748B;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+.viewToggleBtn:hover:not(:disabled) { color: #0F172A; }
+.viewToggleBtnActive {
+  background: white;
+  color: #0F172A;
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.08);
+}
+.viewToggleBtn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.btnRefresh {
+  background: white;
+  border: 1px solid rgba(15, 23, 42, 0.1);
+  padding: 8px 14px;
+  border-radius: 8px;
+  font-size: 16px;
+  cursor: pointer;
+  color: #64748B;
+}
+.btnRefresh:hover:not(:disabled) {
+  border-color: #2563EB;
+  color: #2563EB;
+}
+.btnRefresh:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.toast {
+  padding: 12px 16px;
+  border-radius: 10px;
+  font-size: 13px;
+  font-weight: 500;
+}
+.toastOk { background: rgba(5, 150, 105, 0.08); color: #065F46; border: 1px solid rgba(5, 150, 105, 0.2); }
+.toastErr { background: rgba(220, 38, 38, 0.08); color: #991B1B; border: 1px solid rgba(220, 38, 38, 0.2); }
+
+.empty {
+  text-align: center;
+  padding: 60px 20px;
+  color: #94A3B8;
+  font-size: 14px;
+}
+
+/* ─── Grid ─────────────────────────────────────────────────────────────── */
+.grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  grid-template-areas:
+    "saldo saldo"
+    "balanco top"
+    "contas top";
+  gap: 20px;
+}
+@media (max-width: 900px) {
+  .grid {
+    grid-template-columns: 1fr;
+    grid-template-areas: "saldo" "balanco" "top" "contas";
+  }
+}
+
+.card {
+  background: white;
+  border-radius: 16px;
+  padding: 22px;
+  box-shadow: 0 2px 8px rgba(15, 23, 42, 0.04);
+  border: 1px solid rgba(15, 23, 42, 0.05);
+}
+
+.cardSaldoTotal {
+  grid-area: saldo;
+  display: flex;
+  flex-direction: row;
+  align-items: stretch;
+  justify-content: space-between;
+  gap: 24px;
+  background: linear-gradient(135deg, #1E293B 0%, #0F172A 100%);
+  color: white;
+  border: none;
+  flex-wrap: wrap;
+}
+.saldoMain {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex: 1;
+  min-width: 240px;
+}
+.cardSaldoTotal .cardLabel {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: rgba(255,255,255,0.55);
+  font-weight: 600;
+}
+.cardSaldoValue {
+  font-size: 38px;
+  font-weight: 700;
+  letter-spacing: -0.03em;
+  line-height: 1;
+}
+.cardSaldoTotal .cardCaption {
+  font-size: 13px;
+  color: rgba(255,255,255,0.6);
+  margin-top: 4px;
+}
+.saldoBreakdown {
+  display: flex;
+  gap: 16px;
+  align-items: flex-end;
+  border-left: 1px solid rgba(255,255,255,0.1);
+  padding-left: 24px;
+}
+.saldoBreakItem {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.saldoBreakLabel {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: rgba(255,255,255,0.5);
+  font-weight: 600;
+}
+.saldoBreakValue {
+  font-size: 18px;
+  font-weight: 700;
+  color: rgba(255,255,255,0.9);
+  font-variant-numeric: tabular-nums;
+}
+
+.cardBalanco { grid-area: balanco; }
+.cardTopDespesas { grid-area: top; }
+.cardContas { grid-area: contas; }
+
+.cardTitle {
+  font-size: 15px;
+  font-weight: 700;
+  color: #0F172A;
+  margin: 0 0 16px 0;
+}
+
+.cardLabel {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #94A3B8;
+  font-weight: 600;
+}
+
+.cardEmpty {
+  font-size: 13px;
+  color: #94A3B8;
+  font-style: italic;
+}
+
+/* ─── Balanço ─────────────────────────────────────────────────────────── */
+.balancoRow {
+  margin-bottom: 14px;
+}
+.balancoLabelRow {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  margin-bottom: 6px;
+}
+.balancoLabel {
+  font-size: 13px;
+  color: #64748B;
+  font-weight: 500;
+}
+.balancoValue {
+  font-size: 16px;
+  font-weight: 600;
+  color: #0F172A;
+  font-variant-numeric: tabular-nums;
+}
+.balancoBarWrap {
+  background: rgba(15, 23, 42, 0.04);
+  border-radius: 6px;
+  height: 8px;
+  overflow: hidden;
+}
+.balancoBar {
+  height: 100%;
+  border-radius: 6px;
+  transition: width 0.3s;
+}
+.barEntrada { background: linear-gradient(90deg, #059669, #10B981); }
+.barSaida { background: linear-gradient(90deg, #DC2626, #F87171); }
+
+.balancoResultado {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px solid rgba(15, 23, 42, 0.06);
+}
+.balancoResultadoValue {
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+}
+.balancoMeta {
+  font-size: 11px;
+  color: #94A3B8;
+  margin-top: 8px;
+  font-style: italic;
+}
+
+/* ─── Top despesas ─────────────────────────────────────────────────────── */
+.topList {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.topItem {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+}
+.topRank {
+  background: rgba(37, 99, 235, 0.08);
+  color: #2563EB;
+  font-weight: 700;
+  font-size: 12px;
+  min-width: 24px;
+  height: 24px;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+.topMain {
+  flex: 1;
+  min-width: 0;
+}
+.topRow {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 8px;
+}
+.topCat {
+  font-size: 13px;
+  font-weight: 600;
+  color: #0F172A;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.topVal {
+  font-size: 13px;
+  font-weight: 700;
+  color: #DC2626;
+  font-variant-numeric: tabular-nums;
+  flex-shrink: 0;
+}
+.topBarWrap {
+  position: relative;
+  background: rgba(220, 38, 38, 0.08);
+  border-radius: 4px;
+  height: 16px;
+  margin-top: 4px;
+  overflow: hidden;
+}
+.topBar {
+  background: linear-gradient(90deg, #DC2626, #F87171);
+  height: 100%;
+  border-radius: 4px;
+  transition: width 0.3s;
+}
+.topPct {
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 10px;
+  font-weight: 700;
+  color: #475569;
+}
+
+/* ─── Contas ──────────────────────────────────────────────────────────── */
+.contasList {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.contaItem {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  transition: background 0.15s, opacity 0.15s;
+}
+.contaItem:hover {
+  background: rgba(15, 23, 42, 0.02);
+}
+.contaOculta {
+  opacity: 0.55;
+  background: rgba(15, 23, 42, 0.02);
+}
+.contaOculta:hover {
+  opacity: 0.85;
+}
+
+.eyeBtn {
+  background: transparent;
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  font-size: 14px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  transition: background 0.15s, border-color 0.15s;
+  padding: 0;
+}
+.eyeBtn:hover {
+  background: rgba(37, 99, 235, 0.06);
+  border-color: rgba(37, 99, 235, 0.3);
+}
+.eyeBtn:active {
+  transform: scale(0.95);
+}
+
+.cardTitleHint {
+  font-size: 11px;
+  font-weight: 500;
+  color: #94A3B8;
+  margin-left: 8px;
+  letter-spacing: 0;
+  text-transform: none;
+}
+.contaLeft {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  flex: 1;
+}
+.contaNome {
+  font-size: 13px;
+  font-weight: 600;
+  color: #0F172A;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 220px;
+}
+.contaTipo {
+  font-size: 11px;
+  color: #94A3B8;
+  text-transform: capitalize;
+}
+.contaSaldo {
+  font-size: 14px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ─── Bloco de contas ocultas (accordion) ────────────────────────────── */
+.ocultasBlock {
+  margin-top: 12px;
+  border-top: 1px dashed rgba(15, 23, 42, 0.08);
+  padding-top: 10px;
+}
+.ocultasToggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  background: none;
+  border: none;
+  padding: 6px 0;
+  cursor: pointer;
+  font-size: 12px;
+  color: #94A3B8;
+  font-weight: 600;
+  text-align: left;
+}
+.ocultasToggle:hover { color: #475569; }
+.ocultasToggle > span:first-child {
+  font-size: 10px;
+  width: 12px;
+  display: inline-block;
+}
+
+/* ─── Cores compartilhadas ────────────────────────────────────────────── */
+.posValue { color: #059669; }
+.negValue { color: #DC2626; }
+
+.footer {
+  text-align: center;
+  font-size: 11px;
+  color: #94A3B8;
+  font-style: italic;
+  padding-top: 8px;
+}

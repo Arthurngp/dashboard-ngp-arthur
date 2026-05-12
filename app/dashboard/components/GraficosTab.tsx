@@ -1,9 +1,14 @@
 'use client'
 import React from 'react'
+import dynamic from 'next/dynamic'
+import '@/app/dashboard/chart-setup'
 import { fmt, fmtI } from '@/lib/utils'
 import { Campaign } from '@/types'
-import { Bar, Doughnut, Line } from 'react-chartjs-2'
 import styles from '../dashboard.module.css'
+
+const Bar = dynamic(() => import('react-chartjs-2').then(m => ({ default: m.Bar })), { ssr: false })
+const Doughnut = dynamic(() => import('react-chartjs-2').then(m => ({ default: m.Doughnut })), { ssr: false })
+const Line = dynamic(() => import('react-chartjs-2').then(m => ({ default: m.Line })), { ssr: false })
 
 interface GraficosTabProps {
   campaigns: Campaign[]

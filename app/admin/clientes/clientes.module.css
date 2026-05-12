@@ -138,7 +138,8 @@
 
 .btnNew,
 .btnSave,
-.editBtn {
+.editBtn,
+.archiveBtn {
   border: none;
   border-radius: 12px;
   cursor: pointer;
@@ -164,12 +165,15 @@
 
 .btnNew:hover,
 .btnSave:hover,
-.editBtn:hover {
+.editBtn:hover,
+.archiveBtn:hover {
   opacity: .9;
   transform: translateY(-1px);
 }
 
-.btnSave:disabled {
+.btnSave:disabled,
+.editBtn:disabled,
+.archiveBtn:disabled {
   opacity: .45;
   cursor: not-allowed;
   transform: none;
@@ -324,6 +328,12 @@
   gap: 14px;
 }
 
+.clientActions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
 .clientIdentity {
   display: flex;
   gap: 12px;
@@ -366,6 +376,14 @@
 .editBtn {
   background: #1a2029;
   color: #f0f2f5;
+  padding: 9px 14px;
+  font-size: 13px;
+}
+
+.archiveBtn {
+  background: rgba(204, 20, 20, 0.12);
+  color: #f87171;
+  border: 1px solid rgba(248, 113, 113, 0.26);
   padding: 9px 14px;
   font-size: 13px;
 }
@@ -459,7 +477,13 @@
   }
 
   .editBtn,
+  .archiveBtn,
   .btnNew {
     width: 100%;
+  }
+
+  .clientActions {
+    width: 100%;
+    flex-direction: column;
   }
 }

@@ -3,6 +3,7 @@ import { useMemo, useState, useEffect } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import ProfileModal from './ProfileModal'
+import SettingsModal from './SettingsModal'
 import styles from './WorkspaceTopbar.module.css'
 import { clearSession, getSession } from '@/lib/auth'
 import { SURL } from '@/lib/constants'
@@ -66,6 +67,7 @@ export default function WorkspaceTopbar({
 }: WorkspaceTopbarProps) {
   const router = useRouter()
   const [profileOpen, setProfileOpen] = useState(false)
+  const [settingsOpen, setSettingsOpen] = useState(false)
   const [mounted, setMounted] = useState(false)
 
   useEffect(() => {
@@ -84,8 +86,8 @@ export default function WorkspaceTopbar({
       { id: 'comercial', label: 'Comercial', active: activeId === 'comercial', href: '/comercial' },
       { id: 'comercial-digital', label: 'Comercial Digital', active: activeId === 'comercial-digital', href: '/comercial-digital' },
       { id: 'tarefas', label: 'Gestão de Tarefas', active: activeId === 'tarefas', href: '/tarefas' },
-      { id: 'financeiro', label: 'Financeiro', active: activeId === 'financeiro', href: 'https://financeiro.grupongp.com.br', external: true },
-      { id: 'trackeamento', label: 'Trackeamento', active: activeId === 'trackeamento', disabled: true },
+      { id: 'financeiro', label: 'Financeiro', active: activeId === 'financeiro', href: '/financeiro/dashboard' },
+      { id: 'trackeamento', label: 'NGP Forms', active: activeId === 'trackeamento', href: '/trackeamento' },
       { id: 'gestao-anuncios', label: 'Gestão de anúncios', active: activeId === 'gestao-anuncios', disabled: true },
     ]
   }, [activeId, navItems, router])
@@ -194,11 +196,25 @@ export default function WorkspaceTopbar({
             <span>{sessionUser}</span>
           </button>
 
+          <button
+            type="button"
+            className={styles.settingsButton}
+            onClick={() => setSettingsOpen(true)}
+            aria-label="Configurações"
+            title="Configurações"
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" width={16} height={16}>
+              <circle cx="12" cy="12" r="3" />
+              <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+            </svg>
+          </button>
+
           <button type="button" className={styles.logoutButton} onClick={doLogout}>Sair</button>
         </div>
       </header>
 
       <ProfileModal isOpen={profileOpen} onClose={() => setProfileOpen(false)} />
+      <SettingsModal isOpen={settingsOpen} onClose={() => setSettingsOpen(false)} />
     </div>
   )
 }

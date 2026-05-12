@@ -110,6 +110,36 @@
   border-radius: 10px;
 }
 
+.searchWrap {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  padding: 0 0 8px;
+  background: rgba(28, 37, 46, 0.96);
+}
+
+.searchInput {
+  width: 100%;
+  min-height: 42px;
+  border-radius: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.06);
+  color: #fff;
+  padding: 0 14px;
+  font-size: 13px;
+  font-family: inherit;
+  outline: none;
+}
+
+.searchInput::placeholder {
+  color: rgba(255, 255, 255, 0.45);
+}
+
+.searchInput:focus {
+  border-color: rgba(96, 165, 250, 0.5);
+  background: rgba(255, 255, 255, 0.08);
+}
+
 .option {
   display: flex;
   align-items: center;
@@ -135,6 +165,32 @@
   background: linear-gradient(135deg, #4f86f7 0%, #3b82f6 100%);
   color: #fff !important;
   box-shadow: 0 8px 16px rgba(59, 130, 246, 0.3);
+}
+
+.optionCreate {
+  margin-top: 6px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  padding-top: 14px;
+  color: #93c5fd;
+}
+
+.optionCreate:hover {
+  background: rgba(37, 99, 235, 0.12);
+  color: #dbeafe;
+}
+
+.optionCreateIcon {
+  width: 32px;
+  height: 32px;
+  border-radius: 10px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(37, 99, 235, 0.18);
+  color: #bfdbfe;
+  font-size: 20px;
+  font-weight: 700;
+  flex-shrink: 0;
 }
 
 .optionImage {
@@ -182,4 +238,12 @@
   font-weight: bold;
   flex-shrink: 0;
   font-size: 16px;
+}
+
+.emptyState {
+  padding: 14px 12px 8px;
+  color: rgba(255, 255, 255, 0.55);
+  font-size: 12px;
+  font-weight: 600;
+  text-align: center;
 }

@@ -3,7 +3,9 @@ import React from 'react'
 import { fmt, fmtN, fmtI } from '@/lib/utils'
 import { Campaign, Ad } from '@/types'
 import CustomSelect from '@/components/CustomSelect'
-import { Bar } from 'react-chartjs-2'
+import dynamic from 'next/dynamic'
+import '@/app/dashboard/chart-setup'
+const Bar = dynamic(() => import('react-chartjs-2').then(m => ({ default: m.Bar })), { ssr: false })
 import { META_METRICS } from '@/lib/meta-metrics'
 import styles from '../dashboard.module.css'
 

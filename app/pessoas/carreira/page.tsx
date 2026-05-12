@@ -314,6 +314,14 @@ export default function CarreiraPage() {
   const [savingPerfil, setSavingPerfil] = useState(false)
   const [usuarioAcessoForm, setUsuarioAcessoForm] = useState<UsuarioAcessoForm>(EMPTY_USUARIO_ACESSO)
   const [savingUsuarioAcesso, setSavingUsuarioAcesso] = useState(false)
+
+  // ── Jornada de trabalho do colaborador ─────────────────────────────────
+  // Default NGP: seg-qui 9h, sex 8h, sáb/dom livres.
+  const DEFAULT_JORNADA = { min_dom: 0, min_seg: 540, min_ter: 540, min_qua: 540, min_qui: 540, min_sex: 480, min_sab: 0 }
+  const [jornadaForm, setJornadaForm] = useState<typeof DEFAULT_JORNADA>(DEFAULT_JORNADA)
+  const [jornadaIsDefault, setJornadaIsDefault] = useState(true)
+  const [loadingJornada, setLoadingJornada] = useState(false)
+  const [savingJornada, setSavingJornada] = useState(false)
   const [creatingCollaborator, setCreatingCollaborator] = useState(false)
   const [novoColaboradorForm, setNovoColaboradorForm] = useState<NovoColaboradorForm>(EMPTY_NOVO_COLABORADOR)
   const [savingNewCollaborator, setSavingNewCollaborator] = useState(false)
@@ -478,6 +486,95 @@ export default function CarreiraPage() {
       (item.cargo || '').toLowerCase().includes(term)
     )
   }, [dashboard, search])
+
+  // Carrega jornada quando muda o colaborador selecionado.
+  useEffect(() => {
+    if (!selectedId) {
+      // Resetar quando volta pro dashboard / nenhum selecionado.
+      setJornadaForm(DEFAULT_JORNADA)
+      setJornadaIsDefault(true)
+      return
+    }
+    const s = getSession()
+    if (!s) return
+    setLoadingJornada(true)
+    fetch(`${SURL}/functions/v1/pessoas-jornada`, {
+      method: 'POST',
+      headers: efHeaders(),
+      body: JSON.stringify({ session_token: s.session, action: 'obter', usuario_id: selectedId }),
+    })
+      .then(r => r.json())
+      .then(data => {
+        if (data?.error) { setJornadaForm(DEFAULT_JORNADA); setJornadaIsDefault(true); return }
+        const j = data?.jornada || DEFAULT_JORNADA
+        setJornadaForm({
+          min_dom: j.min_dom ?? 0, min_seg: j.min_seg ?? 540, min_ter: j.min_ter ?? 540,
+          min_qua: j.min_qua ?? 540, min_qui: j.min_qui ?? 540, min_sex: j.min_sex ?? 480, min_sab: j.min_sab ?? 0,
+        })
+        setJornadaIsDefault(!!data?.is_default)
+      })
+      .catch(() => { setJornadaForm(DEFAULT_JORNADA); setJornadaIsDefault(true) })
+      .finally(() => setLoadingJornada(false))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedId])
+
+  async function salvarJornada(e: React.FormEvent) {
+    e.preventDefault()
+    if (!selectedId) return
+    const s = getSession()
+    if (!s) return
+    setSavingJornada(true)
+    try {
+      const res = await fetch(`${SURL}/functions/v1/pessoas-jornada`, {
+        method: 'POST',
+        headers: efHeaders(),
+        body: JSON.stringify({ session_token: s.session, action: 'salvar', usuario_id: selectedId, jornada: jornadaForm }),
+      })
+      const data = await res.json()
+      if (data?.error) { showMsg('err', data.error); return }
+      setJornadaIsDefault(false)
+      showMsg('ok', 'Jornada salva.')
+    } finally {
+      setSavingJornada(false)
+    }
+  }
+
+  async function resetarJornada() {
+    if (!selectedId) return
+    if (!confirm('Resetar para a jornada padrão NGP (seg-qui 9h, sex 8h)?')) return
+    const s = getSession()
+    if (!s) return
+    setSavingJornada(true)
+    try {
+      const res = await fetch(`${SURL}/functions/v1/pessoas-jornada`, {
+        method: 'POST',
+        headers: efHeaders(),
+        body: JSON.stringify({ session_token: s.session, action: 'resetar', usuario_id: selectedId }),
+      })
+      const data = await res.json()
+      if (data?.error) { showMsg('err', data.error); return }
+      setJornadaForm(DEFAULT_JORNADA)
+      setJornadaIsDefault(true)
+      showMsg('ok', 'Jornada resetada para o padrão.')
+    } finally {
+      setSavingJornada(false)
+    }
+  }
+
+  // Helpers HH:MM ↔ minutos.
+  function minsToHHMM(m: number): string {
+    const hh = Math.floor(m / 60).toString().padStart(2, '0')
+    const mm = (m % 60).toString().padStart(2, '0')
+    return `${hh}:${mm}`
+  }
+  function hhmmToMins(s: string): number {
+    const m = s.match(/^(\d{1,2}):(\d{1,2})$/)
+    if (!m) return 0
+    const h = Math.min(24, Math.max(0, Number(m[1])))
+    const mi = Math.min(59, Math.max(0, Number(m[2])))
+    return Math.min(1440, h * 60 + mi)
+  }
+  const totalSemanaMins = jornadaForm.min_dom + jornadaForm.min_seg + jornadaForm.min_ter + jornadaForm.min_qua + jornadaForm.min_qui + jornadaForm.min_sex + jornadaForm.min_sab
 
   const selectedDashboardColaborador = dashboard?.colaboradores.find((item) => item.id === selectedId) || null
   const isAdminUser = sess?.role === 'admin'
@@ -1253,6 +1350,67 @@ export default function CarreiraPage() {
                           )}
                         </form>
                       </section>
+
+                      {canManageCollaboratorData && (
+                      <section className={styles.panel}>
+                        <div className={styles.panelHeader}>
+                          <h3 className={styles.panelTitle}>Jornada de trabalho</h3>
+                          <span className={styles.panelHint}>
+                            {jornadaIsDefault
+                              ? 'Usando o padrão NGP — personalize se necessário'
+                              : 'Jornada personalizada para este colaborador'}
+                          </span>
+                        </div>
+                        <form className={styles.formSection} onSubmit={salvarJornada}>
+                          {loadingJornada ? (
+                            <div>Carregando jornada...</div>
+                          ) : (
+                            <>
+                              <div className={styles.formGrid}>
+                                {([
+                                  ['min_seg', 'Segunda'],
+                                  ['min_ter', 'Terça'],
+                                  ['min_qua', 'Quarta'],
+                                  ['min_qui', 'Quinta'],
+                                  ['min_sex', 'Sexta'],
+                                  ['min_sab', 'Sábado'],
+                                  ['min_dom', 'Domingo'],
+                                ] as const).map(([key, label]) => (
+                                  <div key={key} className={styles.field}>
+                                    <label>{label}</label>
+                                    <input
+                                      type="time"
+                                      step={60}
+                                      value={minsToHHMM(jornadaForm[key])}
+                                      onChange={(e) => setJornadaForm(prev => ({ ...prev, [key]: hhmmToMins(e.target.value) }))}
+                                    />
+                                  </div>
+                                ))}
+                                <div className={styles.field}>
+                                  <label>Total semanal</label>
+                                  <input
+                                    type="text"
+                                    value={`${Math.floor(totalSemanaMins / 60)}h${totalSemanaMins % 60 ? `${(totalSemanaMins % 60).toString().padStart(2, '0')}` : ''}`}
+                                    readOnly
+                                    style={{ background: '#f5f5f7', fontWeight: 700 }}
+                                  />
+                                </div>
+                              </div>
+                              <div className={styles.formActions}>
+                                {!jornadaIsDefault && (
+                                  <button type="button" className={styles.btnSecondary} onClick={resetarJornada} disabled={savingJornada}>
+                                    Resetar para padrão NGP
+                                  </button>
+                                )}
+                                <button type="submit" className={styles.btnPrimary} disabled={savingJornada}>
+                                  {savingJornada ? 'Salvando...' : 'Salvar jornada'}
+                                </button>
+                              </div>
+                            </>
+                          )}
+                        </form>
+                      </section>
+                      )}
 
                       {canManageUserAccess && (
                       <section className={styles.panel}>

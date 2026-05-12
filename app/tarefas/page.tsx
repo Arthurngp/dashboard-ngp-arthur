@@ -1,11 +1,11 @@
 'use client'
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, Suspense } from 'react'
+import Image from 'next/image'
 import { useRouter, useSearchParams } from 'next/navigation'
 import Link from 'next/link'
 import { getSession } from '@/lib/auth'
-import { SURL, ANON } from '@/lib/constants'
-import { efHeaders, efCall } from '@/lib/api'
+import { efCall } from '@/lib/api'
 import Sidebar from '@/components/Sidebar'
 import NGPLoading from '@/components/NGPLoading'
 import styles from './tarefas.module.css'
@@ -107,18 +107,17 @@ function QuickSectorModal({ onClose, onSaved, clientId }: { onClose: () => void;
     setSaving(true)
     setError('')
     try {
-      const res = await fetch(`${SURL}/rest/v1/task_setores`, {
-        method: 'POST',
-        headers: { ...efHeaders(), Prefer: 'return=representation' },
-        body: JSON.stringify({ 
-          nome: nome.trim(), 
-          cor: cor, 
+      const data = await efCall('tarefas-manage', {
+        op: 'setor_create',
+        payload: {
+          nome: nome.trim(),
+          cor: cor,
           ordem: 99,
           ativo: true,
-          client_id: clientId // Vincula a lista ao cliente atual
-        }),
+          client_id: clientId, // Vincula a lista ao cliente atual
+        },
       })
-      if (!res.ok) throw new Error(await res.text())
+      if (data?.error) throw new Error(String(data.error))
       onSaved()
       onClose()
     } catch (e: any) {
@@ -258,7 +257,7 @@ function ClientsOverview({ clientes, allTasks, onSelect }: {
           <div key={c.id} className={styles.clientCard} onClick={() => onSelect(c.id)}>
             <div className={styles.clientCardHead}>
               <div className={styles.clientAvatar}>
-                {c.foto_url ? <img src={c.foto_url} alt={c.nome} /> : initials(c.nome)}
+                {c.foto_url ? <Image src={c.foto_url} alt={c.nome} width={40} height={40} style={{ objectFit: 'cover', borderRadius: '50%' }} /> : initials(c.nome)}
               </div>
               <div className={styles.clientInfo}>
                 <div className={styles.clientName}>{c.nome}</div>
@@ -360,7 +359,7 @@ function ListView({ tasks, onEdit, onAddClick, onDelete, colaboradores, onInline
                       {t.assignee ? (
                         <div className={styles.miniUser}>
                           <div className={styles.miniAvatar}>
-                            {t.assignee.foto_url ? <img src={t.assignee.foto_url} /> : initials(t.assignee.nome)}
+                            {t.assignee.foto_url ? <Image src={t.assignee.foto_url} alt={t.assignee.nome} width={24} height={24} style={{ objectFit: 'cover', borderRadius: '50%' }} /> : initials(t.assignee.nome)}
                           </div>
                           {t.assignee.nome.split(' ')[0]}
                         </div>
@@ -444,7 +443,7 @@ function TaskCard({ task, onClick }: { task: Task; onClick: () => void }) {
           <div className={styles.assignee}>
             <div className={styles.avatar}>
               {task.assignee.foto_url
-                ? <img src={task.assignee.foto_url} alt={task.assignee.nome} className={styles.avatarImg} />
+                ? <Image src={task.assignee.foto_url} alt={task.assignee.nome} className={styles.avatarImg} width={32} height={32} style={{ objectFit: 'cover' }} />
                 : initials(task.assignee.nome)}
             </div>
             <span className={styles.assigneeName}>{task.assignee.nome.split(' ')[0]}</span>
@@ -713,17 +712,11 @@ function TaskModal({ initialStatus = 'todo', initialClientId, initialSetorId, ed
     }
 
     try {
-      const method = editTask ? 'PATCH' : 'POST'
-      const url    = editTask
-        ? `${SURL}/rest/v1/tasks?id=eq.${editTask.id}`
-        : `${SURL}/rest/v1/tasks`
-
-      const res = await fetch(url, {
-        method,
-        headers: { ...efHeaders(), Prefer: 'return=representation' },
-        body: JSON.stringify(payload),
-      })
-      if (!res.ok) throw new Error(await res.text())
+      const data = await efCall('tarefas-manage', editTask
+        ? { op: 'task_update', id: editTask.id, payload }
+        : { op: 'task_create', payload }
+      )
+      if (data?.error) throw new Error(String(data.error))
       onSaved(); onClose()
     } catch (e: any) {
       setError(e.message || 'Erro ao salvar.')
@@ -736,8 +729,8 @@ function TaskModal({ initialStatus = 'todo', initialClientId, initialSetorId, ed
     if (!editTask || !confirm('Excluir esta tarefa?')) return
     setSaving(true)
     try {
-      const res = await fetch(`${SURL}/rest/v1/tasks?id=eq.${editTask.id}`, { method: 'DELETE', headers: efHeaders() })
-      if (!res.ok) throw new Error(await res.text())
+      const data = await efCall('tarefas-manage', { op: 'task_delete', id: editTask.id })
+      if (data?.error) throw new Error(String(data.error))
       onSaved(); onClose()
     } catch (e: any) {
       setError(e.message || 'Erro ao excluir.')
@@ -830,7 +823,7 @@ function TaskModal({ initialStatus = 'todo', initialClientId, initialSetorId, ed
 // Page
 // ─────────────────────────────────────────────────────────────────────────────
 
-export default function TarefasPage() {
+function TarefasContent() {
   const router       = useRouter()
   const searchParams = useSearchParams()
   const sess         = getSession()
@@ -879,24 +872,21 @@ export default function TarefasPage() {
   const loadData = useCallback(async () => {
     const s = getSession()
     if (!s) return
-    const h = efHeaders()
 
-    const [tasksRes, colabRes, ngpData, setoresRes] = await Promise.all([
-      fetch(
-        `${SURL}/rest/v1/tasks?select=*,assignee:usuarios!tasks_assigned_to_fkey(id,nome,foto_url),cliente:usuarios!tasks_client_id_fkey(id,nome,username,foto_url),setor:task_setores(id,nome,cor,ordem,ativo)&order=created_at.desc`,
-        { headers: h }
-      ),
-      fetch(`${SURL}/rest/v1/usuarios?select=id,nome,foto_url&order=nome.asc`, { headers: h }),
+    const [bootstrap, ngpData] = await Promise.all([
+      efCall('tarefas-manage', {
+        op: 'bootstrap',
+        client_id_filter: filters.client_id || null,
+      }, { silent: true }),
       efCall('get-ngp-data'),
-      fetch(`${SURL}/rest/v1/task_setores?select=*&ativo=eq.true${filters.client_id ? `&client_id=eq.${filters.client_id}` : '&client_id=is.null'}&order=ordem.asc`, { headers: h }),
     ])
 
-    if (tasksRes.ok) setAllTasks(await tasksRes.json())
-    if (colabRes.ok) setColaboradores(await colabRes.json())
+    if (Array.isArray(bootstrap?.tasks)) setAllTasks(bootstrap.tasks as Task[])
+    if (Array.isArray(bootstrap?.colaboradores)) setColaboradores(bootstrap.colaboradores as TaskAssignee[])
+    if (Array.isArray(bootstrap?.setores)) setSetores(bootstrap.setores as TaskSetor[])
     if (ngpData?.clientes) setClientes(ngpData.clientes as any[])
-    if (setoresRes.ok) setSetores(await setoresRes.json())
     setLoading(false)
-  }, [])
+  }, [filters.client_id])
 
   useEffect(() => { loadData() }, [loadData])
 
@@ -941,33 +931,23 @@ export default function TarefasPage() {
       client_id: filters.client_id || null,
       setor_id: filters.setor_id || null,
       priority: 'medium',
-      ativo: true
     }
 
     try {
-      const res = await fetch(`${SURL}/rest/v1/tasks`, {
-        method: 'POST',
-        headers: { ...efHeaders(), Prefer: 'return=representation' },
-        body: JSON.stringify(payload),
-      })
-      
-      if (!res.ok) {
-        const errText = await res.text()
-        console.error('Erro DB:', errText)
-        alert('Erro ao salvar no banco: ' + errText)
+      const data = await efCall('tarefas-manage', { op: 'task_create', payload })
+      if (data?.error) {
+        alert('Erro ao salvar tarefa: ' + data.error)
         return
       }
-      
       await loadData()
     } catch (err) {
-      console.error('Erro conexão:', err)
       alert('Erro de conexão ao salvar tarefa.')
     }
   }
 
   async function handleDeleteTask(id: string) {
     if (!confirm('Excluir tarefa?')) return
-    await fetch(`${SURL}/rest/v1/tasks?id=eq.${id}`, { method: 'DELETE', headers: efHeaders() })
+    await efCall('tarefas-manage', { op: 'task_delete', id })
     await loadData()
   }
 
@@ -1139,5 +1119,13 @@ export default function TarefasPage() {
         />
       )}
     </div>
+  )
+}
+
+export default function TarefasPage() {
+  return (
+    <Suspense fallback={<NGPLoading />}>
+      <TarefasContent />
+    </Suspense>
   )
 }

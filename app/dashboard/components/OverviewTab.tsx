@@ -1,6 +1,8 @@
 'use client'
-import React from 'react'
+import React, { useState, useEffect } from 'react'
+import Image from 'next/image'
 import { fmt, fmtN, fmtI } from '@/lib/utils'
+import { debounce } from '@/lib/fetch-utils'
 import { Cliente, Relatorio } from '@/types'
 import { OverviewRow, BudgetAlert, OVERVIEW_COLUMNS, BG_COLORS, Tab, Viewing } from '../types'
 import { formatSignedPct, getOverviewDeltaMeta } from '../dashboard-utils'
@@ -48,7 +50,7 @@ interface OverviewTabProps {
   onApplyPeriod: (dp: any, label: string, cmp?: any, cmpLbl?: string) => void
 }
 
-export default function OverviewTab({
+const OverviewTab = React.memo(function OverviewTab({
   initLoad, overviewLoading, overviewError, search, cmpLabel, periodLabel,
   visibleOverviewCols, colMenuOpen, colMenuRef, overviewLastUpdated, overviewAutoRefresh,
   filteredOverviewRows, overviewTotals, overviewTotalsCtr, overviewTotalsPrevCtr,
@@ -57,6 +59,15 @@ export default function OverviewTab({
   onSetSearch, onSetColMenuOpen, onToggleColumn, onSetAutoRefresh,
   onLoadOverviewData, onSelectAccount, onOpenModal,
 }: OverviewTabProps) {
+  // Estado local para o input — debounce de 250ms antes de propagar ao pai
+  const [inputValue, setInputValue] = useState(search)
+  useEffect(() => { setInputValue(search) }, [search])
+  useEffect(() => {
+    const debouncedSet = debounce(onSetSearch, 250)
+    debouncedSet(inputValue)
+    return debouncedSet.cancel
+  }, [inputValue]) // eslint-disable-line react-hooks/exhaustive-deps
+
   return (
     <>
       <div className={styles.overviewToolbar}>
@@ -64,7 +75,7 @@ export default function OverviewTab({
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width={16} height={16}>
             <circle cx="11" cy="11" r="8" /><path d="m21 21-4.35-4.35" />
           </svg>
-          <input value={search} onChange={e => onSetSearch(e.target.value)} placeholder="Buscar cliente ou conta..." />
+          <input value={inputValue} onChange={e => setInputValue(e.target.value)} placeholder="Buscar cliente ou conta..." />
         </div>
 
         <label className={styles.overviewSwitchWrap}>
@@ -173,7 +184,7 @@ export default function OverviewTab({
                             <div className={styles.overviewProjectCell}>
                               <div className={styles.overviewProjectAvatar} style={{ background: BG_COLORS[index % BG_COLORS.length] }}>
                                 {row.client.foto_url
-                                  ? <img src={row.client.foto_url} alt={row.client.nome} onError={e => (e.currentTarget.style.display = 'none')} />
+                                  ? <Image src={row.client.foto_url} alt={row.client.nome} width={32} height={32} style={{ objectFit: 'cover', borderRadius: '50%' }} />
                                   : row.client.nome.slice(0, 2).toUpperCase()}
                               </div>
                               <div>
@@ -358,4 +369,6 @@ export default function OverviewTab({
       }
     </>
   )
-}
+})
+
+export default OverviewTab

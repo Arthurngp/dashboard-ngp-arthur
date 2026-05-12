@@ -3,8 +3,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { getSession } from '@/lib/auth'
-import { SURL } from '@/lib/constants'
-import { efHeaders } from '@/lib/api'
+import { efCall } from '@/lib/api'
 import Sidebar from '@/components/Sidebar'
 import NGPLoading from '@/components/NGPLoading'
 import { TaskSetor, TaskSetorPayload } from '@/types/tasks'
@@ -58,12 +57,12 @@ function SetorRow({ setor, onSaved, onDeleted }: {
   async function save() {
     setSaving(true)
     try {
-      const res = await fetch(`${SURL}/rest/v1/task_setores?id=eq.${setor.id}`, {
-        method: 'PATCH',
-        headers: { ...efHeaders(), Prefer: 'return=representation' },
-        body: JSON.stringify({ nome, cor, ativo }),
+      const data = await efCall('tarefas-manage', {
+        op: 'setor_update',
+        id: setor.id,
+        payload: { nome, cor, ativo },
       })
-      if (!res.ok) throw new Error(await res.text())
+      if (data?.error) throw new Error(String(data.error))
       setDirty(false)
       onSaved()
     } finally {
@@ -75,11 +74,11 @@ function SetorRow({ setor, onSaved, onDeleted }: {
     if (!confirm(`Excluir o setor "${setor.nome}"? Tarefas vinculadas ficarão sem setor.`)) return
     setSaving(true)
     try {
-      const res = await fetch(`${SURL}/rest/v1/task_setores?id=eq.${setor.id}`, {
-        method: 'DELETE',
-        headers: efHeaders(),
+      const data = await efCall('tarefas-manage', {
+        op: 'setor_delete',
+        id: setor.id,
       })
-      if (!res.ok) throw new Error(await res.text())
+      if (data?.error) throw new Error(String(data.error))
       onDeleted()
     } finally {
       setSaving(false)
@@ -144,8 +143,8 @@ export default function TarefasConfigPage() {
   }, [])
 
   const load = useCallback(async () => {
-    const res = await fetch(`${SURL}/rest/v1/task_setores?select=*&order=ordem.asc`, { headers: efHeaders() })
-    if (res.ok) setSetores(await res.json())
+    const data = await efCall('tarefas-manage', { op: 'setores_list_all' }, { silent: true })
+    if (Array.isArray(data?.setores)) setSetores(data.setores as TaskSetor[])
     setLoading(false)
   }, [])
 
@@ -156,12 +155,11 @@ export default function TarefasConfigPage() {
     setAdding(true); setError('')
     const maxOrdem = setores.length ? Math.max(...setores.map((s) => s.ordem)) + 1 : 1
     try {
-      const res = await fetch(`${SURL}/rest/v1/task_setores`, {
-        method: 'POST',
-        headers: { ...efHeaders(), Prefer: 'return=representation' },
-        body: JSON.stringify({ nome: newNome.trim(), cor: newCor, ordem: maxOrdem, ativo: true }),
+      const data = await efCall('tarefas-manage', {
+        op: 'setor_create',
+        payload: { nome: newNome.trim(), cor: newCor, ordem: maxOrdem, ativo: true },
       })
-      if (!res.ok) throw new Error(await res.text())
+      if (data?.error) throw new Error(String(data.error))
       setNewNome(''); setNewCor('#3b82f6')
       await load()
     } catch (e: any) {
@@ -176,7 +174,7 @@ export default function TarefasConfigPage() {
   if (loading) {
     return (
       <div className={styles.layout}>
-        <Sidebar showDashboardNav={false} minimal setoresOnlyOpen />
+        <Sidebar showDashboardNav={false} minimal />
         <main className={styles.main}>
           <div className={styles.loadingWrap}><NGPLoading /></div>
         </main>
@@ -186,7 +184,7 @@ export default function TarefasConfigPage() {
 
   return (
     <div className={styles.layout}>
-      <Sidebar showDashboardNav={false} minimal setoresOnlyOpen />
+      <Sidebar showDashboardNav={false} minimal />
 
       <main className={styles.main}>
         <div className={styles.content}>

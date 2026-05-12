@@ -56,7 +56,7 @@ serve(async (req) => {
     // deno-lint-ignore no-explicit-any
     let query: any = sb
       .from('ponto_registros')
-      .select('id, tipo_registro, created_at, usuario_id')
+      .select('id, tipo_registro, created_at, usuario_id, observacao, anexo_path, anexo_mime, anexo_size')
       .is('deleted_at', null)
       .gte('created_at', startUtc)
       .lt('created_at', endUtc)
@@ -71,6 +71,26 @@ serve(async (req) => {
     if (fetchError) {
       console.error('[get-ponto-mes] Fetch error:', fetchError)
       return json(req, { error: 'Erro ao buscar registros.' }, 500)
+    }
+
+    // Primeira batida histórica por usuário (cutoff): dias antes não devem
+    // contar como negativos. Escopo: admin recebe de todos; user só do próprio.
+    // deno-lint-ignore no-explicit-any
+    let firstQuery: any = sb
+      .from('ponto_registros')
+      .select('usuario_id, created_at')
+      .is('deleted_at', null)
+      .order('created_at', { ascending: true })
+      .limit(5000)
+    if (!isAdminUser || !admin_all) {
+      firstQuery = firstQuery.eq('usuario_id', sessao.usuario_id)
+    }
+    const { data: allRows } = await firstQuery
+    // deno-lint-ignore no-explicit-any
+    const firstByUser: Record<string, string> = {}
+    for (const r of (allRows || []) as any[]) {
+      const cur = firstByUser[r.usuario_id]
+      if (!cur || r.created_at < cur) firstByUser[r.usuario_id] = r.created_at
     }
 
     // Se admin, busca nomes de todos os usuários envolvidos
@@ -91,10 +111,10 @@ serve(async (req) => {
         usuario_nome: userMap[r.usuario_id] || r.usuario_id,
       }))
 
-      return json(req, { records: enriched, is_admin: true })
+      return json(req, { records: enriched, is_admin: true, first_by_user: firstByUser })
     }
 
-    return json(req, { records: records || [], is_admin: isAdminUser })
+    return json(req, { records: records || [], is_admin: isAdminUser, first_by_user: firstByUser })
 
   } catch (e) {
     console.error('[get-ponto-mes] Error:', e)

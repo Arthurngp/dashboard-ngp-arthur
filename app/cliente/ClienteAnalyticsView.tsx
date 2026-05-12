@@ -8,7 +8,7 @@ import { getSession, clearSession } from '@/lib/auth'
 import { metaCall } from '@/lib/meta'
 import { parseIns, fmt, fmtN, fmtI } from '@/lib/utils'
 import { SURL, ANON } from '@/lib/constants'
-import { efHeaders } from '@/lib/api'
+import { efCall, efHeaders } from '@/lib/api'
 import { Campaign, DateParam, Relatorio } from '@/types'
 import PeriodFilter from '@/components/PeriodFilter'
 import MetaAnalysisPanel from '@/components/MetaAnalysisPanel'
@@ -132,13 +132,9 @@ export default function ClienteAnalyticsView() {
   async function loadRelatorios() {
     const s = getSession()
     if (!s) return
-    try {
-      const res = await fetch(
-        `${SURL}/rest/v1/relatorios?cliente_username=eq.${encodeURIComponent(s.username)}&select=id,titulo,periodo,updated_at&order=updated_at.desc&limit=20`,
-        { headers: { apikey: ANON, Authorization: `Bearer ${s.session}` } }
-      )
-      if (res.ok) setRelatorios(await res.json())
-    } catch {}
+    const data = await efCall('get-relatorios', { cliente_username: s.username }, { silent: true })
+    const lista = (data?.relatorios as Relatorio[] | undefined) || []
+    setRelatorios(lista.slice(0, 20))
   }
 
   async function deleteRelatorio(id: string) {

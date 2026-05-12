@@ -219,14 +219,14 @@ const SETORES: Setor[] = [
         <path d="M17 6.5c0-1.9-2.2-3.5-5-3.5s-5 1.6-5 3.5 2.2 3.5 5 3.5 5 1.6 5 3.5-2.2 3.5-5 3.5-5-1.6-5-3.5"/>
       </svg>
     ),
-    href: 'https://financeiro.grupongp.com.br',
-    external: true,
-    embed: true, // abre inline no NGP Space
+    href: '/financeiro/dashboard',
+    external: false,
+    embed: false,
     gradient: 'linear-gradient(135deg,#059669,#14b8a6)',
   },
   {
     id: 'trackeamento',
-    title: 'Trackeamento',
+    title: 'NGP Forms',
     desc: 'UTMs, pixels, eventos e análise de jornada de conversão.',
     icon: (
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -238,8 +238,8 @@ const SETORES: Setor[] = [
         <circle cx="12" cy="12" r="1.5"/>
       </svg>
     ),
-    href: '#',
-    external: true,
+    href: '/trackeamento',
+    external: false,
     embed: false,
     gradient: 'linear-gradient(135deg,#7c3aed,#ec4899)',
   },

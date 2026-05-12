@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
+import Image from 'next/image'
 import ProfileModal from '@/components/ProfileModal'
 import Sidebar from '@/components/Sidebar'
 import { clearSession, getSession } from '@/lib/auth'
@@ -78,7 +79,7 @@ export default function ClienteToolsPage() {
         <header className={styles.header}>
           <div className={styles.headerLeft}>
             <div className={styles.logo}>
-              <img src="/logos/logo-vertical.png" alt="NGP Space" style={{ height: '36px', width: 'auto', objectFit: 'contain' }} />
+              <Image src="/logos/logo-vertical.png" alt="NGP Space" height={36} width={120} style={{ objectFit: 'contain' }} />
             </div>
             <div className={styles.clienteBadge}>👤 Área do Cliente</div>
           </div>

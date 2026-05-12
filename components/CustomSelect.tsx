@@ -1,5 +1,6 @@
 'use client'
-import React, { useState, useRef, useEffect } from 'react'
+import React, { useState, useRef, useEffect, useCallback } from 'react'
+import { createPortal } from 'react-dom'
 import styles from './CustomSelect.module.css'
 
 export interface SelectOption {
@@ -19,17 +20,51 @@ interface CustomSelectProps {
   placeholder?: string
   className?: string
   disabled?: boolean
+  createOptionLabel?: string
+  onCreateOption?: () => void
+  searchable?: boolean
+  /** Renderiza o menu via portal (position:fixed) — use dentro de modais com overflow */
+  menuFixed?: boolean
 }
 
-export default function CustomSelect({ label, caption, value, options, onChange, placeholder = 'Selecionar...', className, disabled }: CustomSelectProps) {
+export default function CustomSelect({
+  label,
+  caption,
+  value,
+  options,
+  onChange,
+  placeholder = 'Selecionar...',
+  className,
+  disabled,
+  createOptionLabel = '+ Cadastrar',
+  onCreateOption,
+  searchable = true,
+  menuFixed,
+}: CustomSelectProps) {
   const [isOpen, setIsOpen] = useState(false)
   const [openUp, setOpenUp] = useState(false)
+  const [menuStyle, setMenuStyle] = useState<React.CSSProperties>({})
+  const [search, setSearch] = useState('')
   const containerRef = useRef<HTMLDivElement>(null)
+  const menuRef = useRef<HTMLDivElement>(null)
   const selectedOption = options.find(o => o.id === value)
+  const shouldShowSearch = searchable && options.length >= 6
+  const filteredOptions = options.filter(option => {
+    const q = search.trim().toLowerCase()
+    if (!q) return true
+    return `${option.label} ${option.subLabel || ''}`.toLowerCase().includes(q)
+  })
+
+  useEffect(() => {
+    if (!isOpen) setSearch('')
+  }, [isOpen])
 
   useEffect(() => {
     function handleClickOutside(event: MouseEvent) {
-      if (containerRef.current && !containerRef.current.contains(event.target as Node)) {
+      const target = event.target as Node
+      const clickedContainer = containerRef.current?.contains(target)
+      const clickedMenu = menuRef.current?.contains(target)
+      if (!clickedContainer && !clickedMenu) {
         setIsOpen(false)
       }
     }
@@ -41,14 +76,75 @@ export default function CustomSelect({ label, caption, value, options, onChange,
     if (isOpen && containerRef.current) {
       const rect = containerRef.current.getBoundingClientRect()
       const spaceBelow = window.innerHeight - rect.bottom
-      // Se houver menos de 300px abaixo e houver mais espaço acima, abre pra cima
-      if (spaceBelow < 300 && rect.top > 300) {
-        setOpenUp(true)
-      } else {
-        setOpenUp(false)
+      const goUp = spaceBelow < 300 && rect.top > 300
+      setOpenUp(goUp)
+
+      if (menuFixed) {
+        setMenuStyle(goUp
+          ? { position: 'fixed', bottom: window.innerHeight - rect.top + 8, left: rect.left, width: rect.width, top: 'auto' }
+          : { position: 'fixed', top: rect.bottom + 8, left: rect.left, width: rect.width }
+        )
       }
     }
-  }, [isOpen])
+  }, [isOpen, menuFixed])
+
+  const menu = (
+    <div
+      ref={menuRef}
+      className={`${styles.menu} ${openUp ? styles.menuUp : ''}`}
+      style={menuFixed ? { ...menuStyle, zIndex: 99999 } : undefined}
+    >
+      {shouldShowSearch && (
+        <div className={styles.searchWrap}>
+          <input
+            type="text"
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            placeholder="Pesquisar..."
+            className={styles.searchInput}
+          />
+        </div>
+      )}
+      {filteredOptions.map(option => {
+        const isActive = option.id === value
+        return (
+          <button
+            key={option.id}
+            type="button"
+            className={`${styles.option} ${isActive ? styles.optionActive : ''}`}
+            onClick={() => { onChange(option.id); setIsOpen(false) }}
+          >
+            {option.image && <img src={option.image} alt="" className={styles.optionImage} />}
+            {option.icon && <span className={styles.optionIcon}>{option.icon}</span>}
+            <div className={styles.optionInfo}>
+              <div className={styles.optionLabel}>{option.label}</div>
+              {option.subLabel && <div className={styles.optionSubLabel}>{option.subLabel}</div>}
+            </div>
+            {isActive && <span className={styles.checkmark}>✓</span>}
+          </button>
+        )
+      })}
+      {filteredOptions.length === 0 && (
+        <div className={styles.emptyState}>Nenhuma opção encontrada.</div>
+      )}
+      {onCreateOption && (
+        <button
+          type="button"
+          className={`${styles.option} ${styles.optionCreate}`}
+          onClick={() => {
+            setIsOpen(false)
+            onCreateOption()
+          }}
+        >
+          <span className={styles.optionCreateIcon}>+</span>
+          <div className={styles.optionInfo}>
+            <div className={styles.optionLabel}>{createOptionLabel}</div>
+            <div className={styles.optionSubLabel}>Criar uma nova opção sem sair daqui</div>
+          </div>
+        </button>
+      )}
+    </div>
+  )
 
   return (
     <div className={`${styles.container} ${className || ''}`} ref={containerRef}>
@@ -71,30 +167,9 @@ export default function CustomSelect({ label, caption, value, options, onChange,
       </button>
 
       {isOpen && (
-        <div className={`${styles.menu} ${openUp ? styles.menuUp : ''}`}>
-          {options.map(option => {
-            const isActive = option.id === value
-            return (
-              <button
-                key={option.id}
-                type="button"
-                className={`${styles.option} ${isActive ? styles.optionActive : ''}`}
-                onClick={() => {
-                  onChange(option.id)
-                  setIsOpen(false)
-                }}
-              >
-                {option.image && <img src={option.image} alt="" className={styles.optionImage} />}
-                {option.icon && <span className={styles.optionIcon}>{option.icon}</span>}
-                <div className={styles.optionInfo}>
-                  <div className={styles.optionLabel}>{option.label}</div>
-                  {option.subLabel && <div className={styles.optionSubLabel}>{option.subLabel}</div>}
-                </div>
-                {isActive && <span className={styles.checkmark}>✓</span>}
-              </button>
-            )
-          })}
-        </div>
+        menuFixed
+          ? createPortal(menu, document.body)
+          : menu
       )}
     </div>
   )

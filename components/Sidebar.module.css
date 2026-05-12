@@ -1,11 +1,12 @@
-:root {
-  --workspace-topbar-height: 88px;
-}
-
 .shell {
   position: relative;
   width: 310px;
   flex-shrink: 0;
+  transition: width 0.18s ease;
+}
+
+.shellCollapsed {
+  width: 0;
 }
 
 .shell + * {
@@ -34,6 +35,52 @@
     linear-gradient(180deg, rgba(239, 246, 255, 0.74), rgba(255, 255, 255, 0.98));
   box-shadow: 0 18px 48px rgba(15, 23, 42, 0.08);
   overflow-y: auto;
+  transition: transform 0.18s ease, opacity 0.18s ease;
+}
+
+.sidebarCollapsed {
+  transform: translateX(-118%);
+  opacity: 0;
+  pointer-events: none;
+}
+
+.collapseToggle {
+  position: absolute;
+  top: 30px;
+  left: 100%;
+  z-index: 222;
+  width: 34px;
+  height: 34px;
+  margin-left: 286px;
+  border-radius: 999px;
+  border: 1px solid rgba(191, 219, 254, 0.32);
+  background: rgba(15, 23, 42, 0.9);
+  color: #e2e8f0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 12px 24px rgba(15, 23, 42, 0.18);
+  transition: margin-left 0.18s ease, background 0.16s ease, transform 0.16s ease;
+}
+
+.collapseToggle:hover {
+  background: rgba(30, 41, 59, 0.96);
+  transform: translateX(1px);
+}
+
+.collapseToggleCollapsed {
+  margin-left: 8px;
+}
+
+.collapseToggleChevron {
+  font-size: 20px;
+  line-height: 1;
+  transform: translateX(-1px);
+  transition: transform 0.18s ease;
+}
+
+.collapseToggleChevronCollapsed {
+  transform: rotate(180deg) translateX(-1px);
 }
 
 .sidebarHead {
@@ -279,6 +326,14 @@
     margin-left: 16px;
     padding: 20px 16px;
   }
+
+  .collapseToggle {
+    margin-left: 256px;
+  }
+
+  .collapseToggleCollapsed {
+    margin-left: 8px;
+  }
 }
 
 
@@ -440,6 +495,10 @@
     width: 0;
   }
 
+  .shellCollapsed {
+    width: 0;
+  }
+
   .shell + * {
     height: calc(100dvh - 76px);
   }
@@ -469,8 +528,18 @@
     z-index: 221;
   }
 
+  .sidebarCollapsed {
+    transform: translateX(-105%);
+    opacity: 1;
+    pointer-events: auto;
+  }
+
   .sidebarOpen {
     transform: translateX(0);
+  }
+
+  .collapseToggle {
+    display: none;
   }
 
   .configBubble {

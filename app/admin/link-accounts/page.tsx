@@ -6,6 +6,7 @@ import { SURL } from '@/lib/constants'
 import { efHeaders } from '@/lib/api'
 import Sidebar from '@/components/Sidebar'
 import CustomSelect from '@/components/CustomSelect'
+import Image from 'next/image'
 import styles from './link-accounts.module.css'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -161,13 +162,9 @@ export default function LinkAccountsPage() {
 
   if (!sess) return null
 
-  const sectorNav = [
-    { icon: <IcoLink />,  label: 'Vincular Contas',     href: '/admin/link-accounts' },
-  ]
-
   return (
     <div className={styles.layout}>
-      <Sidebar showDashboardNav={false} minimal sectorNav={sectorNav} sectorNavTitle="ADMINISTRAÇÃO" />
+      <Sidebar showDashboardNav={false} minimal />
 
       <main className={styles.main}>
         <div className={styles.content}>
@@ -208,7 +205,7 @@ export default function LinkAccountsPage() {
                     <div key={cliente.id} className={styles.clienteCard}>
                       <div className={styles.clienteInfo}>
                         {cliente.foto_url
-                          ? <img src={cliente.foto_url} alt={cliente.nome} className={styles.clienteAvatar} />
+                          ? <Image src={cliente.foto_url} alt={cliente.nome} className={styles.clienteAvatar} width={40} height={40} />
                           : <div className={styles.clienteAvatarFallback}>{cliente.nome.slice(0,2).toUpperCase()}</div>
                         }
                         <div>
@@ -326,7 +323,7 @@ export default function LinkAccountsPage() {
                             <td>
                               <div className={styles.userCell}>
                                 <div className={styles.avatar}>
-                                  {u.foto_url ? <img src={u.foto_url} alt="" /> : u.nome.slice(0,2).toUpperCase()}
+                                  {u.foto_url ? <Image src={u.foto_url} alt={u.nome} width={32} height={32} style={{ objectFit: 'cover', borderRadius: '50%' }} /> : u.nome.slice(0,2).toUpperCase()}
                                 </div>
                                 <span className={styles.userName}>{u.nome}</span>
                               </div>

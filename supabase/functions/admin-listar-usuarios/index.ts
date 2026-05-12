@@ -19,7 +19,7 @@ serve(async (req) => {
 
     const { data: usuarios, error } = await sb
       .from('usuarios')
-      .select('id, nome, username, role, ativo, created_at, foto_url')
+      .select('id, nome, username, role, ativo, created_at, foto_url, acesso_financeiro')
       .order('created_at', { ascending: false })
 
     if (error) return json(req, { error: 'Erro ao buscar usuários.' }, 500)

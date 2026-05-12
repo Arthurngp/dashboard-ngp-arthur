@@ -6,6 +6,7 @@ import { usePathname, useRouter, useSearchParams } from 'next/navigation'
 import { getSession } from '@/lib/auth'
 import { SURL, ANON } from '@/lib/constants'
 import { efHeaders, efCall } from '@/lib/api'
+import { getAdminNavigation } from '@/lib/admin-navigation'
 import WorkspaceTopbar from './WorkspaceTopbar'
 import styles from './Sidebar.module.css'
 import { TaskCliente, TaskSetor } from '@/types/tasks'
@@ -19,6 +20,8 @@ interface Props {
   sectorNav?: NavItem[]
   sectorNavTitle?: string
   setoresOnlyOpen?: boolean
+  allowDesktopCollapse?: boolean
+  collapseStorageKey?: string
 }
 
 interface NavItem {
@@ -152,28 +155,43 @@ const Ico = ({
   </svg>
 )
 
-const cadastrarNav: NavItem[] = [
-  {
-    icon: <Ico><rect x="3" y="3" width="18" height="18" rx="2" /><line x1="3" y1="9" x2="21" y2="9" /><line x1="8" y1="3" x2="8" y2="21" /></Ico>,
-    label: 'Cadastros',
-    href: '/admin/usuarios?tab=clientes',
-  },
-  {
-    icon: <Ico><path d="M10 13a5 5 0 007.54.54l3-3a5 5 0 00-7.07-7.07l-1.72 1.71" /><path d="M14 11a5 5 0 00-7.54-.54l-3 3a5 5 0 007.07 7.07l1.71-1.71" /></Ico>,
-    label: 'Contas de Anúncio',
-    href: '/admin/contas',
-  },
-  {
-    icon: <Ico><path d="M21 8v13H3V8" /><path d="M1 3h22v5H1z" /><path d="M10 12h4" /></Ico>,
-    label: 'Clientes Arquivados',
-    href: '/admin/clientes-arquivados',
-  },
-  {
-    icon: <Ico><path d="M12 20h9" /><path d="M12 4h9" /><path d="M4 9h16" /><path d="M4 15h16" /><path d="M8 4v16" /></Ico>,
-    label: 'Setores de Tarefas',
-    href: '/tarefas/config',
-  },
-]
+function getAdminNavItems(role?: string): NavItem[] {
+  return getAdminNavigation(role).map((item) => {
+    let icon: React.ReactNode
+
+    switch (item.id) {
+      case 'cadastros':
+        icon = <Ico><rect x="3" y="3" width="18" height="18" rx="2" /><line x1="3" y1="9" x2="21" y2="9" /><line x1="8" y1="3" x2="8" y2="21" /></Ico>
+        break
+      case 'contas':
+        icon = <Ico><path d="M10 13a5 5 0 007.54.54l3-3a5 5 0 00-7.07-7.07l-1.72 1.71" /><path d="M14 11a5 5 0 00-7.54-.54l-3 3a5 5 0 007.07 7.07l1.71-1.71" /></Ico>
+        break
+      case 'clientes-arquivados':
+        icon = <Ico><path d="M21 8v13H3V8" /><path d="M1 3h22v5H1z" /><path d="M10 12h4" /></Ico>
+        break
+      case 'setores-tarefas':
+        icon = <Ico><path d="M12 20h9" /><path d="M12 4h9" /><path d="M4 9h16" /><path d="M4 15h16" /><path d="M8 4v16" /></Ico>
+        break
+      case 'integracoes':
+        icon = <Ico><path d="M12 3v4" /><path d="M12 17v4" /><path d="M3 12h4" /><path d="M17 12h4" /><circle cx="12" cy="12" r="4" /></Ico>
+        break
+      case 'api-docs':
+        icon = <Ico><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z" /><polyline points="14 2 14 8 20 8" /><line x1="9" y1="13" x2="15" y2="13" /><line x1="9" y1="17" x2="13" y2="17" /></Ico>
+        break
+      case 'feedback':
+        icon = <Ico><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z" /></Ico>
+        break
+      default:
+        icon = <Ico><circle cx="12" cy="12" r="8" /></Ico>
+    }
+
+    return {
+      icon,
+      label: item.label,
+      href: item.href,
+    }
+  })
+}
 
 function getSetoresNavItems(): NavItem[] {
   return [
@@ -191,7 +209,7 @@ function getSetoresNavItems(): NavItem[] {
     {
       icon: <Ico><path d="M12 2v20" /><path d="M17 6.5c0-1.9-2.2-3.5-5-3.5s-5 1.6-5 3.5 2.2 3.5 5 3.5 5 1.6 5 3.5-2.2 3.5-5 3.5-5-1.6-5-3.5" /></Ico>,
       label: 'Financeiro',
-      href: 'https://financeiro.grupongp.com.br',
+      href: '/financeiro/dashboard',
     },
     {
       icon: <Ico><circle cx="9" cy="8" r="3" /><path d="M3 19c0-3.3 2.7-6 6-6s6 2.7 6 6" /><circle cx="18" cy="9" r="2.5" /><path d="M15.5 19c.3-2.1 2.1-3.8 4.3-4.1" /></Ico>,
@@ -210,9 +228,8 @@ function getSetoresNavItems(): NavItem[] {
     },
     {
       icon: <Ico><path d="M12 3v3" /><path d="M21 12h-3" /><path d="M12 21v-3" /><path d="M3 12h3" /><circle cx="12" cy="12" r="6" /><circle cx="12" cy="12" r="1.5" /></Ico>,
-      label: 'Trackeamento',
-      href: '#',
-      badge: 'breve',
+      label: 'NGP Forms',
+      href: '/trackeamento',
     },
     {
       icon: <Ico><rect x="3" y="5" width="18" height="14" rx="2" /><path d="M3 10h18" /><path d="M8 3v4" /><path d="M16 3v4" /></Ico>,
@@ -270,7 +287,14 @@ function getAutoSectorNav(pathname: string, role?: string): { title: string; nav
   if (pathname.startsWith('/admin')) {
     return {
       title: 'ADMINISTRAÇÃO',
-      nav: cadastrarNav,
+      nav: getAdminNavItems(role),
+    }
+  }
+
+  if (pathname.startsWith('/tarefas/config')) {
+    return {
+      title: 'ADMINISTRAÇÃO',
+      nav: getAdminNavItems(role),
     }
   }
 
@@ -392,6 +416,8 @@ function getTopbarActiveId(pathname: string): 'pessoas' | 'comercial' | 'comerci
   if (pathname.startsWith('/dashboard') || pathname.startsWith('/relatorio') || pathname.startsWith('/utm-builder') || pathname.startsWith('/ia-analise')) return 'reports'
   if (pathname.startsWith('/tarefas')) return 'tarefas'
   if (pathname.startsWith('/pessoas')) return 'pessoas'
+  if (pathname.startsWith('/financeiro')) return 'financeiro'
+  if (pathname.startsWith('/trackeamento')) return 'trackeamento'
   if (pathname.startsWith('/comercial-digital')) return 'comercial-digital'
   if (pathname.startsWith('/comercial')) return 'comercial'
   return undefined
@@ -406,6 +432,8 @@ function getTopbarSubtitle(pathname: string, sectorTitle?: string, isClient?: bo
   }
   if (pathname.startsWith('/tarefas')) return 'Gestão de Tarefas'
   if (pathname.startsWith('/pessoas')) return 'Pessoas'
+  if (pathname.startsWith('/financeiro')) return 'Financeiro'
+  if (pathname.startsWith('/trackeamento')) return 'NGP Forms'
   if (pathname.startsWith('/comercial-digital')) return 'Comercial digital'
   if (pathname.startsWith('/comercial')) return 'Comercial'
   return 'Operação e setores'
@@ -414,14 +442,16 @@ function getTopbarSubtitle(pathname: string, sectorTitle?: string, isClient?: bo
 function getContextDescription(pathname: string, title: string, isClient: boolean, setoresOnlyOpen: boolean) {
   if (setoresOnlyOpen) return 'Acesse os módulos principais do Space e avance para a área que faz sentido agora.'
   if (isClient) return 'Navegação contextual da área liberada para o cliente, sem misturar com a operação interna.'
+  if (title === 'ADMINISTRAÇÃO') return 'Acesso administrativo para cadastros, vínculos, clientes arquivados e estrutura operacional.'
   if (pathname.startsWith('/dashboard') || pathname.startsWith('/relatorio') || pathname.startsWith('/utm-builder') || pathname.startsWith('/ia-analise')) {
     return 'Ferramentas, rotas e ações do setor de dados concentradas em um único contexto.'
   }
   if (pathname.startsWith('/tarefas')) return 'Gerencie tarefas da equipe em um Kanban visual com prioridades e responsáveis.'
   if (pathname.startsWith('/pessoas')) return 'Acompanhe registros, cadastros e operações da equipe neste contexto.'
+  if (pathname.startsWith('/financeiro')) return 'Controle entradas, saídas, contas e cadastros financeiros no novo módulo interno.'
+  if (pathname.startsWith('/trackeamento')) return 'Crie formulários, acompanhe respostas e leia a jornada de conversão em um único módulo.'
   if (pathname.startsWith('/comercial-digital')) return 'Fluxo do CRM digital, pipelines e gestão entregue aos clientes.'
   if (pathname.startsWith('/comercial')) return 'Rotas de pipeline, propostas, contratos e operação comercial da NGP.'
-  if (pathname.startsWith('/admin')) return 'Acesso administrativo para cadastros, vínculos e estrutura operacional.'
   return `Navegação contextual do setor ${title.toLowerCase()}.`
 }
 
@@ -455,6 +485,8 @@ function SidebarInner({
   sectorNav,
   sectorNavTitle,
   setoresOnlyOpen = false,
+  allowDesktopCollapse = false,
+  collapseStorageKey,
 }: Props) {
   const router = useRouter()
   const pathname = usePathname()
@@ -470,6 +502,7 @@ function SidebarInner({
   const [loading, setLoading]               = useState(false)
   const [showQuickSector, setShowQuickSector] = useState(false)
   const [quickSectorClientId, setQuickSectorClientId] = useState<string | undefined>(undefined)
+  const [desktopCollapsed, setDesktopCollapsed] = useState(false)
   const configWrapRef = useRef<HTMLDivElement | null>(null)
   const bubbleRef = useRef<HTMLDivElement | null>(null)
   const shellRef = useRef<HTMLDivElement | null>(null)
@@ -497,18 +530,38 @@ function SidebarInner({
   }, [])
 
   useEffect(() => {
-    if (!mounted || !pathname.startsWith('/tarefas')) return
+    if (!allowDesktopCollapse || !collapseStorageKey) return
+    try {
+      const stored = window.localStorage.getItem(collapseStorageKey)
+      setDesktopCollapsed(stored === '1')
+    } catch {
+      setDesktopCollapsed(false)
+    }
+  }, [allowDesktopCollapse, collapseStorageKey])
+
+  useEffect(() => {
+    if (!allowDesktopCollapse || !collapseStorageKey) return
+    try {
+      window.localStorage.setItem(collapseStorageKey, desktopCollapsed ? '1' : '0')
+    } catch {
+      // silencioso
+    }
+  }, [allowDesktopCollapse, collapseStorageKey, desktopCollapsed])
+
+  useEffect(() => {
+    if (!mounted || !pathname.startsWith('/tarefas') || pathname.startsWith('/tarefas/config')) return
     refreshTasksData()
   }, [pathname, mounted])
 
   const sess = mounted ? getSession() : null
   const isClient = sess?.role === 'cliente'
+  const adminNav = getAdminNavItems(sess?.role)
   const autoSector = getAutoSectorNav(pathname, sess?.role)
   let resolvedSectorNav = setoresOnlyOpen ? getSetoresNavItems() : sectorNav || autoSector?.nav || []
   const resolvedSectorTitle = setoresOnlyOpen ? 'SETORES' : sectorNavTitle || autoSector?.title || 'NAVEGAÇÃO'
 
   // Injetar pastas de clientes se estiver no setor de tarefas (Estilo ClickUp)
-  if (pathname.startsWith('/tarefas') && clients.length > 0) {
+  if (pathname.startsWith('/tarefas') && !pathname.startsWith('/tarefas/config') && clients.length > 0) {
     const clientsFolder: NavItem = {
       icon: <Ico><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" /></Ico>,
       label: 'Pastas de Clientes',
@@ -536,7 +589,7 @@ function SidebarInner({
     resolvedSectorNav = [...resolvedSectorNav, clientsFolder]
   }
 
-  const topbarSubtitle = getTopbarSubtitle(pathname, sectorNavTitle, isClient, setoresOnlyOpen)
+  const topbarSubtitle = getTopbarSubtitle(pathname, resolvedSectorTitle, isClient, setoresOnlyOpen)
   const contextDescription = getContextDescription(pathname, resolvedSectorTitle, isClient, setoresOnlyOpen)
   const topbarNavItems = isClient ? getClientTopNav(pathname, router) : undefined
 
@@ -596,6 +649,8 @@ function SidebarInner({
     fn()
     setMobileOpen(false)
   }
+
+  const canCollapseDesktop = allowDesktopCollapse && isDesktop
 
   const renderNav = (nav: NavItem[], depth = 0): React.ReactNode => nav.map((item) => {
     const isTabItem = !!onTabChange && !!item.tab
@@ -691,13 +746,31 @@ function SidebarInner({
         onLogout={onLogout}
       />
 
-      <div className={styles.shell} ref={shellRef}>
+      <div className={`${styles.shell} ${canCollapseDesktop && desktopCollapsed ? styles.shellCollapsed : ''}`} ref={shellRef}>
         <div
           className={`${styles.overlay} ${mobileOpen ? styles.overlayVisible : ''}`}
           onClick={() => setMobileOpen(false)}
         />
 
-        <aside className={`${styles.sidebar} ${mobileOpen ? styles.sidebarOpen : ''}`}>
+        {allowDesktopCollapse && (
+          <button
+            type="button"
+            className={`${styles.collapseToggle} ${canCollapseDesktop && desktopCollapsed ? styles.collapseToggleCollapsed : ''}`}
+            onClick={() => {
+              setDesktopCollapsed((prev) => !prev)
+              setShowConfigMenu(false)
+            }}
+            aria-label={desktopCollapsed ? 'Expandir barra lateral' : 'Recolher barra lateral'}
+            title={desktopCollapsed ? 'Expandir barra lateral' : 'Recolher barra lateral'}
+          >
+            <span className={`${styles.collapseToggleChevron} ${canCollapseDesktop && desktopCollapsed ? styles.collapseToggleChevronCollapsed : ''}`}>‹</span>
+          </button>
+        )}
+
+        <aside
+          className={`${styles.sidebar} ${mobileOpen ? styles.sidebarOpen : ''} ${canCollapseDesktop && desktopCollapsed ? styles.sidebarCollapsed : ''}`}
+          aria-hidden={canCollapseDesktop && desktopCollapsed}
+        >
           <div className={styles.sidebarHead}>
             <div className={styles.sidebarEyebrow}>{isClient ? 'Área' : 'Setor'}</div>
             <div className={styles.sidebarTitle}>{resolvedSectorTitle}</div>
@@ -738,7 +811,7 @@ function SidebarInner({
                     >
                       <div className={styles.configBubbleTitle}>Administração</div>
                       <div className={styles.configBubbleList}>
-                        {renderNav(cadastrarNav)}
+                        {renderNav(adminNav)}
                       </div>
                     </div>,
                     document.body
@@ -750,7 +823,7 @@ function SidebarInner({
                     >
                       <div className={styles.configBubbleTitle}>Administração</div>
                       <div className={styles.configBubbleList}>
-                        {renderNav(cadastrarNav)}
+                        {renderNav(adminNav)}
                       </div>
                     </div>
                   )

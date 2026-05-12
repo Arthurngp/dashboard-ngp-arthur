@@ -17,7 +17,7 @@ interface KpiSectionProps {
   items: KpiItem[]
 }
 
-export default function KpiSection({ title, cmpLabel, items }: KpiSectionProps) {
+const KpiSection = React.memo(function KpiSection({ title, cmpLabel, items }: KpiSectionProps) {
   return (
     <div style={{ background: '#fff', border: '1px solid #E5E5EA', borderRadius: 10, padding: '16px 20px', flex: '1 1 280px', minWidth: 280, maxWidth: 450, boxSizing: 'border-box' }}>
       <div style={{ fontSize: 11, fontWeight: 700, color: '#6E6E73', textTransform: 'uppercase', letterSpacing: '.07em', marginBottom: 14 }}>{title}</div>
@@ -60,4 +60,6 @@ export default function KpiSection({ title, cmpLabel, items }: KpiSectionProps) 
       </div>
     </div>
   )
-}
+})
+
+export default KpiSection

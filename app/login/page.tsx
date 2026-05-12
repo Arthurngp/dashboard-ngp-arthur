@@ -112,7 +112,7 @@ function LoginContent() {
           {/* Logo */}
           <div className={styles.logoArea}>
             <div className={styles.logoMark}>
-              <Image src="/logo-ngp.png" alt="NGP" width={140} height={80} style={{ objectFit: 'contain' }} />
+              <Image src="/logos/logo-ngp.png" alt="NGP" width={140} height={80} style={{ objectFit: 'contain' }} />
             </div>
             <div className={styles.logoText}>NGP <span>SPACE</span></div>
             <div className={styles.logoSub}>Sistema Geral</div>

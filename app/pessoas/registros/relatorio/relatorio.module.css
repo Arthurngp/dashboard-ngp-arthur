@@ -1,0 +1,251 @@
+.layout {
+  display: flex;
+  min-height: 100vh;
+  background: #f5f5f7;
+}
+.main {
+  flex: 1;
+  padding: 32px clamp(20px, 3vw, 48px);
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  overflow-y: auto;
+}
+.center { text-align: center; padding: 80px 20px; }
+
+.header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 16px;
+  flex-wrap: wrap;
+  padding-bottom: 18px;
+  border-bottom: 1px solid rgba(15, 23, 42, 0.06);
+}
+.back {
+  font-size: 13px;
+  color: #2563eb;
+  text-decoration: none;
+  display: inline-block;
+  margin-bottom: 6px;
+}
+.back:hover { text-decoration: underline; }
+.title {
+  font-size: 24px;
+  font-weight: 800;
+  color: #0f172a;
+  margin: 0;
+  letter-spacing: -0.02em;
+}
+.subtitle { font-size: 13px; color: #64748b; margin: 6px 0 0; }
+.muted { color: #64748b; font-size: 13px; }
+
+.actionsRow { display: flex; gap: 10px; }
+.btnPrimary {
+  padding: 10px 18px;
+  background: linear-gradient(135deg, #4f86f7 0%, #3b82f6 100%);
+  color: white;
+  border: none;
+  border-radius: 10px;
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+  box-shadow: 0 6px 16px rgba(59, 130, 246, 0.3);
+}
+.btnPrimary:hover:not(:disabled) { opacity: 0.92; }
+.btnPrimary:disabled { opacity: 0.5; cursor: not-allowed; box-shadow: none; }
+.btnSecondary {
+  padding: 10px 18px;
+  background: white;
+  color: #475569;
+  border: 1px solid rgba(15, 23, 42, 0.1);
+  border-radius: 10px;
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+}
+.btnSecondary:hover:not(:disabled) { background: #f5f5f7; }
+.btnSecondary:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.toast {
+  padding: 12px 16px;
+  border-radius: 10px;
+  font-size: 13px;
+}
+.toastOk { background: rgba(5, 150, 105, 0.08); color: #065f46; border: 1px solid rgba(5, 150, 105, 0.2); }
+.toastErr { background: rgba(220, 38, 38, 0.08); color: #991b1b; border: 1px solid rgba(220, 38, 38, 0.2); }
+
+.filters {
+  display: grid;
+  grid-template-columns: 2fr 1fr 1fr;
+  gap: 14px;
+  background: white;
+  padding: 18px;
+  border-radius: 14px;
+  border: 1px solid rgba(15, 23, 42, 0.05);
+}
+.filterField { display: flex; flex-direction: column; gap: 6px; }
+.filterField label {
+  font-size: 11px;
+  font-weight: 700;
+  color: #94a3b8;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.empty {
+  padding: 80px 20px;
+  text-align: center;
+  background: white;
+  border-radius: 14px;
+  border: 1px solid rgba(15, 23, 42, 0.05);
+  color: #94a3b8;
+  font-size: 14px;
+}
+
+.report {
+  background: white;
+  border-radius: 14px;
+  border: 1px solid rgba(15, 23, 42, 0.05);
+  padding: 28px;
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+}
+.reportHeader {
+  border-bottom: 1px solid rgba(15, 23, 42, 0.08);
+  padding-bottom: 14px;
+}
+.reportEyebrow {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: #8e8e93;
+  margin-bottom: 6px;
+}
+.reportTitle {
+  font-size: 26px;
+  font-weight: 800;
+  color: #0f172a;
+  margin: 0;
+  letter-spacing: -0.02em;
+}
+.reportMeta {
+  font-size: 13px;
+  color: #64748b;
+  margin-top: 6px;
+}
+.reportMeta strong { color: #0f172a; }
+
+.summaryGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 14px;
+}
+.sumCard {
+  background: #f8fafc;
+  border: 1px solid rgba(15, 23, 42, 0.05);
+  border-radius: 10px;
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.sumLabel {
+  font-size: 10px;
+  font-weight: 700;
+  color: #94a3b8;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+.sumValue {
+  font-size: 22px;
+  font-weight: 800;
+  color: #0f172a;
+  font-variant-numeric: tabular-nums;
+}
+.sumExtra { color: #047857; }
+.sumNeg { color: #b91c1c; }
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+.table thead th {
+  text-align: left;
+  padding: 10px 12px;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #475569;
+  background: #f8fafc;
+  border-bottom: 1px solid rgba(15, 23, 42, 0.08);
+}
+.table tbody td {
+  padding: 9px 12px;
+  border-bottom: 1px solid rgba(15, 23, 42, 0.04);
+  color: #0f172a;
+  font-variant-numeric: tabular-nums;
+}
+.table tfoot td {
+  padding: 12px;
+  background: #f1f5f9;
+  font-size: 13px;
+  border-top: 2px solid rgba(15, 23, 42, 0.1);
+}
+.right { text-align: right; }
+.weekend { background: rgba(15, 23, 42, 0.015); color: #94a3b8; }
+.weekend td { color: #94a3b8; }
+.ausencia { background: rgba(245, 158, 11, 0.05); }
+.cellExtra { color: #047857; font-weight: 600; }
+.cellNeg { color: #b91c1c; font-weight: 600; }
+.obsCell { color: #64748b; font-style: italic; }
+.loadingRow { text-align: center; padding: 40px !important; color: #94a3b8; }
+
+.footer {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 40px;
+  margin-top: 30px;
+}
+.signBox { display: flex; flex-direction: column; align-items: center; gap: 8px; }
+.signLine {
+  width: 100%;
+  border-bottom: 1px solid #0f172a;
+  margin-top: 50px;
+}
+.signLabel { font-size: 12px; color: #64748b; }
+
+/* Print styles — CSS module exige classe local em cada seletor.
+   A página adiciona dinamicamente uma classe global 'printing' no <body>
+   antes de window.print(), removida depois. Globals abaixo respondem a isso. */
+@media print {
+  .noprint { display: none !important; }
+  .layout { background: white; padding: 0; }
+  .main { padding: 0; }
+  .report {
+    border: none;
+    border-radius: 0;
+    box-shadow: none;
+    padding: 0;
+  }
+  .filters, .header, .empty, .toast { display: none !important; }
+  .table { font-size: 11px; }
+  .table thead th, .table tbody td { padding: 5px 8px; }
+}
+
+/* Quando body.printing está ativo (preview de impressão), esconde sidebar.
+   Usa :global mas com âncora de classe local pra satisfazer o CSS Modules. */
+:global(body.printing) .layout > :global(aside),
+:global(body.printing) .layout > :global(nav) {
+  display: none !important;
+}
+:global(body.printing) .main {
+  padding: 0 !important;
+}

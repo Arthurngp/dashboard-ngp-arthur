@@ -3,8 +3,8 @@
   "version": "1.0.0",
   "private": true,
   "scripts": {
-    "dev": "next dev",
-    "build": "next build",
+    "dev": "next dev --webpack",
+    "build": "next build --webpack",
     "start": "next start",
     "lint": "next lint",
     "test": "tsc -p tests/tsconfig.json && node --test .tmp-tests/tests/*.test.js"
@@ -15,13 +15,19 @@
     "@dnd-kit/utilities": "^3.2.2",
     "@supabase/supabase-js": "^2.103.0",
     "chart.js": "^4.4.1",
+    "docx": "^9.6.1",
     "html2pdf.js": "^0.10.1",
     "lucide-react": "^0.368.0",
+    "mammoth": "^1.12.0",
     "next": "^16.2.3",
+    "pdf-parse": "^2.4.5",
+    "pdfjs-dist": "^5.7.284",
     "react": "^18",
     "react-chartjs-2": "^5.2.0",
     "react-dom": "^18",
-    "react-to-print": "^2.15.1"
+    "react-to-print": "^2.15.1",
+    "reactflow": "^11.11.4",
+    "xlsx": "^0.18.5"
   },
   "devDependencies": {
     "@netlify/plugin-nextjs": "^5",

@@ -1,6 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import Image from 'next/image'
 import { getSession } from '@/lib/auth'
 import { SURL } from '@/lib/constants'
 import { efHeaders } from '@/lib/api'
@@ -39,6 +40,7 @@ export default function ClientesCentralPanel() {
   const [clientes, setClientes] = useState<ClienteCentral[]>([])
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
+  const [archivingId, setArchivingId] = useState<string | null>(null)
   const [showForm, setShowForm] = useState(false)
   const [editingId, setEditingId] = useState('')
   const [msg, setMsg] = useState<{ type: 'ok' | 'err'; text: string } | null>(null)
@@ -135,6 +137,39 @@ export default function ClientesCentralPanel() {
       showMessage('err', e instanceof Error ? e.message : 'Erro ao salvar cliente.')
     } finally {
       setSaving(false)
+    }
+  }
+
+  async function archiveCliente(cliente: ClienteCentral) {
+    const s = getSession()
+    if (!s?.session) return
+
+    const confirmed = window.confirm(
+      `Arquivar ${cliente.nome}?\n\nO cliente sairá da operação ativa e ficará disponível apenas em "Clientes Arquivados".`
+    )
+    if (!confirmed) return
+
+    setArchivingId(cliente.id)
+    try {
+      const res = await fetch(`${SURL}/functions/v1/archive-cliente`, {
+        method: 'POST',
+        headers: efHeaders(),
+        body: JSON.stringify({ session_token: s.session, action: 'archive', id: cliente.id }),
+      })
+      const data = await res.json()
+      if (!res.ok || data.error) throw new Error(data.error || 'Erro ao arquivar cliente.')
+
+      setClientes((prev) => prev.filter((item) => item.id !== cliente.id))
+      if (editingId === cliente.id) {
+        setShowForm(false)
+        setEditingId('')
+        setForm(emptyForm)
+      }
+      showMessage('ok', 'Cliente arquivado. Ele agora aparece apenas na lista de clientes arquivados.')
+    } catch (e) {
+      showMessage('err', e instanceof Error ? e.message : 'Erro ao arquivar cliente.')
+    } finally {
+      setArchivingId(null)
     }
   }
 
@@ -314,16 +349,25 @@ export default function ClientesCentralPanel() {
                 <div className={styles.clientHeader}>
                   <div className={styles.clientIdentity}>
                     <div className={styles.avatar}>
-                      {cliente.foto_url ? <img src={cliente.foto_url} alt={cliente.nome} /> : cliente.nome.slice(0, 2).toUpperCase()}
+                      {cliente.foto_url ? <Image src={cliente.foto_url} alt={cliente.nome} width={40} height={40} style={{ objectFit: 'cover', width: '100%', height: '100%' }} /> : cliente.nome.slice(0, 2).toUpperCase()}
                     </div>
                     <div>
                       <h3>{cliente.nome}</h3>
                       <p>{cliente.email}</p>
                     </div>
                   </div>
-                  <button className={styles.editBtn} onClick={() => openEdit(cliente)}>
-                    Editar
-                  </button>
+                  <div className={styles.clientActions}>
+                    <button className={styles.editBtn} onClick={() => openEdit(cliente)} disabled={archivingId === cliente.id}>
+                      Editar
+                    </button>
+                    <button
+                      className={styles.archiveBtn}
+                      onClick={() => archiveCliente(cliente)}
+                      disabled={archivingId === cliente.id}
+                    >
+                      {archivingId === cliente.id ? 'Arquivando...' : 'Arquivar'}
+                    </button>
+                  </div>
                 </div>
 
                 <div className={styles.badgeRow}>

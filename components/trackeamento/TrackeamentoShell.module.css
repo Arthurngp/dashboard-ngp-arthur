@@ -1,0 +1,9 @@
+.layout {
+  min-height: 100vh;
+  background: #071018;
+}
+
+.main {
+  min-width: 0;
+  min-height: calc(100vh - 88px);
+}

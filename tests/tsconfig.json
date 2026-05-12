@@ -16,6 +16,9 @@
     "../tests/*.test.ts",
     "../lib/analytics-contract.ts",
     "../lib/analytics-snapshot.ts",
+    "../lib/contracts.ts",
+    "../lib/financeiro-agent.ts",
+    "../lib/financeiro.ts",
     "../lib/meta-analysis.ts",
     "../lib/utils.ts",
     "../types/index.ts"

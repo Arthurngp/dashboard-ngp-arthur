@@ -17,7 +17,7 @@
 
 .content {
   width: 100%;
-  max-width: 1200px;
+  max-width: 1700px;
   margin: 0 auto;
   display: flex;
   flex-direction: column;
@@ -356,7 +356,7 @@
 
 .table th {
   text-align: left;
-  padding: 12px 14px;
+  padding: 10px 8px;
   font-size: 10px;
   font-weight: 700;
   color: #8E8E93;
@@ -373,7 +373,7 @@
 .table tbody tr:hover { background: #FAFAFA; }
 
 .table td {
-  padding: 11px 14px;
+  padding: 9px 8px;
   color: #1C1C1E;
   font-weight: 500;
   white-space: nowrap;
@@ -382,7 +382,7 @@
 .tdUser {
   font-weight: 600;
   color: #1C1C1E;
-  max-width: 140px;
+  max-width: 160px;
   overflow: hidden;
   text-overflow: ellipsis;
 }
@@ -506,8 +506,178 @@
   .cardValue { font-size: 28px; }
 
   .tableSection { border-radius: 16px; }
-  .table th { padding: 14px 20px; font-size: 11px; }
-  .table td { padding: 13px 20px; }
-  .tdUser { max-width: 180px; }
+  .table th { padding: 11px 10px; font-size: 11px; }
+  .table td { padding: 10px 10px; }
+  .tdUser { max-width: 200px; }
   .badge { font-size: 11px; padding: 3px 10px; }
+}
+
+/* ── Ações admin inline (editar batida / marcar ausência / adicionar) ──────── */
+.cellEditable {
+  cursor: pointer;
+  position: relative;
+  transition: background 0.15s;
+}
+.cellEditable:hover {
+  background: rgba(59, 130, 246, 0.08);
+}
+.cellEditable:hover::after {
+  content: '✎';
+  position: absolute;
+  top: 2px;
+  right: 4px;
+  font-size: 10px;
+  color: #3b82f6;
+  opacity: 0.7;
+}
+
+.tdActions {
+  display: flex;
+  gap: 4px;
+  white-space: nowrap;
+}
+
+.btnAction {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  background: rgba(255,255,255,0.04);
+  border: 1px solid rgba(28,28,30,0.12);
+  border-radius: 7px;
+  color: #1C1C1E;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.btnAction:hover {
+  background: #1C1C1E;
+  color: #fff;
+  border-color: #1C1C1E;
+}
+.btnActionDanger:hover {
+  background: #f59e0b;
+  color: #fff;
+  border-color: #f59e0b;
+}
+
+/* Botão global na toolbar pra marcar ausência em dia vazio */
+.btnNew {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 11px 16px;
+  background: linear-gradient(135deg, #f59e0b, #d97706);
+  color: #fff;
+  border: none;
+  border-radius: 10px;
+  font-size: 13px;
+  font-weight: 700;
+  font-family: 'Sora', sans-serif;
+  cursor: pointer;
+  transition: opacity 0.15s, transform 0.15s;
+}
+.btnNew:hover { opacity: 0.92; transform: translateY(-1px); }
+
+/* Badges de ausência na coluna de status */
+.badgeAbsent {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 600;
+  background: rgba(142, 142, 147, 0.15);
+  color: #5a5a60;
+}
+.badgePartialAbsent {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 600;
+  background: rgba(245, 158, 11, 0.15);
+  color: #b45309;
+}
+
+.absentNote {
+  font-size: 11px;
+  color: #8E8E93;
+  font-style: italic;
+}
+
+.linkAnexo {
+  display: inline-block;
+  margin-top: 4px;
+  padding: 2px 8px;
+  background: rgba(245, 158, 11, 0.1);
+  border: 1px solid rgba(245, 158, 11, 0.25);
+  border-radius: 6px;
+  color: #b45309;
+  font-size: 10px;
+  font-weight: 600;
+  cursor: pointer;
+  font-family: 'Sora', sans-serif;
+  transition: background 0.15s;
+}
+.linkAnexo:hover {
+  background: rgba(245, 158, 11, 0.2);
+}
+
+/* ── Menu "Mais" (dropdown contextual por linha) ─────────────────────── */
+.maisMenu {
+  position: fixed;
+  z-index: 9998;
+  width: 220px;
+  background: #1C1C1E;
+  border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 10px;
+  padding: 6px;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.35);
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  font-family: 'Sora', sans-serif;
+}
+
+.maisMenuHeader {
+  padding: 6px 10px 8px;
+  font-size: 10px;
+  font-weight: 600;
+  color: #8E8E93;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  border-bottom: 1px solid rgba(255,255,255,0.06);
+  margin-bottom: 4px;
+}
+
+.maisMenuItem {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  background: transparent;
+  border: none;
+  border-radius: 6px;
+  color: #f1f5f9;
+  font-size: 13px;
+  font-weight: 500;
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.12s;
+  font-family: inherit;
+}
+.maisMenuItem:hover {
+  background: rgba(255,255,255,0.06);
+}
+.maisMenuItem span {
+  width: 18px;
+  text-align: center;
+  font-size: 14px;
+}
+
+.maisMenuDivider {
+  height: 1px;
+  background: rgba(255,255,255,0.06);
+  margin: 4px 0;
 }
