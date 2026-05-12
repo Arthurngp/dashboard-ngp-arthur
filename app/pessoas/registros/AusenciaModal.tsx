@@ -18,10 +18,20 @@ interface ExistingRecord {
   observacao?: string | null
 }
 
+interface ManageRecord {
+  id: string
+  observacao?: string | null
+  anexo_path?: string | null
+  anexo_mime?: string | null
+  anexo_size?: number | null
+}
+
 interface Props {
   usuarios: UsuarioOption[]
   defaultUsuarioId?: string
   defaultData?: string         // YYYY-MM-DD
+  // Quando presente, abre em modo "gerenciar anexo de ausência existente"
+  manageRecord?: ManageRecord
   onClose: () => void
   onSaved: () => void          // chamado após sucesso pra parent re-buscar dados
 }
@@ -56,7 +66,21 @@ function utcToHHmm(iso: string): string {
   return `${local.getUTCHours().toString().padStart(2, '0')}:${local.getUTCMinutes().toString().padStart(2, '0')}`
 }
 
-export default function AusenciaModal({ usuarios, defaultUsuarioId, defaultData, onClose, onSaved }: Props) {
+const ANEXO_MAX_BYTES = 5 * 1024 * 1024
+const ANEXO_MIME_OK = new Set([
+  'application/pdf', 'image/png', 'image/jpeg', 'image/jpg', 'image/webp',
+])
+
+function fileToBase64(f: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const r = new FileReader()
+    r.onload = () => resolve(String(r.result))
+    r.onerror = () => reject(r.error)
+    r.readAsDataURL(f)
+  })
+}
+
+export default function AusenciaModal({ usuarios, defaultUsuarioId, defaultData, manageRecord, onClose, onSaved }: Props) {
   const [usuarioId, setUsuarioId] = useState(defaultUsuarioId || (usuarios[0]?.id ?? ''))
   const [data, setData]           = useState(defaultData || new Date().toISOString().split('T')[0])
   const [tipo, setTipo]           = useState('atestado')
@@ -64,6 +88,9 @@ export default function AusenciaModal({ usuarios, defaultUsuarioId, defaultData,
   const [horaInicio, setHoraInicio] = useState('13:00')
   const [horaFim, setHoraFim]       = useState('17:00')
   const [observacao, setObservacao] = useState('')
+
+  const [anexoFile, setAnexoFile] = useState<File | null>(null)
+  const [anexoErr, setAnexoErr]   = useState<string | null>(null)
 
   const [loading, setLoading] = useState(false)
   const [error, setError]     = useState<string | null>(null)
@@ -113,6 +140,37 @@ export default function AusenciaModal({ usuarios, defaultUsuarioId, defaultData,
         setError(out.error)
         return
       }
+
+      // Se anexou um arquivo e a ausência foi criada com sucesso, faz upload.
+      if (anexoFile && out?.record?.id) {
+        try {
+          const b64 = await fileToBase64(anexoFile)
+          const upRes = await fetch(`${SURL}/functions/v1/admin-ponto-anexo`, {
+            method: 'POST',
+            headers: efHeaders(),
+            body: JSON.stringify({
+              session_token: s.session,
+              action: 'upload',
+              record_id: out.record.id,
+              filename: anexoFile.name,
+              mime_type: anexoFile.type,
+              content_base64: b64,
+            }),
+          })
+          const upOut = await upRes.json()
+          if (upOut?.error) {
+            // Ausência foi criada mas anexo falhou — avisa, mas considera salvo.
+            setError(`Ausência salva, mas o anexo falhou: ${upOut.error}`)
+            onSaved()
+            return
+          }
+        } catch {
+          setError('Ausência salva, mas o anexo falhou no upload.')
+          onSaved()
+          return
+        }
+      }
+
       onSaved()
       onClose()
     } catch {
@@ -120,6 +178,34 @@ export default function AusenciaModal({ usuarios, defaultUsuarioId, defaultData,
     } finally {
       setLoading(false)
     }
+  }
+
+  function handleAnexoChange(e: React.ChangeEvent<HTMLInputElement>) {
+    setAnexoErr(null)
+    const f = e.target.files?.[0] || null
+    if (!f) { setAnexoFile(null); return }
+    if (!ANEXO_MIME_OK.has(f.type)) {
+      setAnexoErr('Formato não aceito. Use PDF, PNG, JPG ou WebP.')
+      setAnexoFile(null)
+      return
+    }
+    if (f.size > ANEXO_MAX_BYTES) {
+      setAnexoErr(`Arquivo maior que 5 MB (${(f.size / 1024 / 1024).toFixed(1)} MB).`)
+      setAnexoFile(null)
+      return
+    }
+    setAnexoFile(f)
+  }
+
+  // ─── Modo "gerenciar anexo de ausência existente" ────────────────────────
+  if (manageRecord) {
+    return (
+      <ManageAnexoPanel
+        record={manageRecord}
+        onClose={onClose}
+        onSaved={onSaved}
+      />
+    )
   }
 
   // Tela de confirmação quando o dia tem batidas
@@ -267,6 +353,22 @@ export default function AusenciaModal({ usuarios, defaultUsuarioId, defaultData,
             </div>
           )}
 
+          <div className={styles.field}>
+            <label className={styles.label}>Anexo (atestado, etc — opcional)</label>
+            <input
+              type="file"
+              accept="application/pdf,image/png,image/jpeg,image/jpg,image/webp"
+              onChange={handleAnexoChange}
+              className={styles.fileInput}
+            />
+            {anexoFile && (
+              <div className={styles.fileHint}>
+                {anexoFile.name} · {(anexoFile.size / 1024).toFixed(0)} KB
+              </div>
+            )}
+            {anexoErr && <div className={styles.error}>{anexoErr}</div>}
+          </div>
+
           {error && <div className={styles.error}>{error}</div>}
 
           <div className={styles.actions}>
@@ -278,6 +380,232 @@ export default function AusenciaModal({ usuarios, defaultUsuarioId, defaultData,
             </button>
           </div>
         </form>
+      </div>
+    </div>
+  )
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Painel de gerenciamento de anexo (subir / baixar / substituir / remover)
+// ──────────────────────────────────────────────────────────────────────────
+
+interface ManagePanelProps {
+  record: ManageRecord
+  onClose: () => void
+  onSaved: () => void
+}
+
+function ManageAnexoPanel({ record, onClose, onSaved }: ManagePanelProps) {
+  const [hasAnexo, setHasAnexo] = useState(!!record.anexo_path)
+  const [anexoMime, setAnexoMime] = useState(record.anexo_mime || '')
+  const [anexoSize, setAnexoSize] = useState(record.anexo_size || 0)
+  const [file, setFile] = useState<File | null>(null)
+  const [fileErr, setFileErr] = useState<string | null>(null)
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  function onFileChange(e: React.ChangeEvent<HTMLInputElement>) {
+    setFileErr(null)
+    const f = e.target.files?.[0] || null
+    if (!f) { setFile(null); return }
+    if (!ANEXO_MIME_OK.has(f.type)) {
+      setFileErr('Formato não aceito. Use PDF, PNG, JPG ou WebP.')
+      setFile(null); return
+    }
+    if (f.size > ANEXO_MAX_BYTES) {
+      setFileErr(`Arquivo maior que 5 MB (${(f.size / 1024 / 1024).toFixed(1)} MB).`)
+      setFile(null); return
+    }
+    setFile(f)
+  }
+
+  async function handleDownload() {
+    const s = getSession()
+    if (!s) return
+    setLoading(true); setError(null)
+    try {
+      const res = await fetch(`${SURL}/functions/v1/admin-ponto-anexo`, {
+        method: 'POST',
+        headers: efHeaders(),
+        body: JSON.stringify({
+          session_token: s.session,
+          action: 'get_url',
+          record_id: record.id,
+        }),
+      })
+      const out = await res.json()
+      if (out?.error) { setError(out.error); return }
+      window.open(out.signed_url, '_blank', 'noopener')
+    } catch {
+      setError('Erro de conexão.')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  async function handleUpload() {
+    if (!file) return
+    const s = getSession()
+    if (!s) return
+    setLoading(true); setError(null)
+    try {
+      const b64 = await fileToBase64(file)
+      const res = await fetch(`${SURL}/functions/v1/admin-ponto-anexo`, {
+        method: 'POST',
+        headers: efHeaders(),
+        body: JSON.stringify({
+          session_token: s.session,
+          action: 'upload',
+          record_id: record.id,
+          filename: file.name,
+          mime_type: file.type,
+          content_base64: b64,
+        }),
+      })
+      const out = await res.json()
+      if (out?.error) { setError(out.error); return }
+      setHasAnexo(true)
+      setAnexoMime(file.type)
+      setAnexoSize(file.size)
+      setFile(null)
+      onSaved()
+    } catch {
+      setError('Erro de conexão.')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  async function handleDelete() {
+    if (!window.confirm('Remover o anexo desta ausência?')) return
+    const s = getSession()
+    if (!s) return
+    setLoading(true); setError(null)
+    try {
+      const res = await fetch(`${SURL}/functions/v1/admin-ponto-anexo`, {
+        method: 'POST',
+        headers: efHeaders(),
+        body: JSON.stringify({
+          session_token: s.session,
+          action: 'delete',
+          record_id: record.id,
+        }),
+      })
+      const out = await res.json()
+      if (out?.error) { setError(out.error); return }
+      setHasAnexo(false)
+      setAnexoMime('')
+      setAnexoSize(0)
+      onSaved()
+    } catch {
+      setError('Erro de conexão.')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  function mimeLabel(m: string) {
+    if (m === 'application/pdf') return 'PDF'
+    if (m.startsWith('image/')) return 'Imagem (' + m.split('/')[1].toUpperCase() + ')'
+    return m
+  }
+
+  return (
+    <div className={styles.overlay} onClick={onClose}>
+      <div className={styles.modal} onClick={e => e.stopPropagation()}>
+        <div className={styles.iconWrap}>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" width={26} height={26}>
+            <path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48"/>
+          </svg>
+        </div>
+        <h2 className={styles.title}>Anexo da ausência</h2>
+        {record.observacao && (
+          <p className={styles.desc}>{record.observacao}</p>
+        )}
+
+        {hasAnexo ? (
+          <div style={{ width: '100%', display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+            <div className={styles.fileHint}>
+              {mimeLabel(anexoMime)} · {(anexoSize / 1024).toFixed(0)} KB
+            </div>
+            <button
+              type="button"
+              className={styles.btnConfirm}
+              onClick={handleDownload}
+              disabled={loading}
+            >
+              {loading ? 'Abrindo...' : 'Baixar / visualizar'}
+            </button>
+
+            <div className={styles.field}>
+              <label className={styles.label}>Substituir arquivo</label>
+              <input
+                type="file"
+                accept="application/pdf,image/png,image/jpeg,image/jpg,image/webp"
+                onChange={onFileChange}
+                className={styles.fileInput}
+              />
+              {file && (
+                <div className={styles.fileHint}>
+                  {file.name} · {(file.size / 1024).toFixed(0)} KB
+                </div>
+              )}
+              {fileErr && <div className={styles.error}>{fileErr}</div>}
+            </div>
+
+            {file && (
+              <button
+                type="button"
+                className={styles.btnConfirm}
+                onClick={handleUpload}
+                disabled={loading}
+              >
+                {loading ? 'Enviando...' : 'Substituir'}
+              </button>
+            )}
+
+            <button
+              type="button"
+              className={styles.btnDanger}
+              onClick={handleDelete}
+              disabled={loading}
+            >
+              Remover anexo
+            </button>
+          </div>
+        ) : (
+          <div style={{ width: '100%', display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+            <div className={styles.field}>
+              <label className={styles.label}>Selecionar arquivo (PDF, PNG, JPG, WebP — até 5 MB)</label>
+              <input
+                type="file"
+                accept="application/pdf,image/png,image/jpeg,image/jpg,image/webp"
+                onChange={onFileChange}
+                className={styles.fileInput}
+              />
+              {file && (
+                <div className={styles.fileHint}>
+                  {file.name} · {(file.size / 1024).toFixed(0)} KB
+                </div>
+              )}
+              {fileErr && <div className={styles.error}>{fileErr}</div>}
+            </div>
+            <button
+              type="button"
+              className={styles.btnConfirm}
+              onClick={handleUpload}
+              disabled={!file || loading}
+            >
+              {loading ? 'Enviando...' : 'Enviar anexo'}
+            </button>
+          </div>
+        )}
+
+        {error && <div className={styles.error}>{error}</div>}
+
+        <button type="button" className={styles.btnCancel} onClick={onClose} disabled={loading}>
+          Fechar
+        </button>
       </div>
     </div>
   )

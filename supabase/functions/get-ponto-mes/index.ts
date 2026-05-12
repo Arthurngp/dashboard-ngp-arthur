@@ -56,7 +56,7 @@ serve(async (req) => {
     // deno-lint-ignore no-explicit-any
     let query: any = sb
       .from('ponto_registros')
-      .select('id, tipo_registro, created_at, usuario_id, observacao')
+      .select('id, tipo_registro, created_at, usuario_id, observacao, anexo_path, anexo_mime, anexo_size')
       .is('deleted_at', null)
       .gte('created_at', startUtc)
       .lt('created_at', endUtc)

@@ -24,6 +24,9 @@ interface PontoRecord {
   usuario_id: string
   usuario_nome?: string
   observacao?: string | null
+  anexo_path?: string | null
+  anexo_mime?: string | null
+  anexo_size?: number | null
 }
 
 // Mapa de IDs reais das batidas por tipo — usado pra editar/deletar inline.
@@ -31,6 +34,9 @@ type RecordsByTipo = Partial<Record<TipoRegistro, {
   id: string
   created_at: string
   observacao?: string | null
+  anexo_path?: string | null
+  anexo_mime?: string | null
+  anexo_size?: number | null
 }>>
 
 interface DayRow {
@@ -185,6 +191,9 @@ function groupByDay(records: PontoRecord[], jornadas: Record<string, Jornada> = 
           id: r.id,
           created_at: r.created_at,
           observacao: r.observacao ?? null,
+          anexo_path: r.anexo_path ?? null,
+          anexo_mime: r.anexo_mime ?? null,
+          anexo_size: r.anexo_size ?? null,
         }
       }
 
@@ -331,6 +340,16 @@ export default function RegistrosPage() {
           tipo_registro: string
           created_at: string
           observacao?: string | null
+        }
+      }
+    | {
+        kind: 'manage_anexo'
+        record: {
+          id: string
+          observacao?: string | null
+          anexo_path?: string | null
+          anexo_mime?: string | null
+          anexo_size?: number | null
         }
       }
     | null
@@ -854,6 +873,27 @@ export default function RegistrosPage() {
                             {row.hasAusencia && row.observacaoAusencia && (
                               <div className={styles.absentNote}>{row.observacaoAusencia}</div>
                             )}
+                            {isAdmin && row.hasAusencia && row.recordsByTipo.ausencia && (
+                              <button
+                                type="button"
+                                className={styles.linkAnexo}
+                                onClick={() => setModal({
+                                  kind: 'manage_anexo',
+                                  record: {
+                                    id: row.recordsByTipo.ausencia!.id,
+                                    observacao: row.recordsByTipo.ausencia!.observacao,
+                                    anexo_path: row.recordsByTipo.ausencia!.anexo_path,
+                                    anexo_mime: row.recordsByTipo.ausencia!.anexo_mime,
+                                    anexo_size: row.recordsByTipo.ausencia!.anexo_size,
+                                  },
+                                })}
+                                title={row.recordsByTipo.ausencia!.anexo_path
+                                  ? 'Ver/gerenciar anexo'
+                                  : 'Anexar atestado/justificativa'}
+                              >
+                                {row.recordsByTipo.ausencia!.anexo_path ? '📎 Anexo' : '+ Anexo'}
+                              </button>
+                            )}
                           </td>
                           {isAdmin && (
                             <td>
@@ -927,6 +967,14 @@ export default function RegistrosPage() {
           mode="edit"
           usuarios={usuariosOpts}
           record={modal.record}
+          onClose={() => setModal(null)}
+          onSaved={reload}
+        />
+      )}
+      {isAdmin && modal?.kind === 'manage_anexo' && (
+        <AusenciaModal
+          usuarios={usuariosOpts}
+          manageRecord={modal.record}
           onClose={() => setModal(null)}
           onSaved={reload}
         />

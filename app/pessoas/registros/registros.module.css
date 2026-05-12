@@ -605,3 +605,21 @@
   color: #8E8E93;
   font-style: italic;
 }
+
+.linkAnexo {
+  display: inline-block;
+  margin-top: 4px;
+  padding: 2px 8px;
+  background: rgba(245, 158, 11, 0.1);
+  border: 1px solid rgba(245, 158, 11, 0.25);
+  border-radius: 6px;
+  color: #b45309;
+  font-size: 10px;
+  font-weight: 600;
+  cursor: pointer;
+  font-family: 'Sora', sans-serif;
+  transition: background 0.15s;
+}
+.linkAnexo:hover {
+  background: rgba(245, 158, 11, 0.2);
+}

@@ -254,3 +254,33 @@
   color: #f1f5f9;
   font-weight: 600;
 }
+
+.fileInput {
+  width: 100%;
+  padding: 0.55rem;
+  border-radius: 10px;
+  border: 1px dashed rgba(255,255,255,0.18);
+  background: rgba(255,255,255,0.03);
+  color: #cbd5e1;
+  font-size: 0.85rem;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.fileInput::file-selector-button {
+  background: rgba(245, 158, 11, 0.12);
+  color: #fbbf24;
+  border: none;
+  padding: 0.4rem 0.75rem;
+  border-radius: 7px;
+  font-size: 0.82rem;
+  font-weight: 600;
+  cursor: pointer;
+  margin-right: 0.6rem;
+}
+
+.fileHint {
+  font-size: 0.8rem;
+  color: #94a3b8;
+  padding: 0.35rem 0;
+}
