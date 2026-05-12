@@ -106,6 +106,12 @@ function FinanceiroInner() {
   const [filtroCentros,    setFiltroCentros]    = useState<Set<string>>(new Set())
   const [filtroCriadores,  setFiltroCriadores]  = useState<Set<string>>(new Set())
   const [filtrosPanelOpen, setFiltrosPanelOpen] = useState(false)
+  // Busca dentro de cada grupo do modal de Filtros.
+  const [filtroSearchCategoria, setFiltroSearchCategoria] = useState('')
+  const [filtroSearchCliente,   setFiltroSearchCliente]   = useState('')
+  const [filtroSearchFornecedor, setFiltroSearchFornecedor] = useState('')
+  const [filtroSearchCentro,    setFiltroSearchCentro]    = useState('')
+  const [filtroSearchCriador,   setFiltroSearchCriador]   = useState('')
   const [transacaoSort, setTransacaoSort] = useState<{ field: TransacaoSortField; direction: SortDirection }>({
     field: 'payment_date',
     direction: 'desc',
@@ -1512,143 +1518,228 @@ function FinanceiroInner() {
                       className={`${styles.filtrosBtn} ${filtrosAtivosCount > 0 ? styles.filtrosBtnActive : ''}`}
                       onClick={() => setFiltrosPanelOpen(o => !o)}
                     >
-                      Filtros
+                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                        <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3" />
+                      </svg>
+                      <span>Filtros</span>
                       {filtrosAtivosCount > 0 && <span className={styles.filtrosBtnBadge}>{filtrosAtivosCount}</span>}
-                      <span aria-hidden="true">▾</span>
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" style={{ opacity: 0.6 }}>
+                        <polyline points="6 9 12 15 18 9" />
+                      </svg>
                     </button>
-                    {filtrosPanelOpen && (
-                      <>
-                        <div
-                          style={{ position: 'fixed', inset: 0, zIndex: 55 }}
-                          onClick={() => setFiltrosPanelOpen(false)}
-                        />
-                        <div className={styles.filtrosPopover} onClick={e => e.stopPropagation()}>
-                          <div className={styles.filtrosGroup}>
-                            <span className={styles.filtrosGroupLabel}>Categoria</span>
-                            <div className={styles.filtrosList}>
-                              <label className={styles.filtrosCheckRow}>
-                                <input
-                                  type="checkbox"
-                                  checked={filtroCategorias.has('__sem_categoria__')}
-                                  onChange={() => toggleSetItem<string>(setFiltroCategorias, '__sem_categoria__')}
-                                />
-                                Sem categoria
-                              </label>
-                              {categorias.length === 0 ? (
-                                <span className={styles.filtrosListEmpty}>Nenhuma categoria cadastrada.</span>
-                              ) : categorias.map(c => (
-                                <label key={c.id} className={styles.filtrosCheckRow}>
-                                  <input
-                                    type="checkbox"
-                                    checked={filtroCategorias.has(c.id)}
-                                    onChange={() => toggleSetItem(setFiltroCategorias, c.id)}
-                                  />
-                                  <span className={styles.catDot} style={{ background: c.cor }} />
-                                  {c.nome}
-                                </label>
-                              ))}
+                    {filtrosPanelOpen && (() => {
+                      const norm = (s: string) => s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase()
+                      const matchSearch = (q: string, text: string) => !q || norm(text).includes(norm(q))
+                      const categoriasFiltradas = categorias.filter(c => matchSearch(filtroSearchCategoria, c.nome))
+                      const clientesFiltrados = clientes.filter(c => matchSearch(filtroSearchCliente, c.nome))
+                      const fornecedoresFiltrados = fornecedores.filter(f => matchSearch(filtroSearchFornecedor, f.nome))
+                      const centrosFiltrados = costCenters.filter(cc => matchSearch(filtroSearchCentro, cc.nome))
+                      const criadoresFiltrados = criadoresDisponiveis.filter(u => matchSearch(filtroSearchCriador, u.nome))
+                      return (
+                        <div className={styles.filtrosModalOverlay} onClick={() => setFiltrosPanelOpen(false)}>
+                          <div className={styles.filtrosModal} onClick={e => e.stopPropagation()}>
+                            <div className={styles.filtrosModalHead}>
+                              <div>
+                                <h3 className={styles.filtrosModalTitle}>Filtros</h3>
+                                {filtrosAtivosCount > 0 && (
+                                  <span className={styles.filtrosModalSub}>{filtrosAtivosCount} {filtrosAtivosCount === 1 ? 'filtro ativo' : 'filtros ativos'}</span>
+                                )}
+                              </div>
+                              <button type="button" className={styles.filtrosModalClose} onClick={() => setFiltrosPanelOpen(false)} aria-label="Fechar">×</button>
                             </div>
-                          </div>
 
-                          <div className={styles.filtrosGroup}>
-                            <span className={styles.filtrosGroupLabel}>Status</span>
-                            <div className={styles.filtrosList}>
-                              {(['confirmado','pendente'] as const).map(s => (
-                                <label key={s} className={styles.filtrosCheckRow}>
+                            <div className={styles.filtrosModalBody}>
+                              {/* Status (curto, sem busca) */}
+                              <div className={styles.filtrosGroup}>
+                                <span className={styles.filtrosGroupLabel}>Status</span>
+                                <div className={styles.filtrosList}>
+                                  {(['confirmado','pendente'] as const).map(s => (
+                                    <label key={s} className={styles.filtrosCheckRow}>
+                                      <input
+                                        type="checkbox"
+                                        checked={filtroStatus.has(s)}
+                                        onChange={() => toggleSetItem(setFiltroStatus, s)}
+                                      />
+                                      {s === 'confirmado' ? 'Pago' : 'Pendente'}
+                                    </label>
+                                  ))}
+                                </div>
+                              </div>
+
+                              {/* Categoria (com busca) */}
+                              <div className={styles.filtrosGroup}>
+                                <span className={styles.filtrosGroupLabel}>Categoria</span>
+                                {categorias.length >= 6 && (
                                   <input
-                                    type="checkbox"
-                                    checked={filtroStatus.has(s)}
-                                    onChange={() => toggleSetItem(setFiltroStatus, s)}
+                                    type="text"
+                                    className={styles.filtrosSearch}
+                                    placeholder="Buscar categoria..."
+                                    value={filtroSearchCategoria}
+                                    onChange={e => setFiltroSearchCategoria(e.target.value)}
                                   />
-                                  {s === 'confirmado' ? 'Pago' : 'Pendente'}
-                                </label>
-                              ))}
-                            </div>
-                          </div>
+                                )}
+                                <div className={styles.filtrosList}>
+                                  {(!filtroSearchCategoria || matchSearch(filtroSearchCategoria, 'sem categoria')) && (
+                                    <label className={styles.filtrosCheckRow}>
+                                      <input
+                                        type="checkbox"
+                                        checked={filtroCategorias.has('__sem_categoria__')}
+                                        onChange={() => toggleSetItem<string>(setFiltroCategorias, '__sem_categoria__')}
+                                      />
+                                      Sem categoria
+                                    </label>
+                                  )}
+                                  {categorias.length === 0 ? (
+                                    <span className={styles.filtrosListEmpty}>Nenhuma categoria cadastrada.</span>
+                                  ) : categoriasFiltradas.length === 0 ? (
+                                    <span className={styles.filtrosListEmpty}>Nenhum resultado para “{filtroSearchCategoria}”.</span>
+                                  ) : categoriasFiltradas.map(c => (
+                                    <label key={c.id} className={styles.filtrosCheckRow}>
+                                      <input
+                                        type="checkbox"
+                                        checked={filtroCategorias.has(c.id)}
+                                        onChange={() => toggleSetItem(setFiltroCategorias, c.id)}
+                                      />
+                                      <span className={styles.catDot} style={{ background: c.cor }} />
+                                      {c.nome}
+                                    </label>
+                                  ))}
+                                </div>
+                              </div>
 
-                          <div className={styles.filtrosGroup}>
-                            <span className={styles.filtrosGroupLabel}>Cliente</span>
-                            <div className={styles.filtrosList}>
-                              {clientes.length === 0 ? (
-                                <span className={styles.filtrosListEmpty}>Nenhum cliente.</span>
-                              ) : clientes.map(c => (
-                                <label key={c.id} className={styles.filtrosCheckRow}>
+                              {/* Cliente (com busca) */}
+                              <div className={styles.filtrosGroup}>
+                                <span className={styles.filtrosGroupLabel}>Cliente</span>
+                                {clientes.length >= 6 && (
                                   <input
-                                    type="checkbox"
-                                    checked={filtroClientes.has(c.id)}
-                                    onChange={() => toggleSetItem(setFiltroClientes, c.id)}
+                                    type="text"
+                                    className={styles.filtrosSearch}
+                                    placeholder="Buscar cliente..."
+                                    value={filtroSearchCliente}
+                                    onChange={e => setFiltroSearchCliente(e.target.value)}
                                   />
-                                  {c.nome}
-                                </label>
-                              ))}
-                            </div>
-                          </div>
+                                )}
+                                <div className={styles.filtrosList}>
+                                  {clientes.length === 0 ? (
+                                    <span className={styles.filtrosListEmpty}>Nenhum cliente.</span>
+                                  ) : clientesFiltrados.length === 0 ? (
+                                    <span className={styles.filtrosListEmpty}>Nenhum resultado.</span>
+                                  ) : clientesFiltrados.map(c => (
+                                    <label key={c.id} className={styles.filtrosCheckRow}>
+                                      <input
+                                        type="checkbox"
+                                        checked={filtroClientes.has(c.id)}
+                                        onChange={() => toggleSetItem(setFiltroClientes, c.id)}
+                                      />
+                                      {c.nome}
+                                    </label>
+                                  ))}
+                                </div>
+                              </div>
 
-                          <div className={styles.filtrosGroup}>
-                            <span className={styles.filtrosGroupLabel}>Fornecedor</span>
-                            <div className={styles.filtrosList}>
-                              {fornecedores.length === 0 ? (
-                                <span className={styles.filtrosListEmpty}>Nenhum fornecedor.</span>
-                              ) : fornecedores.map(f => (
-                                <label key={f.id} className={styles.filtrosCheckRow}>
+                              {/* Fornecedor (com busca) */}
+                              <div className={styles.filtrosGroup}>
+                                <span className={styles.filtrosGroupLabel}>Fornecedor</span>
+                                {fornecedores.length >= 6 && (
                                   <input
-                                    type="checkbox"
-                                    checked={filtroFornecedores.has(f.id)}
-                                    onChange={() => toggleSetItem(setFiltroFornecedores, f.id)}
+                                    type="text"
+                                    className={styles.filtrosSearch}
+                                    placeholder="Buscar fornecedor..."
+                                    value={filtroSearchFornecedor}
+                                    onChange={e => setFiltroSearchFornecedor(e.target.value)}
                                   />
-                                  {f.nome}
-                                </label>
-                              ))}
-                            </div>
-                          </div>
+                                )}
+                                <div className={styles.filtrosList}>
+                                  {fornecedores.length === 0 ? (
+                                    <span className={styles.filtrosListEmpty}>Nenhum fornecedor.</span>
+                                  ) : fornecedoresFiltrados.length === 0 ? (
+                                    <span className={styles.filtrosListEmpty}>Nenhum resultado.</span>
+                                  ) : fornecedoresFiltrados.map(f => (
+                                    <label key={f.id} className={styles.filtrosCheckRow}>
+                                      <input
+                                        type="checkbox"
+                                        checked={filtroFornecedores.has(f.id)}
+                                        onChange={() => toggleSetItem(setFiltroFornecedores, f.id)}
+                                      />
+                                      {f.nome}
+                                    </label>
+                                  ))}
+                                </div>
+                              </div>
 
-                          <div className={styles.filtrosGroup}>
-                            <span className={styles.filtrosGroupLabel}>Centro de custo</span>
-                            <div className={styles.filtrosList}>
-                              {costCenters.length === 0 ? (
-                                <span className={styles.filtrosListEmpty}>Nenhum centro de custo.</span>
-                              ) : costCenters.map(cc => (
-                                <label key={cc.id} className={styles.filtrosCheckRow}>
+                              {/* Centro de custo (com busca) */}
+                              <div className={styles.filtrosGroup}>
+                                <span className={styles.filtrosGroupLabel}>Centro de custo</span>
+                                {costCenters.length >= 6 && (
                                   <input
-                                    type="checkbox"
-                                    checked={filtroCentros.has(cc.id)}
-                                    onChange={() => toggleSetItem(setFiltroCentros, cc.id)}
+                                    type="text"
+                                    className={styles.filtrosSearch}
+                                    placeholder="Buscar centro..."
+                                    value={filtroSearchCentro}
+                                    onChange={e => setFiltroSearchCentro(e.target.value)}
                                   />
-                                  {cc.nome}
-                                </label>
-                              ))}
-                            </div>
-                          </div>
+                                )}
+                                <div className={styles.filtrosList}>
+                                  {costCenters.length === 0 ? (
+                                    <span className={styles.filtrosListEmpty}>Nenhum centro de custo.</span>
+                                  ) : centrosFiltrados.length === 0 ? (
+                                    <span className={styles.filtrosListEmpty}>Nenhum resultado.</span>
+                                  ) : centrosFiltrados.map(cc => (
+                                    <label key={cc.id} className={styles.filtrosCheckRow}>
+                                      <input
+                                        type="checkbox"
+                                        checked={filtroCentros.has(cc.id)}
+                                        onChange={() => toggleSetItem(setFiltroCentros, cc.id)}
+                                      />
+                                      {cc.nome}
+                                    </label>
+                                  ))}
+                                </div>
+                              </div>
 
-                          <div className={styles.filtrosGroup}>
-                            <span className={styles.filtrosGroupLabel}>Criado por</span>
-                            <div className={styles.filtrosList}>
-                              {criadoresDisponiveis.length === 0 ? (
-                                <span className={styles.filtrosListEmpty}>Sem informação no período.</span>
-                              ) : criadoresDisponiveis.map(u => (
-                                <label key={u.id} className={styles.filtrosCheckRow}>
+                              {/* Criado por (com busca) */}
+                              <div className={styles.filtrosGroup}>
+                                <span className={styles.filtrosGroupLabel}>Criado por</span>
+                                {criadoresDisponiveis.length >= 6 && (
                                   <input
-                                    type="checkbox"
-                                    checked={filtroCriadores.has(u.id)}
-                                    onChange={() => toggleSetItem(setFiltroCriadores, u.id)}
+                                    type="text"
+                                    className={styles.filtrosSearch}
+                                    placeholder="Buscar criador..."
+                                    value={filtroSearchCriador}
+                                    onChange={e => setFiltroSearchCriador(e.target.value)}
                                   />
-                                  {u.nome}
-                                </label>
-                              ))}
+                                )}
+                                <div className={styles.filtrosList}>
+                                  {criadoresDisponiveis.length === 0 ? (
+                                    <span className={styles.filtrosListEmpty}>Sem informação no período.</span>
+                                  ) : criadoresFiltrados.length === 0 ? (
+                                    <span className={styles.filtrosListEmpty}>Nenhum resultado.</span>
+                                  ) : criadoresFiltrados.map(u => (
+                                    <label key={u.id} className={styles.filtrosCheckRow}>
+                                      <input
+                                        type="checkbox"
+                                        checked={filtroCriadores.has(u.id)}
+                                        onChange={() => toggleSetItem(setFiltroCriadores, u.id)}
+                                      />
+                                      {u.nome}
+                                    </label>
+                                  ))}
+                                </div>
+                              </div>
                             </div>
-                          </div>
 
-                          <div className={styles.filtrosFooter}>
-                            <button type="button" className={styles.filtrosLimparBtn} onClick={limparFiltrosAvancados}>
-                              Limpar filtros
-                            </button>
-                            <button type="button" className={styles.filtrosFechar} onClick={() => setFiltrosPanelOpen(false)}>
-                              Fechar
-                            </button>
+                            <div className={styles.filtrosFooter}>
+                              <button type="button" className={styles.filtrosLimparBtn} onClick={limparFiltrosAvancados}>
+                                Limpar filtros
+                              </button>
+                              <button type="button" className={styles.filtrosFechar} onClick={() => setFiltrosPanelOpen(false)}>
+                                Aplicar
+                              </button>
+                            </div>
                           </div>
                         </div>
-                      </>
-                    )}
+                      )
+                    })()}
                   </div>
 
                   <CustomSelect

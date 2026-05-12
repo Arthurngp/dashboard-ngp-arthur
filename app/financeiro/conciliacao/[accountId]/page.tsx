@@ -8,6 +8,7 @@ import { fetchWithRetry } from '@/lib/fetch-utils'
 import Sidebar from '@/components/Sidebar'
 import NGPLoading from '@/components/NGPLoading'
 import FinanceiroAuthModal from '@/components/FinanceiroAuthModal'
+import CustomSelect from '@/components/CustomSelect'
 import {
   parseImportCsvContent,
   summarizeImportRows,
@@ -54,6 +55,14 @@ function ConciliacaoInner() {
   const [importPreviewLoading, setImportPreviewLoading] = useState(false)
   const [importProgress, setImportProgress] = useState<{ done: number; total: number } | null>(null)
   const [importDupActions, setImportDupActions] = useState<Map<number, DupActionState>>(new Map())
+  // CSV indices que o usuário desvinculou da sugestão da IA — somem da seção
+  // "Duplicatas detectadas" e passam a aparecer em "Não identificados" para
+  // tratamento manual completo.
+  const [unlinkedDups, setUnlinkedDups] = useState<Set<number>>(new Set())
+  // Para linhas marcadas como Transferência, conta destino do par (origem é a
+  // conta da importação). Vale tanto para duplicatas marcadas como 'transfer'
+  // quanto para não identificados marcados como Transferência via rowOverrides.
+  const [transferDestino, setTransferDestino] = useState<Map<number, string>>(new Map())
 
   const [categorias, setCategorias] = useState<FinCategoria[]>([])
   const [clientes, setClientes] = useState<FinContato[]>([])
@@ -214,6 +223,8 @@ function ConciliacaoInner() {
         })
       }
       setImportDupActions(actionsMap)
+      setUnlinkedDups(new Set())
+      setTransferDestino(new Map())
     } finally {
       setImportPreviewLoading(false)
     }
@@ -299,7 +310,10 @@ function ConciliacaoInner() {
 
   async function confirmImport() {
     if (!importPreview) return
-    const pendingDups = Array.from(importDupActions.values()).filter(a => a.action === 'pending')
+    // Duplicatas desvinculadas saem da seção e viram não-identificadas, então
+    // não bloqueiam o commit por estarem 'pending' nesse mapa.
+    const pendingDups = Array.from(importDupActions.entries())
+      .filter(([idx, a]) => a.action === 'pending' && !unlinkedDups.has(idx))
     if (pendingDups.length > 0) {
       showMsg('err', `Resolva ${pendingDups.length} duplicata${pendingDups.length > 1 ? 's' : ''} antes de importar.`)
       return
@@ -307,10 +321,13 @@ function ConciliacaoInner() {
 
     setImportPreviewLoading(true)
     const duplicates = importPreview.analysis?.potential_duplicates || []
+    // Considera apenas as duplicatas ativas (não desvinculadas) — as outras
+    // serão importadas como linhas comuns (com overrides do bloco B).
+    const activeDuplicates = duplicates.filter(d => !unlinkedDups.has(d.csv_index))
 
     try {
       let combined = 0
-      for (const dup of duplicates) {
+      for (const dup of activeDuplicates) {
         const dupAction = importDupActions.get(dup.csv_index)
         if (dupAction?.action !== 'combine') continue
         const csvRow = importPreview.rows[dup.csv_index]
@@ -329,24 +346,42 @@ function ConciliacaoInner() {
       }
 
       const combineIndices = new Set(
-        duplicates.filter(d => importDupActions.get(d.csv_index)?.action === 'combine').map(d => d.csv_index)
+        activeDuplicates.filter(d => importDupActions.get(d.csv_index)?.action === 'combine').map(d => d.csv_index)
       )
       const transferIndices = new Set(
-        duplicates.filter(d => importDupActions.get(d.csv_index)?.action === 'transfer').map(d => d.csv_index)
+        activeDuplicates.filter(d => importDupActions.get(d.csv_index)?.action === 'transfer').map(d => d.csv_index)
       )
+
       const rowsToImport = importPreview.rows
         .map((row, i) => {
-          if (transferIndices.has(i)) return { ...row, tipo: 'transferencia' as const }
           const ov = rowOverrides.get(i)
-          if (!ov) return row
-          return {
-            ...row,
-            ...(ov.tipo ? { tipo: ov.tipo } : {}),
-            ...(ov.contato !== undefined ? { contato: ov.contato || null } : {}),
-            ...(ov.categoria !== undefined ? { categoria: ov.categoria || null } : {}),
+          let merged: typeof row = { ...row }
+          if (transferIndices.has(i)) merged = { ...merged, tipo: 'transferencia' as const }
+          if (ov?.tipo) merged = { ...merged, tipo: ov.tipo }
+          if (ov?.contato !== undefined) merged = { ...merged, contato: ov.contato || null }
+          if (ov?.categoria !== undefined) merged = { ...merged, categoria: ov.categoria || null }
+          // Anexa destino da transferência se a linha for transferência.
+          if (merged.tipo === 'transferencia') {
+            const dest = transferDestino.get(i) || null
+            merged = { ...merged, transfer_destination_account_id: dest }
           }
+          return merged
         })
         .filter((_, i) => !combineIndices.has(i) && !manualCombines.has(i))
+
+      // Validação: toda linha tipo=transferencia precisa de destino e destino != origem.
+      const transferSemDestino: number[] = []
+      for (let i = 0; i < rowsToImport.length; i++) {
+        const r = rowsToImport[i]
+        if (r.tipo !== 'transferencia') continue
+        if (!r.transfer_destination_account_id) transferSemDestino.push(i + 1)
+        else if (r.transfer_destination_account_id === accountId) transferSemDestino.push(i + 1)
+      }
+      if (transferSemDestino.length > 0) {
+        setImportPreviewLoading(false)
+        showMsg('err', `Selecione a conta destino em ${transferSemDestino.length} transferência${transferSemDestino.length > 1 ? 's' : ''} antes de importar.`)
+        return
+      }
 
       const BATCH_SIZE = 500
       const totalBatches = Math.ceil(rowsToImport.length / BATCH_SIZE)
@@ -401,7 +436,10 @@ function ConciliacaoInner() {
   }
 
   const summary = importPreview ? summarizeImportRows(importPreview.rows) : null
-  const dups = importPreview?.analysis?.potential_duplicates || []
+  // Filtra fora as linhas que o usuário escolheu desvincular: elas saem da
+  // seção "Duplicatas detectadas" e caem em "Não identificados" abaixo.
+  const allDups = importPreview?.analysis?.potential_duplicates || []
+  const dups = allDups.filter(d => !unlinkedDups.has(d.csv_index))
   const dupByIdx = new Map<number, AiDuplicateMatch>()
   for (const d of dups) dupByIdx.set(d.csv_index, d)
   const totalDups = dups.length
@@ -626,16 +664,40 @@ function ConciliacaoInner() {
                           >
                             🔄 Transferência
                           </button>
-                          {dupState.action !== 'pending' && (
-                            <button
-                              type="button"
-                              onClick={() => setDupAction(dup.csv_index, 'pending')}
-                              title="Desvincular: volta a aguardar decisão"
-                              style={{ marginTop: 4, fontSize: 11, color: '#6b7280', background: 'none', border: 'none', cursor: 'pointer', textDecoration: 'underline', textAlign: 'left' }}
-                            >
-                              ↩ Resetar escolha
-                            </button>
+                          {dupState.action === 'transfer' && (
+                            <div style={{ marginTop: 6 }}>
+                              <CustomSelect
+                                value={transferDestino.get(dup.csv_index) || ''}
+                                options={allAccounts.filter(a => a.id !== accountId).map(a => ({ id: a.id, label: a.nome }))}
+                                onChange={id => setTransferDestino(prev => {
+                                  const next = new Map(prev)
+                                  if (id) next.set(dup.csv_index, id)
+                                  else next.delete(dup.csv_index)
+                                  return next
+                                })}
+                                placeholder="→ Conta destino *"
+                                menuFixed
+                              />
+                            </div>
                           )}
+                          <button
+                            type="button"
+                            onClick={() => {
+                              // Desvincula da sugestão da IA: a linha sai daqui
+                              // e aparece na seção "Não identificados" abaixo,
+                              // onde o usuário decide manualmente o que fazer.
+                              setUnlinkedDups(prev => {
+                                const next = new Set(prev)
+                                next.add(dup.csv_index)
+                                return next
+                              })
+                              setDupAction(dup.csv_index, 'pending')
+                            }}
+                            title="Desvincular da sugestão e tratar manualmente abaixo"
+                            style={{ marginTop: 6, fontSize: 11, color: '#6b7280', background: 'none', border: '1px dashed #d1d5db', cursor: 'pointer', padding: '4px 8px', borderRadius: 6, textAlign: 'left' }}
+                          >
+                            ↓ Tratar manualmente
+                          </button>
                         </div>
                       </div>
                     )
@@ -717,30 +779,42 @@ function ConciliacaoInner() {
                         </div>
 
                         <div className={styles.dupSplitCellExisting} style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                          <input
-                            list={effectiveTipo === 'entrada' ? 'concil-clientes' : 'concil-fornecedores'}
-                            type="text"
-                            placeholder={effectiveTipo === 'entrada' ? '👤 Cliente (recebimento de…)' : '👤 Fornecedor (pago para…)'}
-                            value={effectiveContato}
-                            onChange={e => setRowOverrides(prev => {
-                              const next = new Map(prev)
-                              next.set(idx, { ...(next.get(idx) || {}), contato: e.target.value })
-                              return next
-                            })}
-                            style={{ width: '100%', padding: '6px 8px', fontSize: 12, border: '1px solid #d1d5db', borderRadius: 6 }}
-                          />
-                          <input
-                            list="concil-categorias"
-                            type="text"
-                            placeholder="🏷 Categoria"
-                            value={effectiveCategoria}
-                            onChange={e => setRowOverrides(prev => {
-                              const next = new Map(prev)
-                              next.set(idx, { ...(next.get(idx) || {}), categoria: e.target.value })
-                              return next
-                            })}
-                            style={{ width: '100%', padding: '6px 8px', fontSize: 12, border: '1px solid #d1d5db', borderRadius: 6 }}
-                          />
+                          {effectiveTipo !== 'transferencia' && (
+                            <CustomSelect
+                              value={effectiveTipo === 'entrada'
+                                ? (clientes.find(c => c.nome === effectiveContato)?.id || '')
+                                : (fornecedores.find(f => f.nome === effectiveContato)?.id || '')
+                              }
+                              options={(effectiveTipo === 'entrada' ? clientes : fornecedores).map(c => ({ id: c.id, label: c.nome }))}
+                              onChange={id => {
+                                const list = effectiveTipo === 'entrada' ? clientes : fornecedores
+                                const nome = list.find(x => x.id === id)?.nome || ''
+                                setRowOverrides(prev => {
+                                  const next = new Map(prev)
+                                  next.set(idx, { ...(next.get(idx) || {}), contato: nome })
+                                  return next
+                                })
+                              }}
+                              placeholder={effectiveTipo === 'entrada' ? 'Cliente (recebimento de…)' : 'Fornecedor (pago para…)'}
+                              menuFixed
+                            />
+                          )}
+                          {effectiveTipo !== 'transferencia' && (
+                            <CustomSelect
+                              value={categorias.find(c => c.nome === effectiveCategoria && c.tipo === effectiveTipo)?.id || ''}
+                              options={categorias.filter(c => c.tipo === effectiveTipo).map(c => ({ id: c.id, label: c.nome }))}
+                              onChange={id => {
+                                const nome = categorias.find(c => c.id === id)?.nome || ''
+                                setRowOverrides(prev => {
+                                  const next = new Map(prev)
+                                  next.set(idx, { ...(next.get(idx) || {}), categoria: nome })
+                                  return next
+                                })
+                              }}
+                              placeholder="Categoria"
+                              menuFixed
+                            />
+                          )}
                         </div>
 
                         <div className={styles.dupSplitCellActions} style={{ position: 'relative' }}>
@@ -830,6 +904,23 @@ function ConciliacaoInner() {
                             >
                               ↩ desfazer tipo
                             </button>
+                          )}
+                          {/* Dropdown sempre que a linha for transferência — venha do CSV ou de override. */}
+                          {effectiveTipo === 'transferencia' && (
+                            <div style={{ marginTop: 6 }}>
+                              <CustomSelect
+                                value={transferDestino.get(idx) || ''}
+                                options={allAccounts.filter(a => a.id !== accountId).map(a => ({ id: a.id, label: a.nome }))}
+                                onChange={id => setTransferDestino(prev => {
+                                  const next = new Map(prev)
+                                  if (id) next.set(idx, id)
+                                  else next.delete(idx)
+                                  return next
+                                })}
+                                placeholder="→ Conta destino *"
+                                menuFixed
+                              />
+                            </div>
                           )}
                         </div>
                       </div>

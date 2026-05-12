@@ -683,7 +683,7 @@ serve(async (req: Request) => {
 
       // Normaliza todas as linhas primeiro para poder carregar duplicatas em bulk
       type NormalizedRow = {
-        tipo: 'entrada' | 'saida'
+        tipo: 'entrada' | 'saida' | 'transferencia'
         descricao: string
         competence_date: string
         payment_date: string | null
@@ -697,6 +697,7 @@ serve(async (req: Request) => {
         tags: string | null
         additional_info: string | null
         attachments: string | null
+        transfer_destination_account_id: string | null
       }
 
       const normalizedRows: NormalizedRow[] = []
@@ -733,6 +734,7 @@ serve(async (req: Request) => {
           tags: row.tags || null,
           additional_info: row.additional_info || null,
           attachments: row.attachments || null,
+          transfer_destination_account_id: row.transfer_destination_account_id || null,
         })
       }
 
@@ -786,11 +788,18 @@ serve(async (req: Request) => {
           // marca para não inserir duplicata dentro do mesmo batch
           existingKeys.add(dupKey)
 
-          const catKey = `${row.tipo}:${normalizeKey(row.categoria || '')}`
-          if (row.categoria && !categoriaCache.has(catKey)) {
-            categoriaCache.set(catKey, await ensureCategoria(sb, row.categoria, row.tipo))
+          // Para categorizar/criar contatos, "transferencia" não aplica — só
+          // 'entrada'/'saida' têm categoria/contato.
+          const tipoBase: 'entrada' | 'saida' = row.tipo === 'entrada' ? 'entrada' : 'saida'
+
+          let resolvedCategoriaId: string | null = null
+          if (row.tipo !== 'transferencia' && row.categoria) {
+            const catKey = `${tipoBase}:${normalizeKey(row.categoria)}`
+            if (!categoriaCache.has(catKey)) {
+              categoriaCache.set(catKey, await ensureCategoria(sb, row.categoria, tipoBase))
+            }
+            resolvedCategoriaId = categoriaCache.get(catKey) || null
           }
-          const categoria_id = row.categoria ? (categoriaCache.get(catKey) || null) : null
 
           const centerKey = normalizeKey(row.cost_center || '')
           if (row.cost_center && !centroCache.has(centerKey)) {
@@ -798,13 +807,17 @@ serve(async (req: Request) => {
           }
           const cost_center_id = row.cost_center ? (centroCache.get(centerKey) || null) : null
 
-          const contactKey = `${row.tipo}:${normalizeKey(row.contato || '')}`
-          if (row.contato && !contatoCache.has(contactKey)) {
-            contatoCache.set(contactKey, await ensureContato(sb, row.contato, row.tipo, user.usuario_id))
+          let cliente_id: string | null = null
+          let fornecedor_id: string | null = null
+          if (row.tipo !== 'transferencia') {
+            const contactKey = `${tipoBase}:${normalizeKey(row.contato || '')}`
+            if (row.contato && !contatoCache.has(contactKey)) {
+              contatoCache.set(contactKey, await ensureContato(sb, row.contato, tipoBase, user.usuario_id))
+            }
+            const contato = row.contato ? contatoCache.get(contactKey) : null
+            cliente_id = contato?.cliente_id || null
+            fornecedor_id = contato?.fornecedor_id || null
           }
-          const contato = row.contato ? contatoCache.get(contactKey) : null
-          const cliente_id = contato?.cliente_id || null
-          const fornecedor_id = contato?.fornecedor_id || null
 
           const status = row.status_raw === 'pendente' || !row.payment_date ? 'pendente' : 'confirmado'
           const observacoes = normalizeText([
@@ -814,6 +827,32 @@ serve(async (req: Request) => {
             row.attachments ? `Anexos: ${row.attachments}` : '',
           ].filter(Boolean).join('\n'))
 
+          // Transferência entre contas: gera par (out na origem aid, in no destino).
+          if (row.tipo === 'transferencia' && row.transfer_destination_account_id) {
+            if (row.transfer_destination_account_id === aid) { skipped += 1; continue }
+            const pairId = crypto.randomUUID()
+            const baseRow = {
+              tipo: 'transferencia',
+              descricao: row.descricao,
+              valor: row.valor,
+              data_transacao: row.competence_date,
+              competence_date: row.competence_date,
+              payment_date: status === 'confirmado' ? row.payment_date || row.competence_date : null,
+              categoria_id: null,
+              cliente_id: null,
+              fornecedor_id: null,
+              cost_center_id,
+              status,
+              observacoes,
+              source_type: 'import',
+              created_by: user.usuario_id,
+              transfer_pair_id: pairId,
+            }
+            toInsert.push({ ...baseRow, account_id: aid, transfer_direction: 'out' })
+            toInsert.push({ ...baseRow, account_id: row.transfer_destination_account_id, transfer_direction: 'in' })
+            continue
+          }
+
           toInsert.push({
             tipo: row.tipo,
             descricao: row.descricao,
@@ -821,7 +860,7 @@ serve(async (req: Request) => {
             data_transacao: row.competence_date,
             competence_date: row.competence_date,
             payment_date: status === 'confirmado' ? row.payment_date || row.competence_date : null,
-            categoria_id,
+            categoria_id: resolvedCategoriaId,
             cliente_id,
             fornecedor_id,
             account_id: aid,

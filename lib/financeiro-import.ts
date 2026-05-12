@@ -15,6 +15,9 @@ export interface ImportedCsvRow {
   account_name?: string | null
   valor: number
   tipo: 'entrada' | 'saida' | 'transferencia'
+  // Quando tipo='transferencia', conta destino do par (origem é a conta da
+  // importação). Preenchido na UI antes do commit; backend cria par.
+  transfer_destination_account_id?: string | null
 }
 
 export interface AiDuplicateMatch {
