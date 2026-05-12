@@ -57,6 +57,7 @@ function DashboardInner() {
   const [data, setData] = useState<DashboardData | null>(null)
   const [loading, setLoading] = useState(false)
   const [msg, setMsg] = useState<{ type: 'ok' | 'err'; text: string } | null>(null)
+  const [showOcultas, setShowOcultas] = useState(false)
   const abortRef = useRef<AbortController | null>(null)
 
   function showMsg(type: 'ok' | 'err', text: string) {
@@ -293,45 +294,70 @@ function DashboardInner() {
               )}
             </section>
 
-            {/* Saldos por conta */}
-            <section className={`${styles.card} ${styles.cardContas}`}>
-              <h2 className={styles.cardTitle}>
-                Saldos das contas
-                {data.contas_excluidas !== undefined && data.contas_excluidas > 0 && (
-                  <span className={styles.cardTitleHint}>
-                    {data.contas_inclusas} no saldo · {data.contas_excluidas} ocultas
-                  </span>
-                )}
-              </h2>
-              <div className={styles.contasList}>
-                {data.contas.map((c) => (
-                  <div
-                    key={c.id}
-                    className={`${styles.contaItem} ${!c.incluir_no_saldo ? styles.contaOculta : ''}`}
+            {/* Saldos por conta — visíveis em primeiro plano, ocultas em accordion */}
+            {(() => {
+              const visiveis = data.contas.filter(c => c.incluir_no_saldo)
+              const ocultas = data.contas.filter(c => !c.incluir_no_saldo)
+              const renderItem = (c: Conta) => (
+                <div
+                  key={c.id}
+                  className={`${styles.contaItem} ${!c.incluir_no_saldo ? styles.contaOculta : ''}`}
+                >
+                  <button
+                    type="button"
+                    className={styles.eyeBtn}
+                    onClick={() => void toggleSaldo(c.id, c.incluir_no_saldo)}
+                    title={c.incluir_no_saldo ? 'Excluir do saldo geral' : 'Incluir no saldo geral'}
+                    aria-label={c.incluir_no_saldo ? 'Excluir do saldo geral' : 'Incluir no saldo geral'}
                   >
-                    <button
-                      type="button"
-                      className={styles.eyeBtn}
-                      onClick={() => void toggleSaldo(c.id, c.incluir_no_saldo)}
-                      title={c.incluir_no_saldo ? 'Excluir do saldo geral' : 'Incluir no saldo geral'}
-                      aria-label={c.incluir_no_saldo ? 'Excluir do saldo geral' : 'Incluir no saldo geral'}
-                    >
-                      {c.incluir_no_saldo ? '👁' : '🚫'}
-                    </button>
-                    <div className={styles.contaLeft}>
-                      <span className={styles.contaNome}>{c.nome}</span>
-                      <span className={styles.contaTipo}>
-                        {tipoLabel(c.tipo)}
-                        {!c.incluir_no_saldo && ' · fora do saldo'}
-                      </span>
-                    </div>
-                    <span className={`${styles.contaSaldo} ${c.saldo >= 0 ? styles.posValue : styles.negValue}`}>
-                      {fmtBRL(c.saldo)}
+                    {c.incluir_no_saldo ? '👁' : '🚫'}
+                  </button>
+                  <div className={styles.contaLeft}>
+                    <span className={styles.contaNome}>{c.nome}</span>
+                    <span className={styles.contaTipo}>
+                      {tipoLabel(c.tipo)}
+                      {!c.incluir_no_saldo && ' · fora do saldo'}
                     </span>
                   </div>
-                ))}
-              </div>
-            </section>
+                  <span className={`${styles.contaSaldo} ${c.saldo >= 0 ? styles.posValue : styles.negValue}`}>
+                    {fmtBRL(c.saldo)}
+                  </span>
+                </div>
+              )
+              return (
+                <section className={`${styles.card} ${styles.cardContas}`}>
+                  <h2 className={styles.cardTitle}>
+                    Saldos das contas
+                    {ocultas.length > 0 && (
+                      <span className={styles.cardTitleHint}>
+                        {visiveis.length} no saldo · {ocultas.length} oculta{ocultas.length !== 1 ? 's' : ''}
+                      </span>
+                    )}
+                  </h2>
+                  <div className={styles.contasList}>
+                    {visiveis.map(renderItem)}
+                  </div>
+                  {ocultas.length > 0 && (
+                    <div className={styles.ocultasBlock}>
+                      <button
+                        type="button"
+                        className={styles.ocultasToggle}
+                        onClick={() => setShowOcultas(s => !s)}
+                        aria-expanded={showOcultas}
+                      >
+                        <span>{showOcultas ? '▾' : '▸'}</span>
+                        <span>Contas ocultas ({ocultas.length})</span>
+                      </button>
+                      {showOcultas && (
+                        <div className={styles.contasList}>
+                          {ocultas.map(renderItem)}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </section>
+              )
+            })()}
           </div>
         )}
 

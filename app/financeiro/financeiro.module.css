@@ -2153,6 +2153,26 @@
   color: #fff !important;
   box-shadow: 0 4px 12px rgba(37, 99, 235, 0.25) !important;
 }
+
+.dupSplitBtnFatura {
+  border-color: #fcd34d;
+  color: #92400e;
+  background: #fffbeb;
+}
+.dupSplitBtnFatura:hover {
+  background: #fef3c7;
+  border-color: #f59e0b;
+}
+.dupSplitBtnActive.dupSplitBtnFatura {
+  background: #d97706 !important;
+  border-color: #d97706 !important;
+  color: #fff !important;
+  box-shadow: 0 4px 12px rgba(217, 119, 6, 0.25) !important;
+}
+.dupSplitRowFatura {
+  background: #fffbeb;
+  border-left: 3px solid #f59e0b;
+}
 /* Responsivo: empilhamento em telas menores */
 @media (max-width: 1200px) {
   .dupSplitColumnHeaders,

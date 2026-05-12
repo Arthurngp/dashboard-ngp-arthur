@@ -19,6 +19,7 @@ import {
   type DupAction,
   type DupActionState,
   type ImportPreviewData,
+  type FaturaPagamentoTarget,
 } from '@/lib/financeiro-import'
 import { financeiroNav } from '../../financeiro-nav'
 import styles from '../../financeiro.module.css'
@@ -29,6 +30,8 @@ interface FinAccount {
   tipo: string
   saldo_inicial: number
   saldo_atual: number
+  ativo?: boolean
+  incluir_no_saldo?: boolean
 }
 
 interface FinCategoria { id: string; nome: string; tipo: string }
@@ -79,6 +82,18 @@ function ConciliacaoInner() {
   const [searchResults, setSearchResults] = useState<any[]>([])
   const [searchLoading, setSearchLoading] = useState(false)
   const [manualCombines, setManualCombines] = useState<Map<number, { existing_id: string; existing_descricao: string; existing_account_name: string }>>(new Map())
+
+  // Linhas que o usuário marcou para ignorar (não importar, não combinar, não transferir).
+  // Vale tanto para duplicatas quanto para não-identificadas — saem completamente do processamento.
+  const [ignoredRows, setIgnoredRows] = useState<Set<number>>(new Set())
+
+  // Pagamento de fatura: idx → { cartao_id, mes_ref } e lista de cartões/faturas em aberto.
+  const [faturaTargets, setFaturaTargets] = useState<Map<number, FaturaPagamentoTarget>>(new Map())
+  const [cartoesAtivos, setCartoesAtivos] = useState<FinAccount[]>([])
+  const [faturasAbertas, setFaturasAbertas] = useState<Array<{
+    id: string; cartao_id: string; cartao_nome: string; mes_ref: string;
+    label: string; status: string; valor: number; valor_pago: number; saldo_devedor: number;
+  }>>([])
 
   const fileInputRef = useRef<HTMLInputElement | null>(null)
   const abortRefs = useRef<Record<string, AbortController>>({})
@@ -145,10 +160,11 @@ function ConciliacaoInner() {
       if (cancel) return
       const archivedRes = await callFn('financeiro-aux', { entity: 'accounts', action: 'listar', show_archived: true })
       if (cancel) return
-      const [catsRes, cliRes, fornRes] = await Promise.all([
+      const [catsRes, cliRes, fornRes, faturasRes] = await Promise.all([
         callFn('financeiro-categorias', { action: 'listar' }),
         callFn('financeiro-clientes', { action: 'listar' }),
         callFn('financeiro-fornecedores', { action: 'listar' }),
+        callFn('financeiro-agent', { action: 'cartoes_faturas_em_aberto_listar' }),
       ])
       if (cancel) return
       if (accountsRes?.error) showMsg('err', `Erro ao carregar contas: ${accountsRes.error}`)
@@ -157,6 +173,8 @@ function ConciliacaoInner() {
       const allAccs = [...activeAccs, ...archivedAccs]
       console.log('[conciliacao] contas carregadas', { ativas: activeAccs.length, arquivadas: archivedAccs.length, accountId, found: allAccs.find(a => a.id === accountId) })
       setAllAccounts(allAccs)
+      setCartoesAtivos(activeAccs.filter(a => a.tipo === 'cartao_credito' || a.tipo === 'cartao'))
+      setFaturasAbertas(faturasRes?.faturas || [])
       const found = allAccs.find((a: FinAccount) => a.id === accountId) || null
       setAccount(found)
       setCategorias(catsRes?.categorias || [])
@@ -321,9 +339,20 @@ function ConciliacaoInner() {
 
     setImportPreviewLoading(true)
     const duplicates = importPreview.analysis?.potential_duplicates || []
-    // Considera apenas as duplicatas ativas (não desvinculadas) — as outras
-    // serão importadas como linhas comuns (com overrides do bloco B).
-    const activeDuplicates = duplicates.filter(d => !unlinkedDups.has(d.csv_index))
+    // Considera apenas as duplicatas ativas (não desvinculadas e não ignoradas) —
+    // as desvinculadas viram não-identificadas; as ignoradas saem do fluxo todo.
+    const activeDuplicates = duplicates.filter(d => !unlinkedDups.has(d.csv_index) && !ignoredRows.has(d.csv_index))
+
+    // Validação: faturaTargets precisam de cartao_id + mes_ref antes de prosseguir.
+    const faturaIncompletas: number[] = []
+    for (const [idx, t] of faturaTargets.entries()) {
+      if (!t.cartao_id || !t.mes_ref) faturaIncompletas.push(idx + 1)
+    }
+    if (faturaIncompletas.length > 0) {
+      setImportPreviewLoading(false)
+      showMsg('err', `Selecione cartão e fatura em ${faturaIncompletas.length} pagamento${faturaIncompletas.length > 1 ? 's' : ''} de fatura.`)
+      return
+    }
 
     try {
       let combined = 0
@@ -351,6 +380,49 @@ function ConciliacaoInner() {
       const transferIndices = new Set(
         activeDuplicates.filter(d => importDupActions.get(d.csv_index)?.action === 'transfer').map(d => d.csv_index)
       )
+      // Pagamentos de fatura: tanto via duplicatas marcadas quanto via faturaTargets
+      // (não-identificadas). Coletamos como Set de índices.
+      const faturaPagIndices = new Set<number>([
+        ...activeDuplicates
+          .filter(d => importDupActions.get(d.csv_index)?.action === 'fatura_pagamento')
+          .map(d => d.csv_index),
+        ...Array.from(faturaTargets.keys()),
+      ])
+
+      // Registra pagamentos de fatura ANTES da importação normal.
+      // - Duplicata marcada como fatura_pagamento: amarra a transação existente
+      //   (dup.existing_id) à fatura — não cria saída nova.
+      // - Não-identificada: cria saída nova na conta atual e amarra à fatura.
+      const dupByIdxMap = new Map<number, AiDuplicateMatch>()
+      for (const d of activeDuplicates) dupByIdxMap.set(d.csv_index, d)
+      let faturaPagamentosOk = 0
+      for (const i of faturaPagIndices) {
+        const target = faturaTargets.get(i)
+        if (!target) continue
+        const row = importPreview.rows[i]
+        if (!row) continue
+        const dupMatch = dupByIdxMap.get(i)
+        const body: any = {
+          action: 'cartoes_fatura_registrar_pagamento',
+          cartao_id: target.cartao_id,
+          mes_ref: target.mes_ref,
+          paid_at: row.payment_date || row.competence_date,
+          observacoes: row.descricao || null,
+        }
+        if (dupMatch?.existing_id) {
+          body.transacao_id = dupMatch.existing_id
+          body.valor = Math.abs(Number(row.valor || 0))
+        } else {
+          body.paid_account_id = accountId
+          body.valor = Math.abs(Number(row.valor || 0))
+        }
+        const res = await callFn('financeiro-agent', body)
+        if (!res || res.error) {
+          showMsg('err', `Pagamento de fatura linha ${i + 1}: ${res?.error || 'erro desconhecido'}`)
+          return
+        }
+        faturaPagamentosOk++
+      }
 
       const rowsToImport = importPreview.rows
         .map((row, i) => {
@@ -367,7 +439,7 @@ function ConciliacaoInner() {
           }
           return merged
         })
-        .filter((_, i) => !combineIndices.has(i) && !manualCombines.has(i))
+        .filter((_, i) => !combineIndices.has(i) && !manualCombines.has(i) && !faturaPagIndices.has(i) && !ignoredRows.has(i))
 
       // Validação: toda linha tipo=transferencia precisa de destino e destino != origem.
       const transferSemDestino: number[] = []
@@ -415,8 +487,10 @@ function ConciliacaoInner() {
       const parts = [`${totalImported} importados`]
       if (totalCombined > 0) parts.push(`${totalCombined} combinados`)
       if (transferCount > 0) parts.push(`${transferCount} como transferência`)
-      if (totalSkipped > 0) parts.push(`${totalSkipped} ignorados`)
-      const houveAcao = totalImported + totalCombined + transferCount > 0
+      if (faturaPagamentosOk > 0) parts.push(`${faturaPagamentosOk} pagamento${faturaPagamentosOk > 1 ? 's' : ''} de fatura`)
+      if (ignoredRows.size > 0) parts.push(`${ignoredRows.size} descartado${ignoredRows.size > 1 ? 's' : ''}`)
+      if (totalSkipped > 0) parts.push(`${totalSkipped} pulados pelo servidor`)
+      const houveAcao = totalImported + totalCombined + transferCount + faturaPagamentosOk > 0
       if (houveAcao) {
         showMsg('ok', `Importação concluída: ${parts.join(', ')}.`)
       } else {
@@ -428,6 +502,8 @@ function ConciliacaoInner() {
       setImportDupActions(new Map())
       setRowOverrides(new Map())
       setManualCombines(new Map())
+      setFaturaTargets(new Map())
+      setIgnoredRows(new Set())
       setTimeout(() => router.push(`/financeiro?account=${accountId}`), 1200)
     } finally {
       setImportPreviewLoading(false)
@@ -443,7 +519,15 @@ function ConciliacaoInner() {
   const dupByIdx = new Map<number, AiDuplicateMatch>()
   for (const d of dups) dupByIdx.set(d.csv_index, d)
   const totalDups = dups.length
-  const pendingDupsCount = dups.filter(d => (importDupActions.get(d.csv_index)?.action || 'pending') === 'pending').length
+  // Pendentes: ainda sem ação OU ignoradas não bloqueiam.
+  const pendingDupsCount = dups.filter(d => {
+    if (ignoredRows.has(d.csv_index)) return false
+    return (importDupActions.get(d.csv_index)?.action || 'pending') === 'pending'
+  }).length
+  const ignoredCount = ignoredRows.size
+  // Pagamentos de fatura sem cartão/mês selecionado também bloqueiam o import.
+  const faturaIncompletasCount = Array.from(faturaTargets.values())
+    .filter(t => !t.cartao_id || !t.mes_ref).length
   const totalRows = importPreview?.rows.length || 0
   const unidentifiedCount = totalRows - dups.length
 
@@ -563,6 +647,16 @@ function ConciliacaoInner() {
                   <strong className={styles.importTopKpiValue}>{unidentifiedCount}</strong>
                   <small>serão criados como novos</small>
                 </div>
+                {ignoredCount > 0 && (
+                  <>
+                    <div className={styles.importTopKpiDivider} />
+                    <div className={styles.importTopKpi}>
+                      <span className={styles.importTopKpiLabel}>Ignorados</span>
+                      <strong className={styles.importTopKpiValue} style={{ color: '#991b1b' }}>{ignoredCount}</strong>
+                      <small>não serão importados</small>
+                    </div>
+                  </>
+                )}
               </div>
             </div>
 
@@ -587,15 +681,18 @@ function ConciliacaoInner() {
                     const dupState = importDupActions.get(dup.csv_index) || { action: 'pending' as DupAction }
                     const csvStatus = csvRow.status || 'pendente'
                     const existStatus = dup.existing_status
-                    const rowClass = dupState.action === 'combine'
-                      ? styles.dupSplitRowCombine
-                      : dupState.action === 'import'
-                        ? styles.dupSplitRowImport
-                        : dupState.action === 'transfer'
-                          ? styles.dupSplitRowTransfer
-                          : ''
+                    const isIgnored = ignoredRows.has(dup.csv_index)
+                    const rowClass = isIgnored
+                      ? ''
+                      : dupState.action === 'combine'
+                        ? styles.dupSplitRowCombine
+                        : dupState.action === 'import'
+                          ? styles.dupSplitRowImport
+                          : dupState.action === 'transfer'
+                            ? styles.dupSplitRowTransfer
+                            : ''
                     return (
-                      <div key={dup.csv_index} className={`${styles.dupSplitRow} ${rowClass}`}>
+                      <div key={dup.csv_index} className={`${styles.dupSplitRow} ${rowClass}`} style={isIgnored ? { opacity: 0.4, filter: 'grayscale(0.5)' } : undefined}>
                         <div className={styles.dupSplitCellExisting}>
                           <div className={styles.dupSplitCellMain}>{dup.existing_descricao}</div>
                           <div className={styles.dupSplitCellMeta}>
@@ -664,11 +761,25 @@ function ConciliacaoInner() {
                           >
                             🔄 Transferência
                           </button>
+                          <button
+                            type="button"
+                            className={`${styles.dupSplitBtn} ${styles.dupSplitBtnFatura} ${dupState.action === 'fatura_pagamento' ? styles.dupSplitBtnActive : ''}`}
+                            onClick={() => {
+                              setDupAction(dup.csv_index, 'fatura_pagamento')
+                              setFaturaTargets(prev => {
+                                const next = new Map(prev)
+                                if (!next.has(dup.csv_index)) next.set(dup.csv_index, { cartao_id: '', mes_ref: '' })
+                                return next
+                              })
+                            }}
+                          >
+                            🧾 Pagamento de fatura
+                          </button>
                           {dupState.action === 'transfer' && (
                             <div style={{ marginTop: 6 }}>
                               <CustomSelect
                                 value={transferDestino.get(dup.csv_index) || ''}
-                                options={allAccounts.filter(a => a.id !== accountId).map(a => ({ id: a.id, label: a.nome }))}
+                                options={allAccounts.filter(a => a.id !== accountId && a.ativo !== false && a.incluir_no_saldo !== false).map(a => ({ id: a.id, label: a.nome }))}
                                 onChange={id => setTransferDestino(prev => {
                                   const next = new Map(prev)
                                   if (id) next.set(dup.csv_index, id)
@@ -680,6 +791,44 @@ function ConciliacaoInner() {
                               />
                             </div>
                           )}
+                          {dupState.action === 'fatura_pagamento' && (
+                            <FaturaTargetPicker
+                              idx={dup.csv_index}
+                              target={faturaTargets.get(dup.csv_index)}
+                              cartoes={cartoesAtivos}
+                              faturasAbertas={faturasAbertas}
+                              onChange={(t) => setFaturaTargets(prev => {
+                                const next = new Map(prev)
+                                next.set(dup.csv_index, t)
+                                return next
+                              })}
+                            />
+                          )}
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setIgnoredRows(prev => {
+                                const next = new Set(prev)
+                                if (next.has(dup.csv_index)) next.delete(dup.csv_index)
+                                else next.add(dup.csv_index)
+                                return next
+                              })
+                            }}
+                            title={ignoredRows.has(dup.csv_index) ? 'Voltar a considerar este lançamento' : 'Ignorar este lançamento (não importa nem combina)'}
+                            style={{
+                              marginTop: 6,
+                              fontSize: 11,
+                              color: ignoredRows.has(dup.csv_index) ? '#fff' : '#991b1b',
+                              background: ignoredRows.has(dup.csv_index) ? '#991b1b' : '#fef2f2',
+                              border: '1px dashed #ef4444',
+                              cursor: 'pointer',
+                              padding: '4px 8px',
+                              borderRadius: 6,
+                              textAlign: 'left',
+                            }}
+                          >
+                            {ignoredRows.has(dup.csv_index) ? '↩ Desfazer ignorar' : '🚫 Ignorar lançamento'}
+                          </button>
                           <button
                             type="button"
                             onClick={() => {
@@ -733,8 +882,13 @@ function ConciliacaoInner() {
                     const tipoLabel = (t: string) => t === 'entrada' ? 'Entrada' : t === 'saida' ? 'Saída' : 'Transferência'
                     const manualMatch = manualCombines.get(idx)
 
+                    const isIgnored = ignoredRows.has(idx)
                     return (
-                      <div key={idx} className={`${styles.dupSplitRow} ${manualMatch ? styles.dupSplitRowCombine : styles.dupSplitRowClean}`}>
+                      <div
+                        key={idx}
+                        className={`${styles.dupSplitRow} ${manualMatch ? styles.dupSplitRowCombine : styles.dupSplitRowClean}`}
+                        style={isIgnored ? { opacity: 0.4, filter: 'grayscale(0.5)' } : undefined}
+                      >
                         <div className={styles.dupSplitCellCsv}>
                           <div className={styles.dupSplitCellMain}>{row.descricao || '—'}</div>
                           <div className={styles.dupSplitCellMeta}>
@@ -828,6 +982,36 @@ function ConciliacaoInner() {
                               🔍 Buscar
                             </button>
                           )}
+                          {!manualMatch && row.tipo === 'saida' && (
+                            <button
+                              type="button"
+                              className={`${styles.dupSplitBtn} ${styles.dupSplitBtnFatura} ${faturaTargets.has(idx) ? styles.dupSplitBtnActive : ''}`}
+                              onClick={() => {
+                                setFaturaTargets(prev => {
+                                  const next = new Map(prev)
+                                  if (next.has(idx)) next.delete(idx)
+                                  else next.set(idx, { cartao_id: '', mes_ref: '' })
+                                  return next
+                                })
+                              }}
+                              title="Marcar como pagamento de fatura de cartão"
+                            >
+                              🧾 Pagamento de fatura
+                            </button>
+                          )}
+                          {faturaTargets.has(idx) && (
+                            <FaturaTargetPicker
+                              idx={idx}
+                              target={faturaTargets.get(idx)}
+                              cartoes={cartoesAtivos}
+                              faturasAbertas={faturasAbertas}
+                              onChange={(t) => setFaturaTargets(prev => {
+                                const next = new Map(prev)
+                                next.set(idx, t)
+                                return next
+                              })}
+                            />
+                          )}
                           <button
                             type="button"
                             className={`${styles.dupSplitBtn} ${styles.dupSplitBtnImport}`}
@@ -837,6 +1021,31 @@ function ConciliacaoInner() {
                             style={manualMatch ? { opacity: 0.4, cursor: 'not-allowed' } : undefined}
                           >
                             + Adicionar como…
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setIgnoredRows(prev => {
+                                const next = new Set(prev)
+                                if (next.has(idx)) next.delete(idx)
+                                else next.add(idx)
+                                return next
+                              })
+                            }}
+                            title={isIgnored ? 'Voltar a considerar este lançamento' : 'Ignorar este lançamento (não importa nem combina)'}
+                            style={{
+                              marginTop: 6,
+                              fontSize: 11,
+                              color: isIgnored ? '#fff' : '#991b1b',
+                              background: isIgnored ? '#991b1b' : '#fef2f2',
+                              border: '1px dashed #ef4444',
+                              cursor: 'pointer',
+                              padding: '4px 8px',
+                              borderRadius: 6,
+                              textAlign: 'left',
+                            }}
+                          >
+                            {isIgnored ? '↩ Desfazer ignorar' : '🚫 Ignorar lançamento'}
                           </button>
                           {openTipoMenuIdx === idx && (
                             <>
@@ -910,7 +1119,7 @@ function ConciliacaoInner() {
                             <div style={{ marginTop: 6 }}>
                               <CustomSelect
                                 value={transferDestino.get(idx) || ''}
-                                options={allAccounts.filter(a => a.id !== accountId).map(a => ({ id: a.id, label: a.nome }))}
+                                options={allAccounts.filter(a => a.id !== accountId && a.ativo !== false && a.incluir_no_saldo !== false).map(a => ({ id: a.id, label: a.nome }))}
                                 onChange={id => setTransferDestino(prev => {
                                   const next = new Map(prev)
                                   if (id) next.set(idx, id)
@@ -945,21 +1154,23 @@ function ConciliacaoInner() {
                 type="button"
                 className={styles.btnCancelForm}
                 disabled={importPreviewLoading}
-                onClick={() => { setImportPreview(null); setImportDupActions(new Map()); setRowOverrides(new Map()); setManualCombines(new Map()) }}
+                onClick={() => { setImportPreview(null); setImportDupActions(new Map()); setRowOverrides(new Map()); setManualCombines(new Map()); setFaturaTargets(new Map()); setIgnoredRows(new Set()) }}
               >
                 Cancelar e escolher outro arquivo
               </button>
               <button
                 type="button"
                 className={styles.btnSave}
-                disabled={importPreviewLoading || pendingDupsCount > 0}
+                disabled={importPreviewLoading || pendingDupsCount > 0 || faturaIncompletasCount > 0}
                 onClick={confirmImport}
               >
                 {importPreviewLoading
                   ? (importProgress ? `Importando ${importProgress.done}/${importProgress.total}…` : 'Processando…')
                   : pendingDupsCount > 0
                     ? `Resolva ${pendingDupsCount} duplicata${pendingDupsCount > 1 ? 's' : ''} para importar`
-                    : 'Importar agora'}
+                    : faturaIncompletasCount > 0
+                      ? `Selecione cartão/fatura em ${faturaIncompletasCount} linha${faturaIncompletasCount > 1 ? 's' : ''}`
+                      : 'Importar agora'}
               </button>
             </div>
           </div>
@@ -1117,6 +1328,47 @@ function ConciliacaoInner() {
           )
         })()}
       </main>
+    </div>
+  )
+}
+
+function FaturaTargetPicker({
+  idx,
+  target,
+  cartoes,
+  faturasAbertas,
+  onChange,
+}: {
+  idx: number
+  target: FaturaPagamentoTarget | undefined
+  cartoes: FinAccount[]
+  faturasAbertas: Array<{ id: string; cartao_id: string; cartao_nome: string; mes_ref: string; label: string; status: string; valor: number; valor_pago: number; saldo_devedor: number }>
+  onChange: (t: FaturaPagamentoTarget) => void
+}) {
+  const cartaoId = target?.cartao_id || ''
+  const mesRef = target?.mes_ref || ''
+  const faturasDoCartao = faturasAbertas.filter(f => f.cartao_id === cartaoId)
+  return (
+    <div style={{ marginTop: 6, display: 'flex', flexDirection: 'column', gap: 4 }}>
+      <CustomSelect
+        value={cartaoId}
+        options={cartoes.map(c => ({ id: c.id, label: c.nome }))}
+        onChange={id => onChange({ cartao_id: id || '', mes_ref: '' })}
+        placeholder="Cartão *"
+        menuFixed
+      />
+      {cartaoId && (
+        <CustomSelect
+          value={mesRef}
+          options={faturasDoCartao.map(f => ({
+            id: f.mes_ref,
+            label: `${f.label} · saldo ${fmtBRL(f.saldo_devedor)}${f.status === 'parcial' ? ' (parcial)' : ''}`,
+          }))}
+          onChange={id => onChange({ cartao_id: cartaoId, mes_ref: id || '' })}
+          placeholder={faturasDoCartao.length === 0 ? 'Nenhuma fatura em aberto' : 'Fatura (mês) *'}
+          menuFixed
+        />
+      )}
     </div>
   )
 }

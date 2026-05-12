@@ -2365,7 +2365,7 @@ function FinanceiroInner() {
                   value={fAccount}
                   placeholder="Selecionar..."
                   menuFixed
-                  options={accounts.map(a => ({ id: a.id, label: a.nome }))}
+                  options={accounts.filter(a => a.ativo !== false && a.incluir_no_saldo !== false).map(a => ({ id: a.id, label: a.nome }))}
                   onChange={setFAccount}
                   createLabel="Nova conta"
                   createFields={[
@@ -2382,7 +2382,7 @@ function FinanceiroInner() {
                     value={fAccountDestino}
                     placeholder="Selecionar..."
                     menuFixed
-                    options={accounts.filter(a => a.id !== fAccount).map(a => ({ id: a.id, label: a.nome }))}
+                    options={accounts.filter(a => a.id !== fAccount && a.ativo !== false && a.incluir_no_saldo !== false).map(a => ({ id: a.id, label: a.nome }))}
                     onChange={setFAccountDestino}
                     createLabel="Nova conta"
                     createFields={[

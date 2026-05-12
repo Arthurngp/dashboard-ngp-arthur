@@ -28,6 +28,15 @@ interface Lancamento {
   fornecedor: { id: string; nome: string } | null
 }
 
+interface PagamentoFatura {
+  id: string
+  valor: number
+  paid_at: string
+  observacoes: string | null
+  transacao_id: string | null
+  account_nome: string | null
+}
+
 interface ContaBancaria { id: string; nome: string; tipo: string }
 
 function todayISO() { return new Date().toISOString().slice(0, 10) }
@@ -62,11 +71,12 @@ function FaturaDetalheInner() {
   const [authorized, setAuthorized] = useState(false)
 
   const [data, setData] = useState<any>(null)
+  const [pagamentos, setPagamentos] = useState<PagamentoFatura[]>([])
   const [contas, setContas] = useState<ContaBancaria[]>([])
   const [loading, setLoading] = useState(false)
   const [msg, setMsg] = useState<{ type: 'ok' | 'err'; text: string } | null>(null)
 
-  // Modal pagar.
+  // Modal registrar pagamento.
   const [pagarOpen, setPagarOpen] = useState(false)
   const [pagarContaId, setPagarContaId] = useState('')
   const [pagarValor, setPagarValor] = useState('')
@@ -89,17 +99,18 @@ function FaturaDetalheInner() {
   const load = useCallback(async () => {
     if (!cartaoId || !mesRef) return
     setLoading(true)
-    const [resp, contasResp] = await Promise.all([
+    const [resp, contasResp, pagsResp] = await Promise.all([
       callFn('financeiro-agent', { action: 'cartoes_fatura_detalhe', cartao_id: cartaoId, mes_ref: mesRef }),
       callFn('financeiro-aux', { entity: 'accounts', action: 'listar' }),
+      callFn('financeiro-agent', { action: 'cartoes_fatura_pagamentos_listar', cartao_id: cartaoId, mes_ref: mesRef }),
     ])
     setLoading(false)
     if (resp?.error) { showMsg('err', resp.error); return }
     setData(resp)
+    setPagamentos(pagsResp?.pagamentos || [])
     if (contasResp?.accounts) {
-      // Para pagamento, contas tipo banco/conta_corrente/poupanca, ativas.
       setContas((contasResp.accounts as any[]).filter((a) =>
-        a.ativo !== false && ['banco', 'conta_corrente', 'carteira'].includes(a.tipo),
+        a.ativo !== false && a.incluir_no_saldo !== false && ['banco', 'conta_corrente', 'carteira'].includes(a.tipo),
       ))
     }
   }, [cartaoId, mesRef])
@@ -119,11 +130,18 @@ function FaturaDetalheInner() {
     )
   }
 
+  const totalPago = pagamentos.reduce((s, p) => s + Number(p.valor || 0), 0)
+  const saldoDevedor = Math.max(0, Number(data?.valor_fatura || 0) - totalPago)
+  const status: 'aberta' | 'parcial' | 'paga' = totalPago <= 0
+    ? 'aberta'
+    : saldoDevedor < 0.005 ? 'paga' : 'parcial'
+
   function abrirPagar() {
     if (!data) return
     setPagarContaId('')
-    setPagarValor((data.valor_fatura || 0).toString().replace('.', ','))
-    setPagarData(todayISO())
+    setPagarValor(saldoDevedor > 0 ? saldoDevedor.toFixed(2).replace('.', ',') : '')
+    // Default da data: vencimento da fatura (mais útil para faturas retroativas)
+    setPagarData(data.vencimento || todayISO())
     setPagarOpen(true)
   }
 
@@ -134,34 +152,32 @@ function FaturaDetalheInner() {
     if (valor == null || valor <= 0) { showMsg('err', 'Valor inválido.'); return }
     setPagarSaving(true)
     const resp = await callFn('financeiro-agent', {
-      action: 'cartoes_fatura_marcar_paga',
+      action: 'cartoes_fatura_registrar_pagamento',
       cartao_id: cartaoId,
       mes_ref: mesRef,
       paid_account_id: pagarContaId,
       paid_at: pagarData,
-      valor_pago: valor,
+      valor,
     })
     setPagarSaving(false)
     if (resp?.error) { showMsg('err', resp.error); return }
-    showMsg('ok', 'Fatura marcada como paga!')
+    showMsg('ok', 'Pagamento registrado!')
     setPagarOpen(false)
     void load()
   }
 
-  async function desfazerPagamento() {
-    if (!confirm('Desfazer pagamento desta fatura?')) return
+  async function removerPagamento(pagamentoId: string) {
+    if (!confirm('Remover este pagamento? A transação correspondente também será excluída.')) return
     const resp = await callFn('financeiro-agent', {
-      action: 'cartoes_fatura_marcar_aberta',
-      cartao_id: cartaoId,
-      mes_ref: mesRef,
+      action: 'cartoes_fatura_remover_pagamento',
+      pagamento_id: pagamentoId,
     })
     if (resp?.error) { showMsg('err', resp.error); return }
-    showMsg('ok', 'Pagamento desfeito.')
+    showMsg('ok', 'Pagamento removido.')
     void load()
   }
 
   const lancamentos: Lancamento[] = data?.lancamentos || []
-  const isPaga = data?.fatura?.status === 'paga'
 
   return (
     <div className={styles.layout}>
@@ -175,15 +191,14 @@ function FaturaDetalheInner() {
           </div>
           <div className={detStyles.headActions}>
             {!loading && data && (
-              <>
-                {isPaga ? (
-                  <button className={detStyles.btnSecondary} onClick={() => void desfazerPagamento()}>Desfazer pagamento</button>
-                ) : (
-                  <button className={detStyles.btnPrimary} onClick={abrirPagar} disabled={!data.valor_fatura || data.valor_fatura <= 0}>
-                    Marcar como paga
-                  </button>
-                )}
-              </>
+              <button
+                className={detStyles.btnPrimary}
+                onClick={abrirPagar}
+                disabled={status === 'paga' || (data.valor_fatura || 0) <= 0}
+                title={status === 'paga' ? 'Fatura já quitada' : 'Registrar pagamento'}
+              >
+                {status === 'parcial' ? `Pagar saldo (${fmtBRL(saldoDevedor)})` : 'Registrar pagamento'}
+              </button>
             )}
           </div>
         </header>
@@ -203,6 +218,10 @@ function FaturaDetalheInner() {
               <span className={detStyles.summaryValue}>{fmtBRL(data.valor_fatura || 0)}</span>
             </div>
             <div className={detStyles.summaryItem}>
+              <span className={detStyles.summaryLabel}>Pago</span>
+              <span className={detStyles.summaryValue}>{fmtBRL(totalPago)}</span>
+            </div>
+            <div className={detStyles.summaryItem}>
               <span className={detStyles.summaryLabel}>Vencimento</span>
               <span className={detStyles.summaryValue}>
                 {data.vencimento ? new Date(data.vencimento + 'T00:00:00').toLocaleDateString('pt-BR') : '—'}
@@ -211,13 +230,46 @@ function FaturaDetalheInner() {
             <div className={detStyles.summaryItem}>
               <span className={detStyles.summaryLabel}>Situação</span>
               <span className={detStyles.summaryValue}>
-                {isPaga ? <span className={detStyles.tagPaga}>Paga</span> : <span className={detStyles.tagAberta}>Em aberto</span>}
+                {status === 'paga' && <span className={detStyles.tagPaga}>Paga</span>}
+                {status === 'parcial' && <span className={detStyles.tagParcial}>Parcial</span>}
+                {status === 'aberta' && <span className={detStyles.tagAberta}>Em aberto</span>}
               </span>
             </div>
           </section>
         )}
 
-        <section className={detStyles.lancCard}>
+        {/* Lista de pagamentos registrados ─────────────────────────────────── */}
+        {pagamentos.length > 0 && (
+          <section className={detStyles.pagCard} style={{ marginTop: 16 }}>
+            <div className={detStyles.pagHead}>
+              <h2 className={detStyles.pagTitle}>{pagamentos.length} pagamento{pagamentos.length !== 1 ? 's' : ''} registrado{pagamentos.length !== 1 ? 's' : ''}</h2>
+            </div>
+            <ul className={detStyles.pagList}>
+              {pagamentos.map(p => (
+                <li key={p.id} className={detStyles.pagItem}>
+                  <span className={detStyles.pagData}>
+                    {new Date(p.paid_at + 'T00:00:00').toLocaleDateString('pt-BR')}
+                  </span>
+                  <span className={detStyles.pagConta}>{p.account_nome || '—'}</span>
+                  <span className={detStyles.pagValor}>{fmtBRL(p.valor)}</span>
+                  <button
+                    type="button"
+                    className={detStyles.pagRemover}
+                    onClick={() => void removerPagamento(p.id)}
+                    title="Remover este pagamento"
+                  >×</button>
+                </li>
+              ))}
+            </ul>
+            <div className={detStyles.pagSaldo}>
+              Total pago: <strong>{fmtBRL(totalPago)}</strong>
+              {' · '}
+              Saldo devedor: <strong>{fmtBRL(saldoDevedor)}</strong>
+            </div>
+          </section>
+        )}
+
+        <section className={detStyles.lancCard} style={{ marginTop: 16 }}>
           <div className={detStyles.lancHead}>
             <h2 className={detStyles.lancTitle}>{lancamentos.length} lançamentos</h2>
             <Link
@@ -270,8 +322,11 @@ function FaturaDetalheInner() {
         <div className={styles.modalOverlay} onClick={() => setPagarOpen(false)}>
           <div className={styles.modalCard} onClick={e => e.stopPropagation()}>
             <div className={styles.modalHead}>
-              <h3 className={styles.modalTitle}>Marcar fatura como paga</h3>
-              <span className={styles.modalSub}>{data?.label} · {data?.cartao?.nome}</span>
+              <h3 className={styles.modalTitle}>Registrar pagamento</h3>
+              <span className={styles.modalSub}>
+                {data?.label} · {data?.cartao?.nome}
+                {saldoDevedor > 0 && ` · Saldo: ${fmtBRL(saldoDevedor)}`}
+              </span>
             </div>
             <form onSubmit={salvarPagamento} className={styles.modalForm}>
               <div className={styles.formField}>

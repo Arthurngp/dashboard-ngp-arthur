@@ -1128,8 +1128,273 @@ serve(async (req: Request) => {
       })
     }
 
-    // ─── CARTÕES: marcar fatura como paga ────────────────────────────────────
-    // Cria uma saída na conta bancária + registra na fin_cartao_faturas.
+    // ─── CARTÕES: garante linha em fin_cartao_faturas e devolve {id, valor}
+    // Função interna usada pelo registrar_pagamento.
+    async function garantirFatura(cartaoId: string, mesRef: string, diaFechamento: number | null) {
+      const existing = await sb.from('fin_cartao_faturas')
+        .select('id,valor,status')
+        .eq('cartao_id', cartaoId)
+        .eq('mes_ref', mesRef)
+        .maybeSingle()
+
+      const txAll: any[] = []
+      let off = 0
+      while (true) {
+        const { data, error } = await sb.from('fin_transacoes_ativas')
+          .select('tipo,valor,competence_date')
+          .eq('account_id', cartaoId)
+          .range(off, off + 999)
+        if (error) return { error: 'Erro ao buscar lançamentos do cartão.' as string }
+        if (!data || data.length === 0) break
+        txAll.push(...data)
+        if (data.length < 1000) break
+        off += 1000
+      }
+      let total = 0
+      for (const t of txAll) {
+        if (!t.competence_date) continue
+        if (faturaMesRef(t.competence_date, diaFechamento) !== mesRef) continue
+        const v = Math.abs(Number(t.valor || 0))
+        total += t.tipo === 'saida' ? v : (t.tipo === 'entrada' ? -v : 0)
+      }
+      const valorCalc = Math.max(0, total)
+
+      if (existing.data) {
+        if (Number(existing.data.valor) !== valorCalc) {
+          await sb.from('fin_cartao_faturas')
+            .update({ valor: valorCalc, updated_at: new Date().toISOString() })
+            .eq('id', existing.data.id)
+        }
+        return { id: existing.data.id as string, valor: valorCalc }
+      }
+
+      const ins = await sb.from('fin_cartao_faturas')
+        .insert({ cartao_id: cartaoId, mes_ref: mesRef, status: 'aberta', valor: valorCalc, valor_pago: 0 })
+        .select('id').single()
+      if (ins.error || !ins.data) return { error: 'Erro ao criar registro da fatura.' as string }
+      return { id: ins.data.id as string, valor: valorCalc }
+    }
+
+    // ─── CARTÕES: lista faturas com saldo devedor (p/ conciliação) ──────────
+    // Materializa faturas "virtuais" agregando lançamentos do cartão por mes_ref.
+    // Faturas antigas que nunca tiveram linha em fin_cartao_faturas também aparecem
+    // (mês onde houve compras e ainda não foi totalmente pago).
+    if (action === 'cartoes_faturas_em_aberto_listar') {
+      const { cartao_id, meses_back } = body as { cartao_id?: string; meses_back?: number }
+      const lookback = Math.max(1, Math.min(36, Number(meses_back) || 18))
+
+      let cartoesQ = sb.from('fin_accounts')
+        .select('id,nome,tipo,dia_fechamento,ativo')
+        .in('tipo', ['cartao_credito', 'cartao'])
+        .eq('ativo', true)
+      if (cartao_id) cartoesQ = cartoesQ.eq('id', cartao_id)
+      const cartoesRes = await cartoesQ
+      if (cartoesRes.error) return json(req, { error: 'Erro ao listar cartões.' }, 500)
+      const cartoes = (cartoesRes.data || []) as Array<{ id: string; nome: string; dia_fechamento: number | null }>
+      if (cartoes.length === 0) return json(req, { faturas: [] })
+
+      const cartaoIds = cartoes.map(c => c.id)
+      const cartaoById = new Map(cartoes.map(c => [c.id, c]))
+
+      // Lançamentos de todos os cartões (paginado).
+      const lancs: any[] = []
+      {
+        let off = 0
+        while (true) {
+          const { data, error } = await sb.from('fin_transacoes_ativas')
+            .select('tipo,valor,competence_date,account_id')
+            .in('account_id', cartaoIds)
+            .range(off, off + 999)
+          if (error) return json(req, { error: 'Erro ao buscar lançamentos dos cartões.' }, 500)
+          if (!data || data.length === 0) break
+          lancs.push(...data)
+          if (data.length < 1000) break
+          off += 1000
+        }
+      }
+
+      // Janela de mes_ref: últimos `lookback` meses.
+      const hoje = new Date()
+      const limite = new Date(hoje.getFullYear(), hoje.getMonth() - (lookback - 1), 1)
+      const limiteISO = `${limite.getFullYear()}-${String(limite.getMonth() + 1).padStart(2, '0')}-01`
+
+      // Agrega valor por (cartao_id, mes_ref).
+      const valorPorChave = new Map<string, number>()
+      for (const l of lancs) {
+        const cart = cartaoById.get(l.account_id)
+        if (!cart || !l.competence_date) continue
+        const mes_ref = faturaMesRef(l.competence_date, cart.dia_fechamento)
+        if (mes_ref < limiteISO) continue
+        const v = Math.abs(Number(l.valor || 0))
+        const sinal = l.tipo === 'saida' ? 1 : (l.tipo === 'entrada' ? -1 : 0)
+        const k = `${l.account_id}|${mes_ref}`
+        valorPorChave.set(k, (valorPorChave.get(k) || 0) + v * sinal)
+      }
+
+      // Linhas existentes em fin_cartao_faturas (valor_pago real).
+      const fatRows = await sb.from('fin_cartao_faturas')
+        .select('id,cartao_id,mes_ref,status,valor,valor_pago')
+        .in('cartao_id', cartaoIds)
+        .gte('mes_ref', limiteISO)
+      if (fatRows.error) return json(req, { error: 'Erro ao buscar faturas.' }, 500)
+      const fatByKey = new Map<string, any>()
+      for (const f of fatRows.data || []) fatByKey.set(`${f.cartao_id}|${String(f.mes_ref).slice(0, 10)}`, f)
+
+      const faturas: any[] = []
+      for (const [k, valor] of valorPorChave.entries()) {
+        if (valor <= 0) continue
+        const [cId, mesRef] = k.split('|')
+        const existing = fatByKey.get(k)
+        const valorPago = Number(existing?.valor_pago || 0)
+        const saldoDevedor = Math.max(0, valor - valorPago)
+        if (saldoDevedor <= 0.005) continue
+        const status = existing?.status || (valorPago > 0 ? 'parcial' : 'aberta')
+        faturas.push({
+          id: existing?.id || null,
+          cartao_id: cId,
+          cartao_nome: cartaoById.get(cId)?.nome || '',
+          mes_ref: mesRef,
+          label: mesRefLabel(mesRef),
+          status,
+          valor,
+          valor_pago: valorPago,
+          saldo_devedor: saldoDevedor,
+        })
+      }
+
+      faturas.sort((a, b) => {
+        if (a.cartao_nome !== b.cartao_nome) return a.cartao_nome.localeCompare(b.cartao_nome)
+        return b.mes_ref.localeCompare(a.mes_ref)
+      })
+
+      return json(req, { faturas })
+    }
+
+    // ─── CARTÕES: registra UM pagamento (parcial ou total) numa fatura ───────
+    // Cria a saída na conta bancária + linha em fin_cartao_fatura_pagamentos
+    // (trigger recalcula valor_pago/status da fatura). Suporta paid_at retroativo.
+    // Modos:
+    //  - paid_account_id + valor [+ paid_at]: cria saída nova
+    //  - transacao_id existente: amarra transação já existente como pagamento
+    if (action === 'cartoes_fatura_registrar_pagamento') {
+      const { cartao_id, mes_ref, paid_account_id, paid_at, valor, transacao_id, observacoes } = body as {
+        cartao_id?: string; mes_ref?: string; paid_account_id?: string;
+        paid_at?: string; valor?: number; transacao_id?: string; observacoes?: string;
+      }
+      if (!cartao_id || !mes_ref) return json(req, { error: 'cartao_id e mes_ref são obrigatórios.' }, 400)
+      if (!/^\d{4}-\d{2}-01$/.test(mes_ref)) return json(req, { error: 'mes_ref inválido.' }, 400)
+
+      const cartRes = await sb.from('fin_accounts')
+        .select('id,nome,dia_fechamento')
+        .eq('id', cartao_id)
+        .in('tipo', ['cartao_credito', 'cartao'])
+        .single()
+      if (cartRes.error || !cartRes.data) return json(req, { error: 'Cartão não encontrado.' }, 404)
+
+      const fat = await garantirFatura(cartao_id, mes_ref, cartRes.data.dia_fechamento)
+      if ('error' in fat) return json(req, { error: fat.error }, 500)
+
+      const dataPag = paid_at && /^\d{4}-\d{2}-\d{2}$/.test(paid_at) ? paid_at : new Date().toISOString().slice(0, 10)
+      let txId: string | null = null
+      let valorPag = Number(valor)
+      let accIdPag: string | null = paid_account_id || null
+
+      if (transacao_id) {
+        const tx = await sb.from('fin_transacoes')
+          .select('id,valor,account_id,is_card_payment')
+          .eq('id', transacao_id).single()
+        if (tx.error || !tx.data) return json(req, { error: 'Transação informada não existe.' }, 404)
+        txId = tx.data.id
+        accIdPag = tx.data.account_id
+        valorPag = Number.isFinite(valorPag) && valorPag > 0 ? valorPag : Math.abs(Number(tx.data.valor || 0))
+        if (!tx.data.is_card_payment) {
+          await sb.from('fin_transacoes').update({ is_card_payment: true }).eq('id', txId)
+        }
+      } else {
+        if (!accIdPag) return json(req, { error: 'paid_account_id é obrigatório.' }, 400)
+        if (!Number.isFinite(valorPag) || valorPag <= 0) return json(req, { error: 'Valor de pagamento inválido.' }, 400)
+
+        const txInsert = await sb.from('fin_transacoes').insert({
+          tipo: 'saida',
+          descricao: `Pagamento fatura ${mesRefLabel(mes_ref)} — ${cartRes.data.nome}`,
+          valor: valorPag,
+          data_transacao: dataPag,
+          competence_date: dataPag,
+          payment_date: dataPag,
+          account_id: accIdPag,
+          status: 'confirmado',
+          observacoes: observacoes || null,
+          created_by: user.usuario_id,
+          is_card_payment: true,
+        }).select('id').single()
+        if (txInsert.error || !txInsert.data) return json(req, { error: 'Erro ao registrar pagamento.' }, 500)
+        txId = txInsert.data.id
+      }
+
+      const pagIns = await sb.from('fin_cartao_fatura_pagamentos').insert({
+        fatura_id: fat.id,
+        transacao_id: txId,
+        account_id: accIdPag,
+        valor: valorPag,
+        paid_at: dataPag,
+        observacoes: observacoes || null,
+        created_by: user.usuario_id,
+      }).select('id').single()
+      if (pagIns.error) {
+        if (!transacao_id && txId) await sb.from('fin_transacoes').delete().eq('id', txId)
+        return json(req, { error: 'Erro ao gravar pagamento da fatura.' }, 500)
+      }
+
+      const fatAfter = await sb.from('fin_cartao_faturas')
+        .select('id,status,valor,valor_pago,paid_at,paid_account_id,pagamento_tx_id')
+        .eq('id', fat.id).single()
+
+      return json(req, { fatura: fatAfter.data, pagamento_id: pagIns.data.id, transacao_id: txId })
+    }
+
+    // ─── CARTÕES: remove um pagamento individual da fatura ──────────────────
+    if (action === 'cartoes_fatura_remover_pagamento') {
+      const { pagamento_id, manter_transacao } = body as { pagamento_id?: string; manter_transacao?: boolean }
+      if (!pagamento_id) return json(req, { error: 'pagamento_id é obrigatório.' }, 400)
+
+      const pagRes = await sb.from('fin_cartao_fatura_pagamentos')
+        .select('id,transacao_id').eq('id', pagamento_id).maybeSingle()
+      if (!pagRes.data) return json(req, { ok: true })
+
+      const txId = pagRes.data.transacao_id
+      await sb.from('fin_cartao_fatura_pagamentos').delete().eq('id', pagamento_id)
+      if (txId && !manter_transacao) {
+        await sb.from('fin_transacoes').delete().eq('id', txId)
+      }
+      return json(req, { ok: true })
+    }
+
+    // ─── CARTÕES: lista pagamentos de uma fatura ────────────────────────────
+    if (action === 'cartoes_fatura_pagamentos_listar') {
+      const { cartao_id, mes_ref } = body as { cartao_id?: string; mes_ref?: string }
+      if (!cartao_id || !mes_ref) return json(req, { error: 'cartao_id e mes_ref são obrigatórios.' }, 400)
+      const fatRes = await sb.from('fin_cartao_faturas').select('id').eq('cartao_id', cartao_id).eq('mes_ref', mes_ref).maybeSingle()
+      if (!fatRes.data) return json(req, { pagamentos: [] })
+      const pagRes = await sb.from('fin_cartao_fatura_pagamentos')
+        .select('id,valor,paid_at,observacoes,transacao_id,account:fin_accounts!fin_cartao_fatura_pagamentos_account_id_fkey(id,nome)')
+        .eq('fatura_id', fatRes.data.id)
+        .order('paid_at', { ascending: false })
+        .order('created_at', { ascending: false })
+      if (pagRes.error) return json(req, { error: 'Erro ao listar pagamentos.' }, 500)
+      return json(req, {
+        pagamentos: (pagRes.data || []).map((p: any) => ({
+          id: p.id,
+          valor: Number(p.valor || 0),
+          paid_at: p.paid_at,
+          observacoes: p.observacoes,
+          transacao_id: p.transacao_id,
+          account_nome: p.account?.nome || null,
+        })),
+      })
+    }
+
+    // ─── CARTÕES: atalho "marcar paga" (cria 1 pagamento total) ─────────────
+    // Mantido por compat com UI antiga; nova UI deve usar registrar_pagamento.
     if (action === 'cartoes_fatura_marcar_paga') {
       const { cartao_id, mes_ref, paid_account_id, paid_at, valor_pago } = body as {
         cartao_id?: string; mes_ref?: string; paid_account_id?: string; paid_at?: string; valor_pago?: number
@@ -1140,45 +1405,17 @@ serve(async (req: Request) => {
       if (!/^\d{4}-\d{2}-01$/.test(mes_ref)) return json(req, { error: 'mes_ref inválido.' }, 400)
 
       const cartRes = await sb.from('fin_accounts')
-        .select('id,nome,dia_fechamento')
-        .eq('id', cartao_id)
-        .in('tipo', ['cartao_credito', 'cartao'])
-        .single()
+        .select('id,nome,dia_fechamento').eq('id', cartao_id)
+        .in('tipo', ['cartao_credito', 'cartao']).single()
       if (cartRes.error || !cartRes.data) return json(req, { error: 'Cartão não encontrado.' }, 404)
 
-      // Calcula valor da fatura se não enviado.
-      let valor = Number(valor_pago)
-      if (!Number.isFinite(valor) || valor <= 0) {
-        const txAll: any[] = []
-        let off = 0
-        while (true) {
-          const { data, error } = await sb.from('fin_transacoes_ativas')
-            .select('tipo,valor,competence_date')
-            .eq('account_id', cartao_id)
-            .range(off, off + 999)
-          if (error) return json(req, { error: 'Erro ao buscar lançamentos do cartão.' }, 500)
-          if (!data || data.length === 0) break
-          txAll.push(...data)
-          if (data.length < 1000) break
-          off += 1000
-        }
-        let total = 0
-        for (const t of txAll) {
-          if (!t.competence_date) continue
-          if (faturaMesRef(t.competence_date, cartRes.data.dia_fechamento) !== mes_ref) continue
-          const v = Math.abs(Number(t.valor || 0))
-          total += t.tipo === 'saida' ? v : (t.tipo === 'entrada' ? -v : 0)
-        }
-        valor = total
-      }
+      const fat = await garantirFatura(cartao_id, mes_ref, cartRes.data.dia_fechamento)
+      if ('error' in fat) return json(req, { error: fat.error }, 500)
 
+      const valor = Number.isFinite(Number(valor_pago)) && Number(valor_pago) > 0 ? Number(valor_pago) : fat.valor
       if (valor <= 0) return json(req, { error: 'Fatura sem valor positivo a pagar.' }, 400)
-
       const dataPag = paid_at && /^\d{4}-\d{2}-\d{2}$/.test(paid_at) ? paid_at : new Date().toISOString().slice(0, 10)
 
-      // Cria a transação de pagamento da fatura (saída na conta bancária).
-      // is_card_payment=true: marca como pagamento de fatura para não duplicar no DRE
-      // (as despesas individuais do cartão já entram com suas categorias).
       const txInsert = await sb.from('fin_transacoes').insert({
         tipo: 'saida',
         descricao: `Pagamento fatura ${mesRefLabel(mes_ref)} — ${cartRes.data.nome}`,
@@ -1194,41 +1431,39 @@ serve(async (req: Request) => {
       }).select('id').single()
       if (txInsert.error || !txInsert.data) return json(req, { error: 'Erro ao registrar pagamento.' }, 500)
 
-      // Upsert na fin_cartao_faturas.
-      const fatUpsert = await sb.from('fin_cartao_faturas').upsert({
-        cartao_id, mes_ref,
-        status: 'paga',
-        valor,
-        valor_pago: valor,
-        paid_at: dataPag,
-        paid_account_id,
-        pagamento_tx_id: txInsert.data.id,
-        updated_at: new Date().toISOString(),
-      }, { onConflict: 'cartao_id,mes_ref' }).select().single()
-      if (fatUpsert.error) {
-        // rollback da tx
+      const pagIns = await sb.from('fin_cartao_fatura_pagamentos').insert({
+        fatura_id: fat.id, transacao_id: txInsert.data.id, account_id: paid_account_id,
+        valor, paid_at: dataPag, created_by: user.usuario_id,
+      })
+      if (pagIns.error) {
         await sb.from('fin_transacoes').delete().eq('id', txInsert.data.id)
         return json(req, { error: 'Erro ao registrar fatura paga.' }, 500)
       }
 
-      return json(req, { fatura: fatUpsert.data, transacao_id: txInsert.data.id })
+      const fatAfter = await sb.from('fin_cartao_faturas')
+        .select('id,status,valor,valor_pago,paid_at,paid_account_id,pagamento_tx_id')
+        .eq('id', fat.id).single()
+      return json(req, { fatura: fatAfter.data, transacao_id: txInsert.data.id })
     }
 
-    // ─── CARTÕES: marcar fatura como aberta (desfazer pagamento) ─────────────
+    // ─── CARTÕES: desfazer todos os pagamentos da fatura (volta a 'aberta') ──
     if (action === 'cartoes_fatura_marcar_aberta') {
       const { cartao_id, mes_ref } = body as { cartao_id?: string; mes_ref?: string }
       if (!cartao_id || !mes_ref) return json(req, { error: 'cartao_id e mes_ref são obrigatórios.' }, 400)
 
       const fatRes = await sb.from('fin_cartao_faturas')
-        .select('id,pagamento_tx_id')
-        .eq('cartao_id', cartao_id)
-        .eq('mes_ref', mes_ref)
-        .maybeSingle()
+        .select('id').eq('cartao_id', cartao_id).eq('mes_ref', mes_ref).maybeSingle()
       if (!fatRes.data) return json(req, { ok: true })
 
-      if (fatRes.data.pagamento_tx_id) {
-        await sb.from('fin_transacoes').delete().eq('id', fatRes.data.pagamento_tx_id)
+      const pagsRes = await sb.from('fin_cartao_fatura_pagamentos')
+        .select('id,transacao_id').eq('fatura_id', fatRes.data.id)
+      const txIds = (pagsRes.data || []).map(p => p.transacao_id).filter(Boolean) as string[]
+
+      await sb.from('fin_cartao_fatura_pagamentos').delete().eq('fatura_id', fatRes.data.id)
+      if (txIds.length > 0) {
+        await sb.from('fin_transacoes').delete().in('id', txIds)
       }
+      // Trigger já zerou valor_pago/status — só garantia se a tabela estava vazia.
       await sb.from('fin_cartao_faturas').update({
         status: 'aberta', valor_pago: 0, paid_at: null, paid_account_id: null, pagamento_tx_id: null, updated_at: new Date().toISOString(),
       }).eq('id', fatRes.data.id)

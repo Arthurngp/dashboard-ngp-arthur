@@ -88,6 +88,10 @@ function CartoesInner() {
   const [despesaCostCenter, setDespesaCostCenter] = useState('')
   const [despesaInstallments, setDespesaInstallments] = useState(1)
   const [despesaSaving, setDespesaSaving] = useState(false)
+  // Criação inline de categoria dentro do modal.
+  const [novaCatOpen, setNovaCatOpen] = useState(false)
+  const [novaCatNome, setNovaCatNome] = useState('')
+  const [novaCatSaving, setNovaCatSaving] = useState(false)
 
   // Modal Adicionar / Editar cartão.
   const [cartaoFormOpen, setCartaoFormOpen] = useState<null | { mode: 'criar' } | { mode: 'editar'; cartao: Cartao }>(null)
@@ -397,10 +401,81 @@ function CartoesInner() {
                 </div>
                 <div className={styles.formField}>
                   <label>Categoria</label>
-                  <select value={despesaCategoria} onChange={e => setDespesaCategoria(e.target.value)}>
-                    <option value="">— Sem categoria —</option>
-                    {categorias.filter(c => c.tipo === 'saida').map(c => <option key={c.id} value={c.id}>{c.nome}</option>)}
-                  </select>
+                  {!novaCatOpen ? (
+                    <div style={{ display: 'flex', gap: 6 }}>
+                      <select
+                        value={despesaCategoria}
+                        onChange={e => {
+                          if (e.target.value === '__nova__') {
+                            setNovaCatOpen(true)
+                            setNovaCatNome('')
+                          } else {
+                            setDespesaCategoria(e.target.value)
+                          }
+                        }}
+                        style={{ flex: 1 }}
+                      >
+                        <option value="">— Sem categoria —</option>
+                        {categorias.filter(c => c.tipo === 'saida').map(c => <option key={c.id} value={c.id}>{c.nome}</option>)}
+                        <option value="__nova__">+ Criar nova categoria…</option>
+                      </select>
+                    </div>
+                  ) : (
+                    <div style={{ display: 'flex', gap: 6 }}>
+                      <input
+                        autoFocus
+                        value={novaCatNome}
+                        onChange={e => setNovaCatNome(e.target.value)}
+                        placeholder="Nome da nova categoria"
+                        onKeyDown={async e => {
+                          if (e.key === 'Escape') { setNovaCatOpen(false); return }
+                          if (e.key === 'Enter') {
+                            e.preventDefault()
+                            const nome = novaCatNome.trim()
+                            if (!nome) return
+                            setNovaCatSaving(true)
+                            const resp = await callEdgeFn('financeiro-categorias', { action: 'criar', payload: { nome, tipo: 'saida' } })
+                            setNovaCatSaving(false)
+                            const novaCat = resp?.categoria
+                            if (resp?.error || !novaCat) {
+                              showMsg('err', resp?.error || 'Erro ao criar categoria.')
+                              return
+                            }
+                            setCategorias(prev => [...prev, novaCat])
+                            setDespesaCategoria(novaCat.id)
+                            setNovaCatOpen(false)
+                          }
+                        }}
+                        style={{ flex: 1 }}
+                      />
+                      <button
+                        type="button"
+                        className={styles.btnSave}
+                        disabled={novaCatSaving || !novaCatNome.trim()}
+                        style={{ padding: '6px 12px', fontSize: 12 }}
+                        onClick={async () => {
+                          const nome = novaCatNome.trim()
+                          if (!nome) return
+                          setNovaCatSaving(true)
+                          const resp = await callEdgeFn('financeiro-categorias', { action: 'criar', payload: { nome, tipo: 'saida' } })
+                          setNovaCatSaving(false)
+                          if (resp?.error || !resp?.data) {
+                            showMsg('err', resp?.error || 'Erro ao criar categoria.')
+                            return
+                          }
+                          setCategorias(prev => [...prev, resp.data])
+                          setDespesaCategoria(resp.data.id)
+                          setNovaCatOpen(false)
+                        }}
+                      >{novaCatSaving ? '…' : 'Criar'}</button>
+                      <button
+                        type="button"
+                        className={styles.btnCancel}
+                        style={{ padding: '6px 12px', fontSize: 12 }}
+                        onClick={() => setNovaCatOpen(false)}
+                      >Cancelar</button>
+                    </div>
+                  )}
                 </div>
               </div>
               <div className={styles.formRow}>

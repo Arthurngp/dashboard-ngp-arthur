@@ -429,6 +429,33 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* ─── Bloco de contas ocultas (accordion) ────────────────────────────── */
+.ocultasBlock {
+  margin-top: 12px;
+  border-top: 1px dashed rgba(15, 23, 42, 0.08);
+  padding-top: 10px;
+}
+.ocultasToggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  background: none;
+  border: none;
+  padding: 6px 0;
+  cursor: pointer;
+  font-size: 12px;
+  color: #94A3B8;
+  font-weight: 600;
+  text-align: left;
+}
+.ocultasToggle:hover { color: #475569; }
+.ocultasToggle > span:first-child {
+  font-size: 10px;
+  width: 12px;
+  display: inline-block;
+}
+
 /* ─── Cores compartilhadas ────────────────────────────────────────────── */
 .posValue { color: #059669; }
 .negValue { color: #DC2626; }

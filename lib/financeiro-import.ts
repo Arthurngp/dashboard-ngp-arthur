@@ -33,11 +33,16 @@ export interface AiDuplicateMatch {
   reason: string
 }
 
-export type DupAction = 'pending' | 'combine' | 'import' | 'transfer'
+export type DupAction = 'pending' | 'combine' | 'import' | 'transfer' | 'fatura_pagamento' | 'ignore'
 
 export interface DupActionState {
   action: DupAction
   chosenStatus?: 'confirmado' | 'pendente'
+}
+
+export interface FaturaPagamentoTarget {
+  cartao_id: string
+  mes_ref: string
 }
 
 export interface ImportAnalysis {
