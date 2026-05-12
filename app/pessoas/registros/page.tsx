@@ -7,17 +7,31 @@ import { SURL } from '@/lib/constants'
 import { efHeaders } from '@/lib/api'
 import Sidebar from '@/components/Sidebar'
 import NGPLoading from '@/components/NGPLoading'
+import AusenciaModal from './AusenciaModal'
+import BatidaModal from './BatidaModal'
 import styles from './registros.module.css'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
+type TipoRegistro =
+  | 'entrada' | 'saida_almoco' | 'retorno_almoco' | 'saida'
+  | 'extra_entrada' | 'extra_saida' | 'extra' | 'ausencia'
+
 interface PontoRecord {
   id: string
-  tipo_registro: 'entrada' | 'saida_almoco' | 'retorno_almoco' | 'saida' | 'extra_entrada' | 'extra_saida' | 'extra'
+  tipo_registro: TipoRegistro
   created_at: string
   usuario_id: string
   usuario_nome?: string
+  observacao?: string | null
 }
+
+// Mapa de IDs reais das batidas por tipo — usado pra editar/deletar inline.
+type RecordsByTipo = Partial<Record<TipoRegistro, {
+  id: string
+  created_at: string
+  observacao?: string | null
+}>>
 
 interface DayRow {
   key: string
@@ -33,8 +47,13 @@ interface DayRow {
   extraSaida: string | null
   totalMins: number
   extrasMins: number
-  status: 'complete' | 'overtime' | 'below' | 'incomplete' | 'empty'
+  status: 'complete' | 'overtime' | 'below' | 'incomplete' | 'empty' | 'absent' | 'partial_absent'
+  hasAusencia: boolean
+  observacaoAusencia: string | null
+  recordsByTipo: RecordsByTipo
 }
+
+interface UsuarioOpt { id: string; nome: string }
 
 interface NextAction {
   tipo: string
@@ -79,7 +98,11 @@ function targetMinsForDow(jornada: Jornada, dow: number): number {
 }
 
 function calcBalance(records: PontoRecord[], jornada: Jornada = DEFAULT_JORNADA_NGP): { totalMins: number; status: DayRow['status']; extrasMins: number } {
-  const sorted = [...records].sort((a,b) => a.created_at.localeCompare(b.created_at))
+  // Ignora 'ausencia' no cálculo de horas — é só rótulo do dia.
+  const real = records.filter(r => r.tipo_registro !== 'ausencia')
+  const hasAusencia = records.some(r => r.tipo_registro === 'ausencia')
+
+  const sorted = [...real].sort((a,b) => a.created_at.localeCompare(b.created_at))
   const ms = (iso: string) => new Date(iso).getTime()
   let totalMs = 0
 
@@ -106,10 +129,20 @@ function calcBalance(records: PontoRecord[], jornada: Jornada = DEFAULT_JORNADA_
   const diffMins = totalMins - TARGET
   const extrasMins = diffMins > 0 ? diffMins : 0
 
-  const hasEntrada = records.some(r => r.tipo_registro === 'entrada')
-  const hasSaida   = records.some(r => r.tipo_registro === 'saida')
+  const hasEntrada = real.some(r => r.tipo_registro === 'entrada')
+  const hasSaida   = real.some(r => r.tipo_registro === 'saida')
 
+  // Dia totalmente ocupado por ausência → status 'absent'
+  if (!hasEntrada && hasAusencia) {
+    return { totalMins: 0, status: 'absent', extrasMins: 0 }
+  }
+  // Sem batidas e sem ausência → empty
   if (!hasEntrada) return { totalMins: 0, status: 'empty', extrasMins: 0 }
+
+  // Tem batidas E ausência → parcial
+  if (hasAusencia) {
+    return { totalMins, status: 'partial_absent', extrasMins }
+  }
 
   const status: DayRow['status'] = !hasSaida ? 'incomplete'
     : diffMins > 0 ? 'overtime'
@@ -136,13 +169,25 @@ function groupByDay(records: PontoRecord[], jornadas: Record<string, Jornada> = 
     })
     .map(([key, recs]) => {
       recs.sort((a,b) => a.created_at.localeCompare(b.created_at))
-      const get = (t: string) => recs.find(r => r.tipo_registro === t)
+      const get = (t: TipoRegistro) => recs.find(r => r.tipo_registro === t)
       const usuarioId = recs[0].usuario_id
       const jornada = jornadas[usuarioId] || DEFAULT_JORNADA_NGP
       const { totalMins, status, extrasMins } = calcBalance(recs, jornada)
       const [,dateStr] = key.split('__')
       const [y,mo,d] = dateStr.split('-').map(Number)
       const dateObj = new Date(Date.UTC(y, mo-1, d, 12))
+
+      const ausencia = get('ausencia')
+
+      const recordsByTipo: RecordsByTipo = {}
+      for (const r of recs) {
+        recordsByTipo[r.tipo_registro] = {
+          id: r.id,
+          created_at: r.created_at,
+          observacao: r.observacao ?? null,
+        }
+      }
+
       return {
         key,
         dateStr,
@@ -158,6 +203,9 @@ function groupByDay(records: PontoRecord[], jornadas: Record<string, Jornada> = 
         totalMins,
         extrasMins,
         status,
+        hasAusencia: !!ausencia,
+        observacaoAusencia: ausencia?.observacao ?? null,
+        recordsByTipo,
       }
     })
 }
@@ -165,10 +213,12 @@ function groupByDay(records: PontoRecord[], jornadas: Record<string, Jornada> = 
 const STATUS_LABEL: Record<string, string> = {
   complete: 'Completo', overtime: 'Hora extra',
   below: 'Abaixo da carga', incomplete: 'Em andamento', empty: '—',
+  absent: 'Ausência', partial_absent: 'Ausência parcial',
 }
 const STATUS_COLOR: Record<string, string> = {
   complete: '#059669', overtime: '#3b82f6',
   below: '#dc2626', incomplete: '#f59e0b', empty: '#8E8E93',
+  absent: '#5a5a60', partial_absent: '#b45309',
 }
 
 const TIPO_LABEL: Record<string, string> = {
@@ -267,6 +317,25 @@ export default function RegistrosPage() {
   const [minhaJornada, setMinhaJornada] = useState<Jornada>(DEFAULT_JORNADA_NGP)
   const [loading, setLoading]     = useState(false)
 
+  // ─── Admin: lista de usuários pra modais + estado de modais abertos ──────
+  const [usuariosOpts, setUsuariosOpts] = useState<UsuarioOpt[]>([])
+
+  type ModalState =
+    | { kind: 'absence'; usuarioId?: string; data?: string }
+    | { kind: 'batida_create'; usuarioId?: string; data?: string }
+    | {
+        kind: 'batida_edit'
+        record: {
+          id: string
+          usuario_id: string
+          tipo_registro: string
+          created_at: string
+          observacao?: string | null
+        }
+      }
+    | null
+  const [modal, setModal] = useState<ModalState>(null)
+
   // Auth
   useEffect(() => {
     const s = getSession()
@@ -338,11 +407,35 @@ export default function RegistrosPage() {
     }
   }, [])
 
+  // Carrega lista de usuários (uma vez) pro modal — só admin precisa.
+  const fetchUsuarios = useCallback(async () => {
+    const s = getSession()
+    if (!s) return
+    try {
+      const res = await fetch(`${SURL}/functions/v1/pessoas-ponto-import`, {
+        method: 'POST', headers: efHeaders(),
+        body: JSON.stringify({ session_token: s.session, action: 'listar_usuarios' }),
+      })
+      const data = await res.json()
+      if (data?.usuarios) {
+        setUsuariosOpts(data.usuarios.map((u: { id: string; nome: string }) => ({
+          id: u.id, nome: u.nome,
+        })))
+      }
+    } catch { /* silencioso */ }
+  }, [])
+
   useEffect(() => {
     if (!sess) return
     fetchToday()
     fetchRegistros(selMes, selAno)
-  }, [sess, selMes, selAno, fetchToday]) // eslint-disable-line react-hooks/exhaustive-deps
+    if (isAdmin) fetchUsuarios()
+  }, [sess, selMes, selAno, fetchToday, isAdmin, fetchUsuarios]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  const reload = useCallback(() => {
+    fetchRegistros(selMes, selAno)
+    fetchToday()
+  }, [fetchRegistros, fetchToday, selMes, selAno])
 
   useEffect(() => {
     const interval = setInterval(() => {
@@ -417,7 +510,9 @@ export default function RegistrosPage() {
     const j = jornadasMap[r.usuarioId] || DEFAULT_JORNADA_NGP
     return targetMinsForDow(j, dow)
   }
-  const diasAtivos = rows.filter(r => r.status !== 'empty')
+  // Dias considerados pra agregação: ignora 'empty' (sem dado) e 'absent' (ausência total).
+  // 'partial_absent' entra normalmente (tem batidas + ausência).
+  const diasAtivos = rows.filter(r => r.status !== 'empty' && r.status !== 'absent')
   const totalHoras = diasAtivos.reduce((acc, r) => acc + r.totalMins, 0)
   const totalExtras = diasAtivos.reduce((acc, r) => acc + r.extrasMins, 0)
   const totalNegativas = diasAtivos.reduce((acc, r) => {
@@ -430,7 +525,8 @@ export default function RegistrosPage() {
   const diasCompletos = rows.filter(r => r.status === 'complete' || r.status === 'overtime').length
   const diasAbaixo    = rows.filter(r => r.status === 'below').length
   const diasIncompletos = rows.filter(r => r.status === 'incomplete').length
-  const diasAusencias = rows.filter(r => r.status === 'empty').length
+  // "Ausências" = dias com qualquer marcação de ausência (total ou parcial).
+  const diasAusencias = rows.filter(r => r.hasAusencia).length
 
   // Export CSV
   const exportCSV = () => {
@@ -592,14 +688,37 @@ export default function RegistrosPage() {
                   { id: 'overtime', label: 'Hora extra' },
                   { id: 'below', label: 'Abaixo da carga' },
                   { id: 'incomplete', label: 'Em andamento' },
+                  { id: 'absent', label: 'Ausência' },
+                  { id: 'partial_absent', label: 'Ausência parcial' },
                 ]}
                 onChange={setFilterStatus}
               />
             </div>
 
-            <button className={styles.btnExport} onClick={exportCSV} disabled={rows.length === 0}>
-              <IcoDownload /> Exportar CSV
-            </button>
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+              {isAdmin && (
+                <>
+                  <button
+                    className={styles.btnNew}
+                    onClick={() => setModal({ kind: 'absence' })}
+                    title="Marcar atestado, feriado, folga ou falta justificada"
+                  >
+                    + Marcar ausência
+                  </button>
+                  <button
+                    className={styles.btnNew}
+                    style={{ background: 'linear-gradient(135deg, #3b82f6, #1d4ed8)' }}
+                    onClick={() => setModal({ kind: 'batida_create' })}
+                    title="Adicionar batida manual"
+                  >
+                    + Adicionar batida
+                  </button>
+                </>
+              )}
+              <button className={styles.btnExport} onClick={exportCSV} disabled={rows.length === 0}>
+                <IcoDownload /> Exportar CSV
+              </button>
+            </div>
           </div>
 
           {/* Cards de resumo */}
@@ -662,39 +781,119 @@ export default function RegistrosPage() {
                       <th>Total</th>
                       <th>H. Extras</th>
                       <th>Status</th>
+                      {isAdmin && <th>Ações</th>}
                     </tr>
                   </thead>
                   <tbody>
-                    {rows.map(row => (
-                      <tr key={row.key}>
-                        {isAdmin && <td className={styles.tdUser}>{row.usuarioNome}</td>}
-                        <td className={styles.tdDate}>{row.dateLabel}</td>
-                        <td>{row.entrada       || <span className={styles.empty2}>--:--</span>}</td>
-                        <td>{row.saidaAlmoco   || <span className={styles.empty2}>--:--</span>}</td>
-                        <td>{row.retornoAlmoco || <span className={styles.empty2}>--:--</span>}</td>
-                        <td>{row.saida         || <span className={styles.empty2}>--:--</span>}</td>
-                        <td className={styles.tdExtraCol}>
-                          {row.extraEntrada || <span className={styles.empty2}>--:--</span>}
-                        </td>
-                        <td className={styles.tdExtraCol}>
-                          {row.extraSaida || <span className={styles.empty2}>--:--</span>}
-                        </td>
-                        <td className={styles.tdTotal}>
-                          {row.totalMins > 0 ? fmtMins(row.totalMins) : <span className={styles.empty2}>--</span>}
-                        </td>
-                        <td className={styles.tdTotal}>
-                          {row.extrasMins > 0 ? fmtMins(row.extrasMins) : <span className={styles.empty2}>--</span>}
-                        </td>
-                        <td>
-                          <span className={styles.badge} style={{
-                            color: STATUS_COLOR[row.status],
-                            background: STATUS_COLOR[row.status] + '18',
-                          }}>
-                            {STATUS_LABEL[row.status]}
-                          </span>
-                        </td>
-                      </tr>
-                    ))}
+                    {rows.map(row => {
+                      // Constrói o handler de clique numa célula de batida.
+                      const onCellClick = (tipo: TipoRegistro) => {
+                        if (!isAdmin) return
+                        const rec = row.recordsByTipo[tipo]
+                        if (rec) {
+                          setModal({
+                            kind: 'batida_edit',
+                            record: {
+                              id: rec.id,
+                              usuario_id: row.usuarioId,
+                              tipo_registro: tipo,
+                              created_at: rec.created_at,
+                              observacao: rec.observacao,
+                            },
+                          })
+                        } else {
+                          // célula vazia → abre modo create pré-preenchido
+                          setModal({
+                            kind: 'batida_create',
+                            usuarioId: row.usuarioId,
+                            data: row.dateStr,
+                          })
+                        }
+                      }
+                      const cellCls = isAdmin ? styles.cellEditable : undefined
+
+                      const [yy, mm, dd] = row.dateStr.split('-').map(Number)
+                      const dow = new Date(Date.UTC(yy, mm - 1, dd, 12)).getUTCDay()
+                      const isFds = dow === 0 || dow === 6
+
+                      return (
+                        <tr key={row.key}>
+                          {isAdmin && <td className={styles.tdUser}>{row.usuarioNome}</td>}
+                          <td className={styles.tdDate}>{row.dateLabel}</td>
+                          <td className={cellCls} onClick={() => onCellClick('entrada')}>
+                            {row.entrada || <span className={styles.empty2}>--:--</span>}
+                          </td>
+                          <td className={cellCls} onClick={() => onCellClick('saida_almoco')}>
+                            {row.saidaAlmoco || <span className={styles.empty2}>--:--</span>}
+                          </td>
+                          <td className={cellCls} onClick={() => onCellClick('retorno_almoco')}>
+                            {row.retornoAlmoco || <span className={styles.empty2}>--:--</span>}
+                          </td>
+                          <td className={cellCls} onClick={() => onCellClick('saida')}>
+                            {row.saida || <span className={styles.empty2}>--:--</span>}
+                          </td>
+                          <td className={styles.tdExtraCol}>
+                            {row.extraEntrada || <span className={styles.empty2}>--:--</span>}
+                          </td>
+                          <td className={styles.tdExtraCol}>
+                            {row.extraSaida || <span className={styles.empty2}>--:--</span>}
+                          </td>
+                          <td className={styles.tdTotal}>
+                            {row.totalMins > 0 ? fmtMins(row.totalMins) : <span className={styles.empty2}>--</span>}
+                          </td>
+                          <td className={styles.tdTotal}>
+                            {row.extrasMins > 0 ? fmtMins(row.extrasMins) : <span className={styles.empty2}>--</span>}
+                          </td>
+                          <td>
+                            <span className={styles.badge} style={{
+                              color: STATUS_COLOR[row.status],
+                              background: STATUS_COLOR[row.status] + '18',
+                            }}>
+                              {STATUS_LABEL[row.status]}
+                            </span>
+                            {row.hasAusencia && row.observacaoAusencia && (
+                              <div className={styles.absentNote}>{row.observacaoAusencia}</div>
+                            )}
+                          </td>
+                          {isAdmin && (
+                            <td>
+                              <div className={styles.tdActions}>
+                                {!isFds && (
+                                  <button
+                                    className={`${styles.btnAction} ${styles.btnActionDanger}`}
+                                    title="Marcar ausência (atestado/feriado/folga)"
+                                    onClick={() => setModal({
+                                      kind: 'absence',
+                                      usuarioId: row.usuarioId,
+                                      data: row.dateStr,
+                                    })}
+                                  >
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" width={14} height={14}>
+                                      <rect x="3" y="4" width="18" height="18" rx="2"/>
+                                      <line x1="9" y1="14" x2="15" y2="14"/>
+                                    </svg>
+                                  </button>
+                                )}
+                                <button
+                                  className={styles.btnAction}
+                                  title="Adicionar batida neste dia"
+                                  onClick={() => setModal({
+                                    kind: 'batida_create',
+                                    usuarioId: row.usuarioId,
+                                    data: row.dateStr,
+                                  })}
+                                >
+                                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" width={14} height={14}>
+                                    <line x1="12" y1="5" x2="12" y2="19"/>
+                                    <line x1="5" y1="12" x2="19" y2="12"/>
+                                  </svg>
+                                </button>
+                              </div>
+                            </td>
+                          )}
+                        </tr>
+                      )
+                    })}
                   </tbody>
                 </table>
               </div>
@@ -703,6 +902,35 @@ export default function RegistrosPage() {
 
         </div>
       </main>
+
+      {isAdmin && modal?.kind === 'absence' && (
+        <AusenciaModal
+          usuarios={usuariosOpts}
+          defaultUsuarioId={modal.usuarioId}
+          defaultData={modal.data}
+          onClose={() => setModal(null)}
+          onSaved={reload}
+        />
+      )}
+      {isAdmin && modal?.kind === 'batida_create' && (
+        <BatidaModal
+          mode="create"
+          usuarios={usuariosOpts}
+          defaultUsuarioId={modal.usuarioId}
+          defaultData={modal.data}
+          onClose={() => setModal(null)}
+          onSaved={reload}
+        />
+      )}
+      {isAdmin && modal?.kind === 'batida_edit' && (
+        <BatidaModal
+          mode="edit"
+          usuarios={usuariosOpts}
+          record={modal.record}
+          onClose={() => setModal(null)}
+          onSaved={reload}
+        />
+      )}
     </div>
   )
 }

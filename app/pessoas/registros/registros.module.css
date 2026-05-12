@@ -511,3 +511,97 @@
   .tdUser { max-width: 180px; }
   .badge { font-size: 11px; padding: 3px 10px; }
 }
+
+/* ── Ações admin inline (editar batida / marcar ausência / adicionar) ──────── */
+.cellEditable {
+  cursor: pointer;
+  position: relative;
+  transition: background 0.15s;
+}
+.cellEditable:hover {
+  background: rgba(59, 130, 246, 0.08);
+}
+.cellEditable:hover::after {
+  content: '✎';
+  position: absolute;
+  top: 2px;
+  right: 4px;
+  font-size: 10px;
+  color: #3b82f6;
+  opacity: 0.7;
+}
+
+.tdActions {
+  display: flex;
+  gap: 4px;
+  white-space: nowrap;
+}
+
+.btnAction {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  background: rgba(255,255,255,0.04);
+  border: 1px solid rgba(28,28,30,0.12);
+  border-radius: 7px;
+  color: #1C1C1E;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.btnAction:hover {
+  background: #1C1C1E;
+  color: #fff;
+  border-color: #1C1C1E;
+}
+.btnActionDanger:hover {
+  background: #f59e0b;
+  color: #fff;
+  border-color: #f59e0b;
+}
+
+/* Botão global na toolbar pra marcar ausência em dia vazio */
+.btnNew {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 11px 16px;
+  background: linear-gradient(135deg, #f59e0b, #d97706);
+  color: #fff;
+  border: none;
+  border-radius: 10px;
+  font-size: 13px;
+  font-weight: 700;
+  font-family: 'Sora', sans-serif;
+  cursor: pointer;
+  transition: opacity 0.15s, transform 0.15s;
+}
+.btnNew:hover { opacity: 0.92; transform: translateY(-1px); }
+
+/* Badges de ausência na coluna de status */
+.badgeAbsent {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 600;
+  background: rgba(142, 142, 147, 0.15);
+  color: #5a5a60;
+}
+.badgePartialAbsent {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 600;
+  background: rgba(245, 158, 11, 0.15);
+  color: #b45309;
+}
+
+.absentNote {
+  font-size: 11px;
+  color: #8E8E93;
+  font-style: italic;
+}
