@@ -650,7 +650,11 @@ async function copyCloudLink(){
 }
 const UUID_RE=/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 async function loadFromCloud(id){
-  if(!id||!UUID_RE.test(id)){alert('ID de relatório inválido.');return;}
+  if(!id||!UUID_RE.test(id)){
+    alert('ID de relatório inválido. Você será redirecionado para criar um novo relatório.');
+    window.location.replace('/relatorio?novo=1');
+    return;
+  }
   try{
     const tryFetch=async(tok)=>fetch(
       SURL+'/rest/v1/relatorios?id=eq.'+encodeURIComponent(id)+'&select=id,dados',
@@ -672,7 +676,8 @@ async function loadFromCloud(id){
       if(c.platform==='tiktok'&&!c.tiktokData)c.tiktokData=defaultPlatData();
     });
   }catch(e){
-    alert('Erro ao carregar relatório. Tente novamente.');
+    alert('Relatório não encontrado. Você será redirecionado para criar um novo.');
+    window.location.replace('/relatorio?novo=1');
   }
 }
 function esc(s){if(!s)return'';return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;')}
@@ -1549,25 +1554,37 @@ function renderPreview(){
 
 // ── TIPO DE RELATÓRIO (baseado no intervalo de dias do período) ───────────────
 function getTipoRelatorio(periodo){
-  if(!periodo) return 'Semanal';
+  if(!periodo) return 'Personalizado';
   // suporta "DD/MM a DD/MM" ou "DD/MM/AAAA a DD/MM/AAAA"
   const partes = periodo.split(/\s+a\s+/i);
-  if(partes.length < 2) return 'Semanal';
+  if(partes.length < 2) return 'Personalizado';
   function parseData(s){
     const p = s.trim().split('/');
     if(p.length < 2) return null;
     const dia = parseInt(p[0],10);
     const mes = parseInt(p[1],10) - 1;
     const ano = p[2] ? parseInt(p[2],10) : new Date().getFullYear();
-    return new Date(ano, mes, dia);
+    const d = new Date(ano, mes, dia);
+    return isNaN(d) ? null : d;
   }
-  const d1 = parseData(partes[0]);
-  const d2 = parseData(partes[1]);
-  if(!d1 || !d2 || isNaN(d1) || isNaN(d2)) return 'Semanal';
+  let d1 = parseData(partes[0]);
+  let d2 = parseData(partes[1]);
+  if(!d1 || !d2) return 'Personalizado';
+  // Cross-year: se a 2ª data ficou antes da 1ª e os anos foram omitidos, recua d1 um ano
+  const anoOmitido1 = !/\d{4}/.test(partes[0]);
+  const anoOmitido2 = !/\d{4}/.test(partes[1]);
+  if(d2 < d1 && anoOmitido1 && anoOmitido2){
+    d1 = new Date(d1.getFullYear()-1, d1.getMonth(), d1.getDate());
+  }
   const dias = Math.round(Math.abs(d2 - d1) / (1000*60*60*24));
-  if(dias > 25) return 'Mensal';
-  if(dias >= 8) return 'Quinzenal';
-  return 'Semanal';
+  if(dias === 0)   return 'Diário';
+  if(dias <= 6)    return 'Semanal';
+  if(dias <= 17)   return 'Quinzenal';
+  if(dias <= 45)   return 'Mensal';
+  if(dias <= 75)   return 'Bimestral';
+  if(dias <= 135)  return 'Trimestral';
+  if(dias <= 225)  return 'Semestral';
+  return 'Anual';
 }
 
 // ── RENDER ────────────────────────────────────────────────────────────────────
@@ -1780,13 +1797,17 @@ function voltarDashboard(){
 
 // ── META IMPORT ───────────────────────────────────────────────────────────────
 const META_PERIODS = [
-  {label:'Hoje',       preset:'today'},
-  {label:'Ontem',      preset:'yesterday'},
-  {label:'7 dias',     preset:'last_7d'},
-  {label:'14 dias',    preset:'last_14d'},
-  {label:'30 dias',    preset:'last_30d'},
-  {label:'Este mês',   preset:'this_month'},
-  {label:'Mês ant.',   preset:'last_month'},
+  {label:'Hoje',          preset:'today'},
+  {label:'Ontem',         preset:'yesterday'},
+  {label:'7 dias',        preset:'last_7d'},
+  {label:'14 dias',       preset:'last_14d'},
+  {label:'30 dias',       preset:'last_30d'},
+  {label:'Este mês',      preset:'this_month'},
+  {label:'Mês ant.',      preset:'last_month'},
+  {label:'Este trim.',    preset:'this_quarter'},
+  {label:'Trim. ant.',    preset:'last_quarter'},
+  {label:'Este ano',      preset:'this_year'},
+  {label:'Ano ant.',      preset:'last_year'},
 ];
 
 // Available Meta metrics catalogue
@@ -2003,6 +2024,8 @@ function renderCompSlotB(){
   document.getElementById('comp-periods-B').innerHTML=
     `<button class="comp-qbtn ${s.mode==='quick'&&s.quick==='week'?'sel':''}" onclick="setCompB_quick('week')">📅 Semana ant.</button>`+
     `<button class="comp-qbtn ${s.mode==='quick'&&s.quick==='month'?'sel':''}" onclick="setCompB_quick('month')">📅 Mês ant.</button>`+
+    `<button class="comp-qbtn ${s.mode==='quick'&&s.quick==='quarter'?'sel':''}" onclick="setCompB_quick('quarter')">📅 Trim. ant.</button>`+
+    `<button class="comp-qbtn ${s.mode==='quick'&&s.quick==='year'?'sel':''}" onclick="setCompB_quick('year')">📅 Ano ant.</button>`+
     `<button class="comp-qbtn ${s.mode==='custom'?'sel':''}" onclick="setCompB_custom()">✏️ Personalizado</button>`;
   document.getElementById('comp-custom-B').className='meta-custom-row'+(s.mode==='custom'?' show':'');
 }
@@ -2017,8 +2040,10 @@ function applyCompB_custom(){
 
 function resolveCompB(){
   // Returns {mode, preset, from, until} for the API call
-  if(_compB.mode==='custom') return {mode:'custom',from:_compB.from,until:_compB.until};
-  if(_compB.quick==='month')  return {mode:'preset',preset:'last_month'};
+  if(_compB.mode==='custom')   return {mode:'custom',from:_compB.from,until:_compB.until};
+  if(_compB.quick==='month')   return {mode:'preset',preset:'last_month'};
+  if(_compB.quick==='quarter') return {mode:'preset',preset:'last_quarter'};
+  if(_compB.quick==='year')    return {mode:'preset',preset:'last_year'};
   // 'week' = previous 7d window before last 7d
   return {mode:'custom',from:daysAgoStr(14),until:daysAgoStr(8)};
 }
