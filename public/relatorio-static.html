@@ -151,6 +151,10 @@ textarea.field{resize:vertical;line-height:1.6}
 .criativo-preview-body{padding:10px 12px;border-top:1px solid var(--border);background:#FAFAFA}
 .criativo-preview-title{font-size:13px;font-weight:700;color:#111;line-height:1.3;margin-bottom:4px}
 .criativo-preview-text{font-size:12px;color:#3A3A3C;line-height:1.4;white-space:pre-wrap;word-wrap:break-word}
+.criativo-preview-iframe-wrap{border:1px solid var(--border);border-radius:var(--radius-sm);overflow:hidden;background:#fff;width:100%;height:560px}
+.criativo-preview-iframe{width:100%;height:100%;border:0;display:block}
+.only-print{display:none}
+@media print{.only-screen{display:none!important}.only-print{display:flex!important}}
 .img-upload{border:2px dashed var(--border-strong);border-radius:var(--radius-sm);cursor:pointer;background:#FAFAFA;overflow:hidden;min-height:96px;display:flex;align-items:center;justify-content:center;transition:border-color .15s,background .15s}
 .img-upload:hover{border-color:var(--red);background:var(--red-light)}
 .img-upload img{width:auto;max-width:100%;display:block;max-height:380px;object-fit:contain;margin:0 auto}
@@ -1000,8 +1004,13 @@ function renderCriativoCard(c,ci){
         <textarea class="field" rows="2" placeholder="1 frase: o que faz converter" oninput="updCriativo(${ci},'porqueGanha',this.value)">${esc(c.porqueGanha)}</textarea></div>
       ${hasImported ? `
         <div class="lbl">Preview do criativo</div>
-        <div class="criativo-preview">
-          <img src="${esc(c.img)}" alt="" class="criativo-preview-img"/>
+        ${c.previewHtml ? `
+          <div class="criativo-preview-iframe-wrap only-screen">
+            <iframe class="criativo-preview-iframe" srcdoc="${esc(c.previewHtml)}" sandbox="allow-scripts allow-same-origin allow-popups" loading="lazy"></iframe>
+          </div>
+        ` : ''}
+        <div class="criativo-preview ${c.previewHtml?'only-print':''}">
+          ${c.img?`<img src="${esc(c.img)}" alt="" class="criativo-preview-img"/>`:''}
           <div class="criativo-preview-body">
             ${c.tituloAd?`<div class="criativo-preview-title">${esc(c.tituloAd)}</div>`:''}
             ${c.legenda?`<div class="criativo-preview-text">${esc(c.legenda)}</div>`:''}
@@ -2414,14 +2423,18 @@ async function fetchAdsCampeoes(){
       };
     });
     document.getElementById('ads-status').textContent=`${rows.length} ads encontrados · buscando capas dos top ${top.length}…`;
-    // Busca capa + texto em paralelo (best-effort, não bloqueia salvar)
+    // Busca capa + texto + preview iframe oficial em paralelo (best-effort)
     await Promise.all(_adsResult.map(async(c)=>{
       if(!c.ad_id) return;
       try{
-        const r=await fetchAdCreative(c.ad_id);
-        c.img=r.img||'';
-        c.tituloAd=r.title||'';
-        c.legenda=r.body||'';
+        const [creative, previewHtml] = await Promise.all([
+          fetchAdCreative(c.ad_id),
+          fetchAdPreviewHtml(c.ad_id)
+        ]);
+        c.img=creative.img||'';
+        c.tituloAd=creative.title||'';
+        c.legenda=creative.body||'';
+        c.previewHtml=previewHtml||'';
       }catch(_){}
     }));
     document.getElementById('ads-status').textContent=`${rows.length} ads encontrados · top ${top.length} selecionados`;
@@ -2499,6 +2512,24 @@ async function fetchAdThumbnail(adId){
   return r.img||'';
 }
 
+// Busca o preview oficial do Meta (HTML iframe). Tenta MOBILE primeiro
+// (mais parecido com o que o usuário vê no feed), cai para DESKTOP.
+async function fetchAdPreviewHtml(adId){
+  const tryFormat=async(fmt)=>{
+    const res=await fetch(SURL+'/functions/v1/meta-proxy',{
+      method:'POST',
+      headers:{'Content-Type':'application/json','apikey':ANON,'Authorization':'Bearer '+_sess},
+      body:JSON.stringify({session_token:_sess,endpoint:adId+'/previews',params:{ad_format:fmt},account_id:_metaAccount})
+    });
+    const j=await res.json();
+    if(!res.ok||j.error) return '';
+    return j.data?.[0]?.body || '';
+  };
+  let html=await tryFormat('MOBILE_FEED_STANDARD');
+  if(!html) html=await tryFormat('DESKTOP_FEED_STANDARD');
+  return html;
+}
+
 function fillAdsIntoReport(){
   if(!_adsResult||!_adsResult.length)return;
   D.criativos=_adsResult.map(c=>{
@@ -2520,6 +2551,7 @@ function fillAdsIntoReport(){
       img:c.img||'',
       tituloAd:c.tituloAd||'',
       legenda:c.legenda||'',
+      previewHtml:c.previewHtml||'',
       fromMeta:true,
     };
   });
