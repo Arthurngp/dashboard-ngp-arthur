@@ -1916,12 +1916,14 @@ function handleImg(type,idx){
       if(!bar){
         bar=document.createElement('div');
         bar.id='autoimport-bar';
-        bar.style.cssText='position:fixed;top:60px;right:20px;background:#1877F2;color:#fff;padding:10px 16px;border-radius:8px;z-index:600;font-size:12px;font-weight:600;font-family:Sora,sans-serif;box-shadow:0 4px 12px rgba(0,0,0,.2);max-width:340px';
+        bar.style.cssText='position:fixed;top:60px;right:20px;background:#1877F2;color:#fff;padding:10px 16px;border-radius:8px;z-index:600;font-size:12px;font-weight:600;font-family:Sora,sans-serif;box-shadow:0 4px 12px rgba(0,0,0,.2);max-width:520px;line-height:1.4;cursor:pointer';
+        bar.title='Clique para copiar';
+        bar.onclick=()=>{try{navigator.clipboard.writeText(bar.textContent);bar.style.background='#34C759';setTimeout(()=>{if(bar)bar.style.background='#1877F2';},800);}catch(_){}};
         document.body.appendChild(bar);
       }
       bar.textContent=t;
     };
-    const hideAutoStatus=()=>{const bar=document.getElementById('autoimport-bar');if(bar)setTimeout(()=>bar.remove(),3000);};
+    const hideAutoStatus=(delay)=>{const bar=document.getElementById('autoimport-bar');if(bar)setTimeout(()=>bar.remove(),delay||3000);};
     if(!_sess){
       console.warn('[autoimport] sem sessão — não é possível importar');
       showAutoStatus('⚠ Faça login para importar dados do Meta');hideAutoStatus();
@@ -1971,9 +1973,12 @@ function handleImg(type,idx){
         showAutoStatus(parts.join(' · '));
         if(status.metricas!=='pending' && status.criativos!=='pending'){
           let msg=`✓ ${status.countM} métricas e ${status.countC} criativos importados`;
-          if(status.criativos==='empty') msg=`✓ ${status.countM} métricas · ⚠ nenhum criativo encontrado para esse objetivo no período`;
+          if(status.criativos==='empty') msg=`✓ ${status.countM} métricas · ⚠ ${status.criativosMsg||'nenhum criativo encontrado'}`;
+          else if(status.criativos==='err') msg=`✓ ${status.countM} métricas · ⚠ erro nos criativos: ${status.criativosMsg||''}`;
           showAutoStatus(msg);
-          hideAutoStatus();
+          // Mensagens de erro/empty ficam mais tempo para você ler
+          const isError=status.criativos==='empty'||status.criativos==='err'||status.metricas==='err';
+          hideAutoStatus(isError?20000:3000);
         }
       };
 
@@ -2006,11 +2011,14 @@ function handleImg(type,idx){
             status.countC=_adsResult.length;
             status.criativos='ok';
           }else{
-            // 0 ads: o filtro de objetivo não casou com nenhuma campanha do período
+            // 0 ads: lê a mensagem de diagnóstico que fetchAdsCampeoes pôs no #ads-status
+            const adsStatus=document.getElementById('ads-status');
+            status.criativosMsg=(adsStatus&&adsStatus.textContent)||'Nenhum criativo encontrado';
             status.criativos='empty';
           }
         }catch(e){
           console.error('[autoimport criativos]',e);
+          status.criativosMsg=(e&&e.message)||'erro';
           status.criativos='err';
         }
         updateStatus();
@@ -2479,10 +2487,9 @@ function normName(s){
 // para evitar falsos positivos como "lead" em "deadline")
 function nameMatchesObjective(rawName, objective){
   if(!objective || !objective.nameTokens || !objective.nameTokens.length) return true;
-  const n=' '+normName(rawName)+' ';
+  const n=normName(rawName);
   for(const t of objective.nameTokens){
-    const tn=normName(t);
-    if(n.includes(' '+tn+' ') || n.includes(' '+tn) || n.includes(tn+' ')) return true;
+    if(n.includes(normName(t))) return true;
   }
   return false;
 }
@@ -2491,10 +2498,9 @@ function nameMatchesAudience(rawName, audience){
   const raw=String(rawName||'');
   // Emojis: match direto na string original (não normalizada)
   for(const e of audience.emojis){if(raw.includes(e)) return true;}
-  const n=' '+normName(rawName)+' ';
+  const n=normName(rawName);
   for(const t of audience.tokens){
-    const tn=normName(t);
-    if(n.includes(' '+tn+' ') || n.includes(' '+tn) || n.includes(tn+' ')) return true;
+    if(n.includes(normName(t))) return true;
   }
   return false;
 }
@@ -2592,7 +2598,12 @@ async function fetchAdsCampeoes(){
     console.log('[fetchAdsCampeoes] %d campanhas casam com filtro:', campsCasam.length, campsCasam.map(c=>c.name));
     if(!campsCasam.length){
       const audInfo=audienceObj.val?` · público "${audienceObj.label}"`:'';
-      setStatus(`Nenhuma campanha de "${obj.label}"${audInfo} encontrada. Veja console (F12) para diagnóstico.`);
+      const objsUnicos=Array.from(new Set(todasCampanhas.map(c=>c.objective).filter(Boolean)));
+      const exemplos=todasCampanhas.slice(0,3).map(c=>c.name).join(' | ');
+      const diag=todasCampanhas.length
+        ? ` Conta tem ${todasCampanhas.length} camp. (objectives: ${objsUnicos.join(', ')}). Ex.: ${exemplos}`
+        : ' Conta sem campanhas.';
+      setStatus(`Nenhuma campanha de "${obj.label}"${audInfo}.${diag}`);
       _adsLoading=false; return;
     }
     const campIdsCasam=campsCasam.map(c=>c.id);
