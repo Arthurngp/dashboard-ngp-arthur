@@ -56,8 +56,10 @@ input:focus,textarea:focus{border-color:var(--red)!important;box-shadow:0 0 0 3p
 .grid3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px}
 .grid2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
 .lbl{font-size:10px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--text-faint);margin-bottom:6px}
-.field{width:100%;padding:9px 12px;border:1.5px solid var(--border);border-radius:var(--radius-sm);font-size:13px;color:var(--text);background:var(--surface);transition:border-color .15s,box-shadow .15s;line-height:1.4}
-textarea.field{resize:vertical;line-height:1.6}
+.field{width:100%;padding:9px 12px;border:1.5px solid var(--border);border-radius:var(--radius-sm);font-size:13px;color:var(--text);background:var(--surface);transition:border-color .15s,box-shadow .15s;line-height:1.4;outline:none}
+.field:focus{border-color:var(--red);box-shadow:0 0 0 3px rgba(204,20,20,.1)}
+.field::placeholder{color:#C7C7CC}
+textarea.field{resize:vertical;line-height:1.6;min-height:48px}
 
 /* SECTION HEADERS */
 .sec-head{display:flex;align-items:center;gap:10px;border-bottom:2px solid var(--border);padding-bottom:10px;margin-bottom:20px;margin-top:4px}
@@ -127,7 +129,9 @@ textarea.field{resize:vertical;line-height:1.6}
 
 /* CRIATIVO CHIPS GRID */
 .chips-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:8px}
-.chip-card{background:#F8F8F8;border:1.5px solid var(--border);border-radius:var(--radius-sm);padding:9px 10px 8px;position:relative;transition:border-color .15s}
+.chip-card{background:#F8F8F8;border:1.5px solid var(--border);border-radius:var(--radius-sm);padding:9px 10px 8px;position:relative;transition:border-color .15s,background .15s}
+.chip-card:hover{background:#F2F2F4;border-color:#D6D6DA}
+.chip-card:focus-within{border-color:var(--red);background:#fff}
 .chip-card:focus-within{border-color:var(--red);background:#fff}
 .chip-card-lbl{width:calc(100% - 20px);border:none;background:transparent;font-size:9px;font-weight:800;color:var(--text-faint);text-transform:uppercase;letter-spacing:.08em;outline:none;display:block;margin-bottom:4px}
 .chip-card-lbl:focus{color:var(--red)}
@@ -139,25 +143,29 @@ textarea.field{resize:vertical;line-height:1.6}
 
 /* CRIATIVO CARD */
 .criativos-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px}
-.criativo-card{border:1.5px solid var(--border);border-radius:var(--radius-md);overflow:hidden;transition:box-shadow .15s}
-.criativo-card:hover{box-shadow:var(--shadow-sm)}
+.criativo-card{border:1.5px solid var(--border);border-radius:var(--radius-md);overflow:hidden;transition:box-shadow .15s,border-color .15s;display:flex;flex-direction:column}
+.criativo-card:hover{box-shadow:var(--shadow-sm);border-color:#D6D6DA}
 .criativo-card-head{background:var(--red);padding:9px 16px;display:flex;align-items:center;justify-content:space-between}
 .criativo-card-badge{color:#fff;font-weight:800;font-size:10px;letter-spacing:.1em}
-.criativo-card-body{padding:16px}
+.criativo-card-body{padding:16px;display:flex;flex-direction:column;gap:14px;flex:1}
 
-/* IMG UPLOAD */
+/* PREVIEW DO CRIATIVO */
 .criativo-preview{border:1px solid var(--border);border-radius:var(--radius-sm);overflow:hidden;background:#fff;display:flex;flex-direction:column}
 .criativo-preview-img{width:auto;max-width:100%;display:block;max-height:420px;object-fit:contain;margin:0 auto;background:#000}
 .criativo-preview-body{padding:10px 12px;border-top:1px solid var(--border);background:#FAFAFA}
 .criativo-preview-title{font-size:13px;font-weight:700;color:#111;line-height:1.3;margin-bottom:4px}
 .criativo-preview-text{font-size:12px;color:#3A3A3C;line-height:1.4;white-space:pre-wrap;word-wrap:break-word}
-.criativo-preview-iframe-wrap{border:1px solid var(--border);border-radius:var(--radius-sm);overflow:hidden;background:#fff;width:100%;height:560px}
-.criativo-preview-iframe{width:100%;height:100%;border:0;display:block}
-.criativo-aguardando{border:2px dashed var(--border-strong);border-radius:var(--radius-sm);padding:20px 16px;background:#FAFAFA;display:flex;align-items:center;gap:14px}
-.criativo-aguardando-spinner{width:24px;height:24px;border:3px solid #E5E5EA;border-top-color:#1877F2;border-radius:50%;animation:criativo-spin 1s linear infinite;flex-shrink:0}
-.criativo-aguardando-title{font-size:12px;font-weight:700;color:#111;margin-bottom:2px}
-.criativo-aguardando-sub{font-size:11px;color:#6E6E73}
+/* Iframe do Meta: usar aspect-ratio do feed mobile (~9:14) — height ajusta
+   automaticamente ao width disponível, sem espaço branco embaixo */
+.criativo-preview-iframe-wrap{border:1px solid var(--border);border-radius:var(--radius-sm);overflow:hidden;background:#fff;width:100%;aspect-ratio:9/14;min-height:380px;max-height:600px;position:relative;animation:criativo-fade-in .25s ease-out}
+.criativo-preview-iframe{width:100%;height:100%;border:0;display:block;position:absolute;inset:0}
+.criativo-preview-img{animation:criativo-fade-in .25s ease-out}
+.criativo-aguardando{border:2px dashed var(--border-strong);border-radius:var(--radius-sm);padding:32px 20px;background:linear-gradient(180deg,#FAFAFA,#F5F5F7);display:flex;align-items:center;gap:14px;min-height:200px}
+.criativo-aguardando-spinner{width:26px;height:26px;border:3px solid #E5E5EA;border-top-color:#1877F2;border-radius:50%;animation:criativo-spin .8s linear infinite;flex-shrink:0}
+.criativo-aguardando-title{font-size:12px;font-weight:700;color:#111;margin-bottom:3px;letter-spacing:.01em}
+.criativo-aguardando-sub{font-size:11px;color:#6E6E73;line-height:1.35}
 @keyframes criativo-spin{to{transform:rotate(360deg)}}
+@keyframes criativo-fade-in{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:translateY(0)}}
 .only-print{display:none}
 @media print{.only-screen{display:none!important}.only-print{display:flex!important}}
 .img-upload{border:2px dashed var(--border-strong);border-radius:var(--radius-sm);cursor:pointer;background:#FAFAFA;overflow:hidden;min-height:96px;display:flex;align-items:center;justify-content:center;transition:border-color .15s,background .15s}
@@ -997,9 +1005,9 @@ function renderCriativoCard(c,ci){
       ${D.criativos.length>1?`<button class="btn-remove" style="color:rgba(255,255,255,.5)" onclick="removeCriativo(${ci})">×</button>`:''}
     </div>
     <div class="criativo-card-body">
-      <div style="margin-bottom:10px"><div class="lbl">Nome / ID</div>
+      <div><div class="lbl">Nome / ID</div>
         <input class="field" value="${esc(c.nome)}" placeholder="Nome ou ID" oninput="updCriativo(${ci},'nome',this.value)"/></div>
-      <div style="margin-bottom:10px">
+      <div>
         <div class="lbl">Resultados <span style="color:#CCC;font-weight:400;text-transform:none;letter-spacing:0;font-size:10px">— edite label e valor</span></div>
         <div class="chips-grid">
           ${c.chips.map((ch,chi)=>`
@@ -1012,7 +1020,7 @@ function renderCriativoCard(c,ci){
         </div>
       </div>
       ${hasImported ? `
-        <div style="margin-bottom:12px">
+        <div>
           <div class="lbl">Preview do criativo</div>
           ${c.previewHtml ? `
             <div class="criativo-preview-iframe-wrap only-screen">
@@ -1031,9 +1039,9 @@ function renderCriativoCard(c,ci){
         <div><div class="lbl">${porqueLabel}</div>
           <textarea class="field" rows="2" placeholder="1 frase: o que faz converter" oninput="updCriativo(${ci},'porqueGanha',this.value)">${esc(c.porqueGanha)}</textarea></div>
       ` : `
-        <div style="margin-bottom:12px"><div class="lbl">${porqueLabel}</div>
+        <div><div class="lbl">${porqueLabel}</div>
           <textarea class="field" rows="2" placeholder="1 frase: o que faz converter" oninput="updCriativo(${ci},'porqueGanha',this.value)">${esc(c.porqueGanha)}</textarea></div>
-        <div class="lbl">Criativo</div>
+        <div><div class="lbl">Criativo</div>
         ${_aguardandoCriativos ? `
           <div class="criativo-aguardando no-print">
             <div class="criativo-aguardando-spinner"></div>
