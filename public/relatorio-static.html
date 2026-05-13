@@ -148,7 +148,7 @@ textarea.field{resize:vertical;line-height:1.6}
 /* IMG UPLOAD */
 .img-upload{border:2px dashed var(--border-strong);border-radius:var(--radius-sm);cursor:pointer;background:#FAFAFA;overflow:hidden;min-height:96px;display:flex;align-items:center;justify-content:center;transition:border-color .15s,background .15s}
 .img-upload:hover{border-color:var(--red);background:var(--red-light)}
-.img-upload img{width:100%;display:block;max-height:170px;object-fit:contain}
+.img-upload img{width:auto;max-width:100%;display:block;max-height:380px;object-fit:contain;margin:0 auto}
 .img-placeholder{text-align:center;padding:16px}
 .img-plus{font-size:22px;color:var(--border-strong);line-height:1}
 .img-lbl{font-size:10px;color:var(--text-faint);margin-top:5px;font-weight:500}
@@ -2232,13 +2232,17 @@ function fillCompIntoReport(){
 // ── IMPORTAÇÃO DE CRIATIVOS CAMPEÕES ──────────────────────────────────────────
 // Busca ads do Meta com filtro de objetivo da campanha + período + top N por
 // "resultados" (purchase/lead conforme objetivo). Popula D.criativos.
+// objectiveFilter: lista de objectives para filtrar (campaign.objective IN [...])
+// action: action_type principal usado pra ranquear "resultados" (top N).
+// Quando action contém '.', faz match exato; senão faz match por sufixo.
 const AD_OBJECTIVES=[
-  {label:'Vendas',       val:'OUTCOME_SALES',         action:'purchase'},
-  {label:'Leads',        val:'OUTCOME_LEADS',         action:'lead'},
-  {label:'Tráfego',      val:'OUTCOME_TRAFFIC',       action:'link_click'},
-  {label:'Engajamento',  val:'OUTCOME_ENGAGEMENT',    action:'post_engagement'},
-  {label:'Reconhecim.',  val:'OUTCOME_AWARENESS',     action:'impressions'},
-  {label:'Todos',        val:'',                       action:'purchase'},
+  {label:'Vendas',       val:'OUTCOME_SALES',                                      action:'purchase'},
+  {label:'Leads',        val:'OUTCOME_LEADS',                                      action:'lead'},
+  {label:'Mensagens',    val:'OUTCOME_ENGAGEMENT,MESSAGES,OUTCOME_LEADS',          action:'onsite_conversion.messaging_conversation_started_7d'},
+  {label:'Tráfego',      val:'OUTCOME_TRAFFIC',                                    action:'link_click'},
+  {label:'Engajamento',  val:'OUTCOME_ENGAGEMENT',                                 action:'post_engagement'},
+  {label:'Reconhecim.',  val:'OUTCOME_AWARENESS',                                  action:'impressions'},
+  {label:'Todos',        val:'',                                                   action:'purchase'},
 ];
 let _adsObjective='OUTCOME_SALES', _adsPreset='last_30d', _adsTopN=2, _adsLoading=false;
 function openAdsImport(){
@@ -2353,8 +2357,8 @@ async function fetchAdsCampeoes(){
     }));
     document.getElementById('ads-status').textContent=`${rows.length} ads encontrados · top ${top.length} selecionados`;
     document.getElementById('ads-preview').innerHTML=_adsResult.map(c=>
-      `<div style="display:flex;gap:10px;padding:8px 10px;border:1px solid #E5E5EA;border-radius:8px;margin-bottom:6px;align-items:center">
-        ${c.img?`<img src="${esc(c.img)}" alt="" style="width:56px;height:56px;object-fit:cover;border-radius:6px;flex-shrink:0;background:#F2F2F7"/>`:`<div style="width:56px;height:56px;border-radius:6px;background:#F2F2F7;display:flex;align-items:center;justify-content:center;font-size:18px;flex-shrink:0">📷</div>`}
+      `<div style="display:flex;gap:10px;padding:8px 10px;border:1px solid #E5E5EA;border-radius:8px;margin-bottom:6px;align-items:flex-start">
+        ${c.img?`<img src="${esc(c.img)}" alt="" style="width:80px;max-height:140px;object-fit:contain;border-radius:6px;flex-shrink:0;background:#F2F2F7"/>`:`<div style="width:80px;height:80px;border-radius:6px;background:#F2F2F7;display:flex;align-items:center;justify-content:center;font-size:20px;flex-shrink:0">📷</div>`}
         <div style="flex:1;min-width:0">
           <div style="font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(c.nome)}</div>
           <div style="color:#6E6E73;font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(c.campanha)}</div>
@@ -2374,7 +2378,9 @@ async function fetchAdsCampeoes(){
 async function fetchAdThumbnail(adId){
   // endpoint precisa ter '/' para o proxy não prefixar com act_<accountId>.
   // Usar "<adId>/" mantém a chamada como /v19.0/<adId>/?fields=...
-  const params={fields:'creative{thumbnail_url,image_url,object_story_spec{video_data{image_url},link_data{picture,image_hash}}}'};
+  // Pede thumbnail_width/height grandes para a Meta entregar imagem em alta
+  // (default é 64x64); image_url vem na resolução nativa do criativo.
+  const params={fields:'creative{thumbnail_url.width(600).height(600),image_url,object_story_spec{video_data{image_url},link_data{picture}}}'};
   const res=await fetch(SURL+'/functions/v1/meta-proxy',{
     method:'POST',
     headers:{'Content-Type':'application/json','apikey':ANON,'Authorization':'Bearer '+_sess},
@@ -2384,10 +2390,13 @@ async function fetchAdThumbnail(adId){
   if(!res.ok||j.error){console.warn('[fetchAdThumbnail] falhou:',adId,j);return '';}
   const cr=j.creative||{};
   const story=cr.object_story_spec||{};
-  const url = cr.thumbnail_url
-           || cr.image_url
-           || story.video_data?.image_url
+  // Prefere image_url (resolução nativa), depois link_data.picture, depois
+  // video frame, e thumbnail_url só como último recurso (mesmo em 600 ainda
+  // é menor que a mídia original).
+  const url = cr.image_url
            || story.link_data?.picture
+           || story.video_data?.image_url
+           || cr.thumbnail_url
            || '';
   if(!url){console.warn('[fetchAdThumbnail] sem url:',adId,cr);return '';}
   // Converte para data URL para persistir no JSON (links Meta expiram em horas).
