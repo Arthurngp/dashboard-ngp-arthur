@@ -2609,24 +2609,45 @@ async function fetchAdsCampeoes(){
     const campIdsCasam=campsCasam.map(c=>c.id);
 
     // ETAPA 2: busca ads SOMENTE das campanhas filtradas, com métricas.
-    const params={
-      level:'ad',
-      limit:200,
-      fields:'ad_id,ad_name,campaign_id,campaign_name,objective,spend,impressions,clicks,ctr,actions,action_values,cost_per_action_type',
-      date_preset:_adsPreset,
-      filtering:JSON.stringify([{field:'campaign.id',operator:'IN',value:campIdsCasam}]),
+    // Helper para repetir a busca em períodos diferentes (fallback se vazio).
+    const fetchAdsByPeriod=async(preset)=>{
+      const params={
+        level:'ad',
+        limit:200,
+        fields:'ad_id,ad_name,campaign_id,campaign_name,objective,spend,impressions,clicks,ctr,actions,action_values,cost_per_action_type',
+        date_preset:preset,
+        filtering:JSON.stringify([{field:'campaign.id',operator:'IN',value:campIdsCasam}]),
+      };
+      const r=await fetch(SURL+'/functions/v1/meta-proxy',{
+        method:'POST',
+        headers:{'Content-Type':'application/json','apikey':ANON,'Authorization':'Bearer '+_sess},
+        body:JSON.stringify({session_token:_sess,endpoint:'insights',params,account_id:_metaAccount})
+      });
+      const jj=await r.json();
+      if(!r.ok||jj.error)throw new Error(jj.error?.message||jj.error||'Falha ao buscar ads');
+      return jj.data||[];
     };
-    const res=await fetch(SURL+'/functions/v1/meta-proxy',{
-      method:'POST',
-      headers:{'Content-Type':'application/json','apikey':ANON,'Authorization':'Bearer '+_sess},
-      body:JSON.stringify({session_token:_sess,endpoint:'insights',params,account_id:_metaAccount})
-    });
-    const j=await res.json();
-    if(!res.ok||j.error)throw new Error(j.error?.message||j.error||'Falha ao buscar ads');
-    let rows=j.data||[];
+    let rows=await fetchAdsByPeriod(_adsPreset);
+    let periodoUsado=_adsPreset;
+    // Fallback: se 0 ads no período curto, amplia para last_30d (e depois last_90d)
+    if(!rows.length && _adsPreset!=='last_30d' && _adsPreset!=='last_90d'){
+      console.log('[fetchAdsCampeoes] 0 ads em %s, ampliando para last_30d', _adsPreset);
+      setStatus(`0 ads em "${_adsPreset}" — ampliando para 30 dias…`);
+      rows=await fetchAdsByPeriod('last_30d');
+      periodoUsado='last_30d';
+    }
+    if(!rows.length && _adsPreset!=='last_90d'){
+      console.log('[fetchAdsCampeoes] 0 ads em last_30d, ampliando para last_90d');
+      setStatus('0 ads em 30 dias — ampliando para 90 dias…');
+      rows=await fetchAdsByPeriod('last_90d');
+      periodoUsado='last_90d';
+    }
     if(!rows.length){
-      setStatus(`Encontradas ${campsCasam.length} campanhas, mas sem ads ativos no período.`);
+      setStatus(`Encontradas ${campsCasam.length} campanhas, mas sem ads ativos nos últimos 90 dias.`);
       _adsLoading=false; return;
+    }
+    if(periodoUsado!==_adsPreset){
+      console.log('[fetchAdsCampeoes] usando período %s (fallback de %s)', periodoUsado, _adsPreset);
     }
     console.log('[fetchAdsCampeoes] %d ads ativos no período retornados', rows.length);
     // Ordena: tenta pelo action específico do objetivo (desc), senão por CTR desc.
