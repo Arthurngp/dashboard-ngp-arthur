@@ -157,8 +157,8 @@ textarea.field{resize:vertical;line-height:1.6;min-height:48px}
 .criativo-preview-text{font-size:12px;color:#3A3A3C;line-height:1.4;white-space:pre-wrap;word-wrap:break-word}
 /* Iframe do Meta: usar aspect-ratio do feed mobile (~9:14) — height ajusta
    automaticamente ao width disponível, sem espaço branco embaixo */
-.criativo-preview-iframe-wrap{border:1px solid var(--border);border-radius:var(--radius-sm);overflow:hidden;background:#fff;width:100%;min-height:380px;height:380px;animation:criativo-fade-in .25s ease-out;transition:height .2s ease-out}
-.criativo-preview-iframe{width:100%;height:100%;border:0;display:block}
+.criativo-preview-iframe-wrap{border:1px solid var(--border);border-radius:var(--radius-sm);overflow:hidden;background:#fff;width:100%;min-height:380px;height:380px;animation:criativo-fade-in .25s ease-out;transition:height .2s ease-out;max-width:100%}
+.criativo-preview-iframe{width:100%;height:100%;border:0;display:block;overflow:hidden}
 .criativo-preview-img{animation:criativo-fade-in .25s ease-out}
 .criativo-aguardando{border:2px dashed var(--border-strong);border-radius:var(--radius-sm);padding:32px 20px;background:linear-gradient(180deg,#FAFAFA,#F5F5F7);display:flex;align-items:center;gap:14px;min-height:200px}
 .criativo-aguardando-spinner{width:26px;height:26px;border:3px solid #E5E5EA;border-top-color:#1877F2;border-radius:50%;animation:criativo-spin .8s linear infinite;flex-shrink:0}
@@ -1024,7 +1024,7 @@ function renderCriativoCard(c,ci){
           <div class="lbl">Preview do criativo</div>
           ${c.previewHtml ? `
             <div class="criativo-preview-iframe-wrap only-screen">
-              <iframe class="criativo-preview-iframe" srcdoc="${esc(c.previewHtml)}" sandbox="allow-scripts allow-same-origin allow-popups" loading="lazy" onload="autoSizeAdIframe(this)"></iframe>
+              <iframe class="criativo-preview-iframe" srcdoc="${esc(c.previewHtml)}" sandbox="allow-scripts allow-same-origin allow-popups" loading="lazy" scrolling="no" onload="autoSizeAdIframe(this)"></iframe>
             </div>
           ` : ''}
           <div class="criativo-preview ${c.previewHtml?'only-print':''}">
@@ -1064,12 +1064,13 @@ function autoSizeAdIframe(iframe){
   if(!iframe||!iframe.parentElement) return;
   const wrap=iframe.parentElement;
   // Injeta CSS reset no iframe Meta: zera padding/margin/min-height do body
-  // que costumam reservar espaço além do conteúdo real do anúncio.
+  // e força overflow:hidden para o conteúdo nunca scroller dentro do iframe
+  // (queremos mostrar o anúncio inteiro sempre, sem rolagem interna).
   try{
     const doc=iframe.contentDocument;
     if(doc){
       const style=doc.createElement('style');
-      style.textContent='html,body{margin:0!important;padding:0!important;min-height:0!important;height:auto!important;background:#fff!important}body>*:last-child{margin-bottom:0!important;padding-bottom:0!important}';
+      style.textContent='html,body{margin:0!important;padding:0!important;min-height:0!important;height:auto!important;background:#fff!important;overflow:hidden!important}body>*:last-child{margin-bottom:0!important;padding-bottom:0!important}';
       (doc.head||doc.documentElement).appendChild(style);
     }
   }catch(_){}
@@ -1097,8 +1098,9 @@ function autoSizeAdIframe(iframe){
         if(stable>=3){clearInterval(timer); return;}
       }else{
         stable=0;
-        // Sem +respiro extra (já capturamos o bottom real). Clamp 200-720.
-        const target=Math.min(720,Math.max(200,Math.ceil(h)));
+        // Sem teto: deixa o card crescer o quanto o anúncio precisar.
+        // Mínimo de 200px só pra não ficar invisível enquanto carrega.
+        const target=Math.max(200,Math.ceil(h));
         wrap.style.height=target+'px';
         lastH=h;
       }
