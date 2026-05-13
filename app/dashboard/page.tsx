@@ -419,7 +419,15 @@ export default function DashboardPage() {
               {activeTab === 'relatorios' && <>
                 <div className={styles.relHeader}>
                   <span className={styles.relTitle}>Relatórios salvos</span>
-                  <button className={styles.btnNewRel} onClick={() => window.open('/relatorio?novo=1', '_blank')}>+ Novo relatório</button>
+                  <button
+                    className={styles.btnNewRel}
+                    disabled={!viewing}
+                    onClick={() => {
+                      if (!viewing) { alert('Selecione um cliente antes de criar um relatório.'); return }
+                      const qs = new URLSearchParams({ novo: '1', cliente: viewing.name || '', username: viewing.username || '', cid: viewing.id || '' })
+                      window.open(`/relatorio?${qs.toString()}`, '_blank')
+                    }}
+                  >+ Novo relatório</button>
                 </div>
                 {relatorios.length === 0
                   ? <div className={styles.empty}>Nenhum relatório salvo para esta conta.</div>

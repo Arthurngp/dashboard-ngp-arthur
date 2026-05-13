@@ -14,7 +14,7 @@ Deno.serve(async (req) => {
   if (cors) return cors
 
   try {
-    const { session_token, cloudId, dados, titulo, periodo, cliente_username, data_inicio, data_fim } = await req.json()
+    const { session_token, cloudId, dados, titulo, periodo, cliente_username, cliente_id, data_inicio, data_fim } = await req.json()
 
     if (!session_token) {
       return json(req, { error: 'Sessão inválida.' }, 401)
@@ -42,6 +42,7 @@ Deno.serve(async (req) => {
         dados, titulo, periodo, updated_at: new Date().toISOString(),
       }
       if (cliente_username) updatePayload.cliente_username = cliente_username
+      if (cliente_id) updatePayload.cliente_id = cliente_id
       if (data_inicio) updatePayload.data_inicio = data_inicio
       if (data_fim)    updatePayload.data_fim = data_fim
 
@@ -63,6 +64,7 @@ Deno.serve(async (req) => {
         criado_por: sessao.usuario_id,
       }
       if (cliente_username) insertPayload.cliente_username = cliente_username
+      if (cliente_id) insertPayload.cliente_id = cliente_id
       if (data_inicio) insertPayload.data_inicio = data_inicio
       if (data_fim)    insertPayload.data_fim = data_fim
 

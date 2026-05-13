@@ -560,6 +560,13 @@ const ANON='sb_publishable_8Be9xpxGtJDsM8AGtcDwmQ_Z_WPhYQ_';
 const _sess        = sessionStorage.getItem('adsboard_session')    || null;
 const _relUrlParams = new URLSearchParams(window.location.search);
 const _clienteUser  = sessionStorage.getItem('ngp_viewing_username') || _relUrlParams.get('username') || null;
+// cid (cliente_id UUID) é obrigatório para amarrar relatório ao cliente.
+// Quando vem do dashboard, chega via querystring (?cid=...). Persistimos no sessionStorage
+// para sobreviver a refresh / abertura via ?id=... posterior.
+const UUID_RE_REL = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const _cidFromUrl = _relUrlParams.get('cid');
+if(_cidFromUrl && UUID_RE_REL.test(_cidFromUrl)) sessionStorage.setItem('ngp_viewing_id', _cidFromUrl);
+const _clienteId   = (sessionStorage.getItem('ngp_viewing_id') || _cidFromUrl || '').trim();
 
 // account_id vem da URL (passado pelo dashboard como param, sobrevive ao redirect de login)
 // Token Meta NUNCA chega ao cliente — chamadas vão pelo proxy Supabase
@@ -670,6 +677,12 @@ async function saveToCloud(opts){
     if(!silent) alert('Faça login para salvar este relatório na nuvem.');
     return;
   }
+  // Em update (cloudId existente) o cliente já está amarrado no banco.
+  // Em insert, exigir cliente_id ou cliente_username para o relatório aparecer na aba do cliente.
+  if(!cloudId && !_clienteId && !_clienteUser){
+    if(!silent) alert('Selecione um cliente no Dashboard antes de criar o relatório.');
+    return;
+  }
   if(btn&&!silent){btn.textContent='Salvando...';btn.disabled=true;}
   try{
     const {data_inicio,data_fim}=extractPeriodoDates(D.periodo);
@@ -677,6 +690,7 @@ async function saveToCloud(opts){
     if(data_inicio) payload.data_inicio=data_inicio;
     if(data_fim)    payload.data_fim=data_fim;
     if(cloudId) payload.cloudId=cloudId;            // omite quando null
+    if(_clienteId) payload.cliente_id=_clienteId;
     if(_clienteUser) payload.cliente_username=_clienteUser;
     const res=await fetch(SURL+'/functions/v1/save-relatorio',{
       method:'POST',

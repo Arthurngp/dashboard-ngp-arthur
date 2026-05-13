@@ -747,10 +747,10 @@ export function useDashboard() {
   const loadRelatorios = useCallback(async () => {
     if (!viewing) return
     try {
-      const res = await fetch(`${SURL}/functions/v1/get-cliente-relatorios`, {
+      const res = await fetch(`${SURL}/functions/v1/get-relatorios`, {
         method: 'POST',
         headers: efHeaders(),
-        body: JSON.stringify({ session_token: sess?.session, cliente_id: viewing.id }),
+        body: JSON.stringify({ session_token: sess?.session, cliente_id: viewing.id, cliente_username: viewing.username }),
       })
       const data = await res.json()
       if (data.relatorios) setRelatorios(data.relatorios)
