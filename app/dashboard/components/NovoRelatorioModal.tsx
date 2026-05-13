@@ -14,6 +14,7 @@ export interface NovoRelatorioConfig {
   metrics: string[]
   importCriativos: boolean
   objective: string
+  audience: string
   topN: number
 }
 
@@ -55,11 +56,20 @@ const OBJECTIVES = [
   { label: 'Todos',       value: '' },
 ]
 
+// Públicos (temperatura) — filtra resultado pelo nome da campanha
+const AUDIENCES = [
+  { label: 'Todos', value: '' },
+  { label: 'Frio',  value: 'frio' },
+  { label: 'Rmkt',  value: 'rmkt' },
+  { label: 'Black', value: 'black' },
+]
+
 export default function NovoRelatorioModal({ isOpen, onClose, onConfirm, clienteName }: NovoRelatorioModalProps) {
   const [period, setPeriod] = useState('last_7d')
   const [selMetrics, setSelMetrics] = useState<Set<string>>(new Set(METRICS.map(m => m.key)))
   const [importCriativos, setImportCriativos] = useState(true)
-  const [objective, setObjective] = useState('OUTCOME_SALES')
+  const [objective, setObjective] = useState('OUTCOME_SALES,CONVERSIONS,PRODUCT_CATALOG_SALES')
+  const [audience, setAudience] = useState('')
   const [topN, setTopN] = useState(2)
 
   if (!isOpen) return null
@@ -78,6 +88,7 @@ export default function NovoRelatorioModal({ isOpen, onClose, onConfirm, cliente
       metrics: Array.from(selMetrics),
       importCriativos,
       objective,
+      audience,
       topN,
     })
   }
@@ -117,6 +128,8 @@ export default function NovoRelatorioModal({ isOpen, onClose, onConfirm, cliente
             <>
               <div style={{ fontSize: 11, color: '#6E6E73', marginBottom: 6 }}>Objetivo da campanha</div>
               <Pills items={OBJECTIVES.map(o => ({ label: o.label, value: o.value }))} value={objective} onChange={setObjective} />
+              <div style={{ fontSize: 11, color: '#6E6E73', margin: '10px 0 6px' }}>Público <span style={{ color: '#AEAEB2' }}>(filtra pelo nome)</span></div>
+              <Pills items={AUDIENCES.map(a => ({ label: a.label, value: a.value }))} value={audience} onChange={setAudience} />
               <div style={{ fontSize: 11, color: '#6E6E73', margin: '10px 0 6px' }}>Quantidade</div>
               <Pills items={[2, 3, 4].map(n => ({ label: `Top ${n}`, value: String(n) }))} value={String(topN)} onChange={v => setTopN(Number(v))} />
             </>
@@ -125,7 +138,7 @@ export default function NovoRelatorioModal({ isOpen, onClose, onConfirm, cliente
 
         <div style={{ display: 'flex', gap: 8, marginTop: 18 }}>
           <button onClick={handleConfirm} style={{ flex: 1, padding: 12, background: '#1877F2', color: '#fff', border: 'none', borderRadius: 8, fontSize: 14, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit' }}>✓ Criar e preencher</button>
-          <button onClick={() => onConfirm({ period, metrics: [], importCriativos: false, objective: '', topN: 0 })} style={{ flex: '0 0 auto', padding: '12px 16px', background: '#fff', color: '#6E6E73', border: '1.5px solid #E5E5EA', borderRadius: 8, fontSize: 13, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}>Pular</button>
+          <button onClick={() => onConfirm({ period, metrics: [], importCriativos: false, objective: '', audience: '', topN: 0 })} style={{ flex: '0 0 auto', padding: '12px 16px', background: '#fff', color: '#6E6E73', border: '1.5px solid #E5E5EA', borderRadius: 8, fontSize: 13, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}>Pular</button>
         </div>
       </div>
     </div>

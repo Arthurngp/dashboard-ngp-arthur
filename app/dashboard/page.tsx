@@ -100,6 +100,7 @@ export default function DashboardPage() {
     if (config.importCriativos) {
       qs.set('importCriativos', '1')
       if (config.objective) qs.set('objective', config.objective)
+      if (config.audience) qs.set('audience', config.audience)
       qs.set('topN', String(config.topN))
     }
     // autoimport=1 dispara a importação no relatório sem mostrar o modal lá

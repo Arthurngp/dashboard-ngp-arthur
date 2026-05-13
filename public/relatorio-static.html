@@ -1937,6 +1937,7 @@ function handleImg(type,idx){
     const _autometrics=params.get('metrics');
     const _autoobjective=params.get('objective');
     const _autotopN=params.get('topN');
+    const _autoaudience=params.get('audience');
     const _autoimportCriativos=params.get('importCriativos')==='1';
     // Dispara imediatamente (variáveis _meta*/_ads* são var-hoisted, sem TDZ).
     // Fluxo progressivo: cada fetch (métricas e criativos) roda em paralelo
@@ -1947,6 +1948,7 @@ function handleImg(type,idx){
       if(_autoimportCriativos){
         if(_autoobjective!==null) _adsObjective=_autoobjective;
         if(_autotopN) _adsTopN=parseInt(_autotopN,10)||2;
+        if(_autoaudience!==null) _adsAudience=_autoaudience;
       }
       console.log('[autoimport] config | period=%s | metrics=%o | criativos=%s | objective=%s | topN=%s',
         _metaPreset, Array.from(_metaSelKeys), _autoimportCriativos, _adsObjective, _adsTopN);
@@ -2440,16 +2442,63 @@ function fillCompIntoReport(){
 // CONVERSIONS, PRODUCT_CATALOG_SALES, LEAD_GENERATION, MESSAGES, LINK_CLICKS,
 // POST_ENGAGEMENT, BRAND_AWARENESS — Meta usa formatos diferentes conforme a
 // idade da campanha).
+// nameTokens: padrões da nomenclatura NGP. Match no nome da campanha (case-insensitive,
+// normalizado). Ad é considerado do tipo se objective casa OU nome contém qualquer token.
 const AD_OBJECTIVES=[
-  {label:'Vendas',       val:'OUTCOME_SALES,CONVERSIONS,PRODUCT_CATALOG_SALES',                              action:'purchase'},
-  {label:'Leads',        val:'OUTCOME_LEADS,LEAD_GENERATION',                                                action:'lead'},
-  {label:'Mensagens',    val:'OUTCOME_ENGAGEMENT,MESSAGES,OUTCOME_LEADS,LEAD_GENERATION',                    action:'onsite_conversion.messaging_conversation_started_7d'},
-  {label:'Tráfego',      val:'OUTCOME_TRAFFIC,LINK_CLICKS',                                                  action:'link_click'},
-  {label:'Engajamento',  val:'OUTCOME_ENGAGEMENT,POST_ENGAGEMENT,PAGE_LIKES,EVENT_RESPONSES',                action:'post_engagement'},
-  {label:'Reconhecim.',  val:'OUTCOME_AWARENESS,BRAND_AWARENESS,REACH,VIDEO_VIEWS',                          action:'impressions'},
-  {label:'Todos',        val:'',                                                                              action:'purchase'},
+  {label:'Vendas',       val:'OUTCOME_SALES,CONVERSIONS,PRODUCT_CATALOG_SALES',                              action:'purchase',
+   nameTokens:['venda','vendas','ecommerc','ecomm','compra','catalog','catálog']},
+  {label:'Leads',        val:'OUTCOME_LEADS,LEAD_GENERATION',                                                action:'lead',
+   nameTokens:['lead','leads','cadastro','cadastros','formulario','formulário']},
+  {label:'Mensagens',    val:'OUTCOME_ENGAGEMENT,MESSAGES,OUTCOME_LEADS,LEAD_GENERATION',                    action:'onsite_conversion.messaging_conversation_started_7d',
+   nameTokens:['mensagem','mensagens','msg','whatsapp','wpp','direct','dm']},
+  {label:'Tráfego',      val:'OUTCOME_TRAFFIC,LINK_CLICKS',                                                  action:'link_click',
+   nameTokens:['trafego','tráfego','traf','tráf','site','perfil','visitas']},
+  {label:'Engajamento',  val:'OUTCOME_ENGAGEMENT,POST_ENGAGEMENT,PAGE_LIKES,EVENT_RESPONSES',                action:'post_engagement',
+   nameTokens:['engaj','engj','engajamento','post','curtida','seguidor']},
+  {label:'Reconhecim.',  val:'OUTCOME_AWARENESS,BRAND_AWARENESS,REACH,VIDEO_VIEWS',                          action:'impressions',
+   nameTokens:['reconhecimento','reconhec','branding','marca','alcance','video','vídeo']},
+  {label:'Todos',        val:'',                                                                              action:'purchase', nameTokens:[]},
 ];
-var _adsObjective='OUTCOME_SALES', _adsPreset='last_30d', _adsTopN=2, _adsLoading=false;
+
+// Públicos / temperatura — tokens nos nomes ou emojis convencionais
+const AD_AUDIENCES=[
+  {label:'Todos', val:'', tokens:[],            emojis:[]},
+  {label:'Frio',  val:'frio',  tokens:['frio','novo','aquisicao','aquisição','novo cliente','prospect'], emojis:['❄','❄️','🥶']},
+  {label:'Rmkt',  val:'rmkt',  tokens:['rmkt','rmk','remarketing','requente','quente','aquecid'],         emojis:['🔥','♨','♨️']},
+  {label:'Black', val:'black', tokens:['black','blackfriday','black friday'],                              emojis:['🖤','⚫']},
+];
+
+// Normaliza string: minúsculas, sem acentos, espaços normalizados
+function normName(s){
+  return String(s||'').toLowerCase()
+    .normalize('NFD').replace(/[̀-ͯ]/g,'')
+    .replace(/[\[\]()|/\\\-_.]+/g,' ')
+    .replace(/\s+/g,' ').trim();
+}
+// Verifica se nome bate com algum token do objetivo (com bordas de palavra
+// para evitar falsos positivos como "lead" em "deadline")
+function nameMatchesObjective(rawName, objective){
+  if(!objective || !objective.nameTokens || !objective.nameTokens.length) return true;
+  const n=' '+normName(rawName)+' ';
+  for(const t of objective.nameTokens){
+    const tn=normName(t);
+    if(n.includes(' '+tn+' ') || n.includes(' '+tn) || n.includes(tn+' ')) return true;
+  }
+  return false;
+}
+function nameMatchesAudience(rawName, audience){
+  if(!audience || !audience.val) return true;
+  const raw=String(rawName||'');
+  // Emojis: match direto na string original (não normalizada)
+  for(const e of audience.emojis){if(raw.includes(e)) return true;}
+  const n=' '+normName(rawName)+' ';
+  for(const t of audience.tokens){
+    const tn=normName(t);
+    if(n.includes(' '+tn+' ') || n.includes(' '+tn) || n.includes(tn+' ')) return true;
+  }
+  return false;
+}
+var _adsObjective='OUTCOME_SALES,CONVERSIONS,PRODUCT_CATALOG_SALES', _adsAudience='', _adsPreset='last_30d', _adsTopN=2, _adsLoading=false;
 function openAdsImport(){
   const ov=document.getElementById('ads-overlay');
   if(!ov){document.body.insertAdjacentHTML('beforeend',adsModalHTML());}
@@ -2507,20 +2556,27 @@ async function fetchAdsCampeoes(){
   const setBtnDisabled=(d)=>{const el=document.getElementById('ads-fill-btn');if(el)el.disabled=d;};
   setStatus('Buscando ads…'); setPreview(''); setBtnDisabled(true);
   try{
-    const obj=AD_OBJECTIVES.find(o=>o.val===_adsObjective);
+    // Resolve metadata do objetivo (cobre tanto "OUTCOME_SALES" sozinho como
+    // o CSV completo "OUTCOME_SALES,CONVERSIONS,..."). Compara pelo primeiro
+    // OUTCOME_* do CSV para achar a entrada certa em AD_OBJECTIVES.
+    const objectivesArr=_adsObjective.split(',').map(s=>s.trim()).filter(Boolean);
+    const obj=AD_OBJECTIVES.find(o=>{
+      if(!o.val) return _adsObjective==='';
+      const ov=o.val.split(',').map(s=>s.trim());
+      return objectivesArr.some(x=>ov.includes(x));
+    }) || AD_OBJECTIVES[AD_OBJECTIVES.length-1];
+    const audienceObj=AD_AUDIENCES.find(a=>a.val===_adsAudience)||AD_AUDIENCES[0];
+
+    // Busca SEM filter por objective — pegamos todos do período e filtramos
+    // local por (objective casa OU nome casa) + (audience casa). Isso cobre
+    // campanhas com objetivo "errado" mas nomenclatura certa, e vice-versa.
+    // Limit alto pra ter base maior pro ranking.
     const params={
       level:'ad',
-      limit:50,
+      limit:200,
       fields:'ad_id,ad_name,campaign_id,campaign_name,objective,spend,impressions,clicks,ctr,actions,action_values,cost_per_action_type',
       date_preset:_adsPreset,
     };
-    if(_adsObjective){
-      // val pode ser uma única objective (ex: OUTCOME_SALES) ou várias separadas
-      // por vírgula (ex: Mensagens = OUTCOME_ENGAGEMENT,MESSAGES,OUTCOME_LEADS).
-      // Meta API espera array de strings no value.
-      const objectives=_adsObjective.split(',').map(s=>s.trim()).filter(Boolean);
-      params.filtering=JSON.stringify([{field:'campaign.objective',operator:'IN',value:objectives}]);
-    }
     const res=await fetch(SURL+'/functions/v1/meta-proxy',{
       method:'POST',
       headers:{'Content-Type':'application/json','apikey':ANON,'Authorization':'Bearer '+_sess},
@@ -2528,9 +2584,24 @@ async function fetchAdsCampeoes(){
     });
     const j=await res.json();
     if(!res.ok||j.error)throw new Error(j.error?.message||j.error||'Falha ao buscar ads');
-    const rows=j.data||[];
+    let rows=j.data||[];
     if(!rows.length){
-      setStatus('Nenhum ad encontrado para esse filtro.');
+      setStatus('Nenhum ad encontrado no período.');
+      _adsLoading=false; return;
+    }
+    // Filtro local: objective casa OU nome casa (e nome casa audience)
+    const objectivesSet=new Set(objectivesArr);
+    rows=rows.filter(r=>{
+      const camp=r.campaign_name||'';
+      const objMatchesObjective = objectivesSet.size===0 || objectivesSet.has(r.objective);
+      const objMatchesName = nameMatchesObjective(camp, obj);
+      const passObj = objectivesSet.size===0 ? true : (objMatchesObjective || objMatchesName);
+      const passAud = nameMatchesAudience(camp, audienceObj);
+      return passObj && passAud;
+    });
+    if(!rows.length){
+      const audInfo=audienceObj.val?` · público "${audienceObj.label}"`:'';
+      setStatus(`Nenhum ad encontrado para "${obj.label}"${audInfo} no período.`);
       _adsLoading=false; return;
     }
     // Ordena: tenta pelo action específico do objetivo (desc), senão por CTR desc.
