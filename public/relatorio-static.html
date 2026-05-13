@@ -1258,9 +1258,11 @@ function renderSecNumeros(n,metaBtn){return`
     </div>
     ${renderMetricsTable(D.metricas,D.extraCols,'main_')}
   </div>`;}
-function renderSecCriativos(n){return`
+function renderSecCriativos(n){
+  const importBtn=_sess&&_metaAccount?`<button class="btn-meta-import no-print" onclick="openAdsImport()" style="margin-left:auto;font-size:11px;padding:6px 12px">📊 Importar campeões</button>`:'';
+  return`
   <div class="card">
-    <div class="sec-head"><div class="sec-num">${n}</div><input class="sec-title-input" value="${esc(D.secTitles?.criativos||'Criativos Campeões')}" oninput="updSecTitle('criativos',this.value)" title="Clique para editar o título"/><span class="sec-sub" style="margin-left:auto">${D.criativos.length}/4</span></div>
+    <div class="sec-head"><div class="sec-num">${n}</div><input class="sec-title-input" value="${esc(D.secTitles?.criativos||'Criativos Campeões')}" oninput="updSecTitle('criativos',this.value)" title="Clique para editar o título"/>${importBtn}<span class="sec-sub" style="margin-left:12px">${D.criativos.length}/4</span></div>
     <div class="criativos-grid">${D.criativos.map((c,ci)=>renderCriativoCard(c,ci)).join('')}</div>
     ${D.criativos.length<4?`<div style="margin-top:12px"><button class="btn-add" onclick="addCriativo()">+ Adicionar criativo</button></div>`:''}
   </div>`;}
@@ -1937,6 +1939,32 @@ function fmtDec(v){const n=parseFloat(v)||0;return n.toLocaleString('pt-BR',{min
 function todayStr(){return new Date().toISOString().split('T')[0];}
 function daysAgoStr(n){const d=new Date();d.setDate(d.getDate()-n);return d.toISOString().split('T')[0];}
 
+// Converte preset/range Meta em string "DD/MM/AAAA a DD/MM/AAAA" para D.periodo.
+// Resolve presets do lado client (sem chamar API) para não perder dados.
+function rangeFromMeta(mode,preset,from,until){
+  const fmt=d=>`${String(d.getDate()).padStart(2,'0')}/${String(d.getMonth()+1).padStart(2,'0')}/${d.getFullYear()}`;
+  const parseISO=s=>{const [y,m,dd]=s.split('-').map(Number);return new Date(y,m-1,dd);};
+  if(mode==='custom'&&from&&until) return `${fmt(parseISO(from))} a ${fmt(parseISO(until))}`;
+  const today=new Date(); today.setHours(0,0,0,0);
+  const y=today.getFullYear(), m=today.getMonth(), d=today.getDate();
+  let s,e;
+  switch(preset){
+    case 'today':       s=new Date(y,m,d);     e=new Date(y,m,d); break;
+    case 'yesterday':   s=new Date(y,m,d-1);   e=new Date(y,m,d-1); break;
+    case 'last_7d':     s=new Date(y,m,d-7);   e=new Date(y,m,d-1); break;
+    case 'last_14d':    s=new Date(y,m,d-14);  e=new Date(y,m,d-1); break;
+    case 'last_30d':    s=new Date(y,m,d-30);  e=new Date(y,m,d-1); break;
+    case 'this_month':  s=new Date(y,m,1);     e=new Date(y,m,d); break;
+    case 'last_month':  s=new Date(y,m-1,1);   e=new Date(y,m,0); break;
+    case 'this_quarter':{const q=Math.floor(m/3);s=new Date(y,q*3,1);e=new Date(y,m,d);break;}
+    case 'last_quarter':{const q=Math.floor(m/3)-1;const yy=q<0?y-1:y;const qq=q<0?3:q;s=new Date(yy,qq*3,1);e=new Date(yy,qq*3+3,0);break;}
+    case 'this_year':   s=new Date(y,0,1);     e=new Date(y,m,d); break;
+    case 'last_year':   s=new Date(y-1,0,1);   e=new Date(y-1,11,31); break;
+    default: return '';
+  }
+  return `${fmt(s)} a ${fmt(e)}`;
+}
+
 // Token Meta NUNCA sai para o cliente — todas as chamadas vão pelo proxy Supabase
 async function callMetaProxy(mode, preset, from, until){
   const params = {fields:'spend,reach,impressions,clicks,ctr,actions,cost_per_action_type,frequency,cpm'};
@@ -2079,6 +2107,9 @@ function fillMetaIntoReport(){
     if(!_metaSelKeys.has(m.key))return;
     applyToReport(m,metricValue(_metaData,m.key,m.fmt),undefined);
   });
+  // Persiste o período escolhido no D.periodo (campo "Período" do cabeçalho)
+  const r=rangeFromMeta(_metaMode,_metaPreset,_metaFrom,_metaUntil);
+  if(r) D.periodo=r;
   saveData();render();
   document.getElementById('meta-ok').className='meta-ok show';
   setTimeout(closeMetaImport,1500);
@@ -2190,9 +2221,155 @@ function fillCompIntoReport(){
     const semAnt=metricValue(_compDataB,m.key,m.fmt);
     applyToReport(m,resultado,semAnt);
   });
+  // Persiste o período do slot A (período atual) em D.periodo
+  const r=rangeFromMeta(_compA.mode,_compA.preset,_compA.from,_compA.until);
+  if(r) D.periodo=r;
   saveData();render();
   document.getElementById('comp-ok').className='meta-ok show';
   setTimeout(closeMetaComp,1500);
+}
+
+// ── IMPORTAÇÃO DE CRIATIVOS CAMPEÕES ──────────────────────────────────────────
+// Busca ads do Meta com filtro de objetivo da campanha + período + top N por
+// "resultados" (purchase/lead conforme objetivo). Popula D.criativos.
+const AD_OBJECTIVES=[
+  {label:'Vendas',       val:'OUTCOME_SALES',         action:'purchase'},
+  {label:'Leads',        val:'OUTCOME_LEADS',         action:'lead'},
+  {label:'Tráfego',      val:'OUTCOME_TRAFFIC',       action:'link_click'},
+  {label:'Engajamento',  val:'OUTCOME_ENGAGEMENT',    action:'post_engagement'},
+  {label:'Reconhecim.',  val:'OUTCOME_AWARENESS',     action:'impressions'},
+  {label:'Todos',        val:'',                       action:'purchase'},
+];
+let _adsObjective='OUTCOME_SALES', _adsPreset='last_30d', _adsTopN=2, _adsLoading=false;
+function openAdsImport(){
+  const ov=document.getElementById('ads-overlay');
+  if(!ov){document.body.insertAdjacentHTML('beforeend',adsModalHTML());}
+  document.getElementById('ads-overlay').classList.add('open');
+  renderAdsControls();
+}
+function closeAdsImport(){const ov=document.getElementById('ads-overlay');if(ov)ov.classList.remove('open');}
+function adsModalHTML(){
+  return `
+  <div id="ads-overlay" class="meta-overlay no-print" onclick="if(event.target===this)closeAdsImport()">
+    <div class="meta-modal" style="max-width:560px">
+      <div class="meta-modal-head">
+        <div class="meta-modal-title">🏆 Importar criativos campeões</div>
+        <button class="meta-close" onclick="closeAdsImport()">×</button>
+      </div>
+      <div class="meta-modal-body">
+        <div class="meta-section-title">OBJETIVO DA CAMPANHA</div>
+        <div id="ads-obj-row" class="meta-periods-grid"></div>
+        <div class="meta-section-title" style="margin-top:14px">PERÍODO</div>
+        <div id="ads-period-row" class="meta-periods-grid"></div>
+        <div class="meta-section-title" style="margin-top:14px">QUANTIDADE</div>
+        <div id="ads-topn-row" class="meta-periods-grid"></div>
+        <div id="ads-status" style="margin-top:14px;font-size:12px;color:#6E6E73;min-height:18px"></div>
+        <div id="ads-preview" style="margin-top:10px;max-height:240px;overflow:auto;font-size:12px"></div>
+        <div id="ads-ok" class="meta-ok"><span>✓ Criativos importados!</span></div>
+      </div>
+      <div class="meta-modal-foot">
+        <button class="meta-btn-ghost" onclick="closeAdsImport()">Cancelar</button>
+        <button id="ads-fill-btn" class="meta-btn-fill" onclick="fillAdsIntoReport()" disabled>✓ Preencher seção</button>
+      </div>
+    </div>
+  </div>`;
+}
+let _adsResult=null;
+function renderAdsControls(){
+  document.getElementById('ads-obj-row').innerHTML=AD_OBJECTIVES.map(o=>
+    `<button class="meta-pbtn ${_adsObjective===o.val?'sel':''}" onclick="setAdsObj('${o.val}')">${o.label}</button>`
+  ).join('');
+  document.getElementById('ads-period-row').innerHTML=META_PERIODS.map(p=>
+    `<button class="meta-pbtn ${_adsPreset===p.preset?'sel':''}" onclick="setAdsPeriod('${p.preset}')">${p.label}</button>`
+  ).join('');
+  document.getElementById('ads-topn-row').innerHTML=[2,3,4].map(n=>
+    `<button class="meta-pbtn ${_adsTopN===n?'sel':''}" onclick="setAdsTopN(${n})">Top ${n}</button>`
+  ).join('');
+  fetchAdsCampeoes();
+}
+function setAdsObj(v){_adsObjective=v;renderAdsControls();}
+function setAdsPeriod(p){_adsPreset=p;renderAdsControls();}
+function setAdsTopN(n){_adsTopN=n;renderAdsControls();}
+async function fetchAdsCampeoes(){
+  if(_adsLoading)return;
+  _adsLoading=true; _adsResult=null;
+  document.getElementById('ads-status').textContent='Buscando ads…';
+  document.getElementById('ads-preview').innerHTML='';
+  document.getElementById('ads-fill-btn').disabled=true;
+  try{
+    const obj=AD_OBJECTIVES.find(o=>o.val===_adsObjective);
+    const params={
+      level:'ad',
+      limit:50,
+      fields:'ad_id,ad_name,campaign_id,campaign_name,objective,spend,impressions,clicks,ctr,actions,cost_per_action_type',
+      date_preset:_adsPreset,
+    };
+    if(_adsObjective){
+      params.filtering=JSON.stringify([{field:'campaign.objective',operator:'IN',value:[_adsObjective]}]);
+    }
+    const res=await fetch(SURL+'/functions/v1/meta-proxy',{
+      method:'POST',
+      headers:{'Content-Type':'application/json','apikey':ANON,'Authorization':'Bearer '+_sess},
+      body:JSON.stringify({session_token:_sess,endpoint:'insights',params,account_id:_metaAccount})
+    });
+    const j=await res.json();
+    if(!res.ok||j.error)throw new Error(j.error?.message||j.error||'Falha ao buscar ads');
+    const rows=j.data||[];
+    if(!rows.length){
+      document.getElementById('ads-status').textContent='Nenhum ad encontrado para esse filtro.';
+      _adsLoading=false; return;
+    }
+    // Ordena: tenta pelo action específico do objetivo (desc), senão por CTR desc
+    const actionKey=obj?obj.action:'purchase';
+    const getResults=r=>{
+      const a=(r.actions||[]).find(x=>x.action_type===actionKey||x.action_type.endsWith('.'+actionKey));
+      return a?parseInt(a.value)||0:0;
+    };
+    const sorted=rows.slice().sort((a,b)=>getResults(b)-getResults(a)||parseFloat(b.ctr||0)-parseFloat(a.ctr||0));
+    const top=sorted.slice(0,_adsTopN);
+    _adsResult=top.map(r=>{
+      const conv=getResults(r);
+      const spend=parseFloat(r.spend||0);
+      const cpr=conv>0?spend/conv:null;
+      return {
+        nome:r.ad_name||'Sem nome',
+        campanha:r.campaign_name||'',
+        invest:'R$ '+spend.toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2}),
+        ctr:(parseFloat(r.ctr||0)).toFixed(2)+'%',
+        cpr:cpr!==null?'R$ '+cpr.toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2}):'—',
+        resultados:String(conv),
+      };
+    });
+    document.getElementById('ads-status').textContent=`${rows.length} ads encontrados · top ${top.length} selecionados`;
+    document.getElementById('ads-preview').innerHTML=_adsResult.map(c=>
+      `<div style="padding:8px 10px;border:1px solid #E5E5EA;border-radius:8px;margin-bottom:6px">
+        <div style="font-weight:600">${esc(c.nome)}</div>
+        <div style="color:#6E6E73;font-size:11px">${esc(c.campanha)}</div>
+        <div style="margin-top:4px;font-size:11px">💰 ${c.invest} · 📊 CTR ${c.ctr} · 🎯 ${c.resultados} (CPR ${c.cpr})</div>
+      </div>`
+    ).join('');
+    document.getElementById('ads-fill-btn').disabled=false;
+  }catch(e){
+    document.getElementById('ads-status').textContent='Erro: '+(e&&e.message?e.message:'tente novamente');
+  }
+  _adsLoading=false;
+}
+function fillAdsIntoReport(){
+  if(!_adsResult||!_adsResult.length)return;
+  D.criativos=_adsResult.map(c=>({
+    id:uid(),
+    nome:c.nome,
+    chips:[
+      {id:uid(),label:'Invest. R$',val:c.invest},
+      {id:uid(),label:'CTR',val:c.ctr},
+      {id:uid(),label:'CPR',val:c.cpr},
+    ],
+    porqueGanha:'',
+    img:'',
+  }));
+  saveData();render();
+  document.getElementById('ads-ok').className='meta-ok show';
+  setTimeout(closeAdsImport,1500);
 }
 </script>
 

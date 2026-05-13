@@ -14,7 +14,7 @@ Deno.serve(async (req) => {
   if (cors) return cors
 
   try {
-    const { session_token, cloudId, dados, titulo, periodo, cliente_username, cliente_id, data_inicio, data_fim } = await req.json()
+    const { session_token, cloudId, dados, titulo, periodo, cliente_username, cliente_id: cliente_id_in, data_inicio, data_fim } = await req.json()
 
     if (!session_token) {
       return json(req, { error: 'Sessão inválida.' }, 401)
@@ -34,6 +34,29 @@ Deno.serve(async (req) => {
 
     if (!sessao) {
       return json(req, { error: 'Sessão expirada.' }, 401)
+    }
+
+    // Resolve cliente_id: pode chegar como clientes.id (caso ideal) OU
+    // usuarios.id (frontend manda viewing.id, que vem de get-ngp-data que
+    // busca em usuarios). Se não bater em clientes diretamente, tenta via
+    // clientes.usuario_id. Se ainda assim não achar, grava NULL.
+    let cliente_id: string | null = null
+    if (cliente_id_in) {
+      const { data: cliMatch } = await sb
+        .from('clientes')
+        .select('id')
+        .eq('id', cliente_id_in)
+        .maybeSingle()
+      if (cliMatch) {
+        cliente_id = cliMatch.id
+      } else {
+        const { data: cliByUser } = await sb
+          .from('clientes')
+          .select('id')
+          .eq('usuario_id', cliente_id_in)
+          .maybeSingle()
+        if (cliByUser) cliente_id = cliByUser.id
+      }
     }
 
     if (cloudId) {
