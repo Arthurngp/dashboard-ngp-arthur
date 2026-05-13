@@ -2332,20 +2332,34 @@ async function fetchAdsCampeoes(){
       const spend=parseFloat(r.spend||0);
       const cpr=conv>0?spend/conv:null;
       return {
+        ad_id:r.ad_id,
         nome:r.ad_name||'Sem nome',
         campanha:r.campaign_name||'',
         invest:'R$ '+spend.toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2}),
         ctr:(parseFloat(r.ctr||0)).toFixed(2)+'%',
         cpr:cpr!==null?'R$ '+cpr.toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2}):'—',
         resultados:String(conv),
+        img:'',
       };
     });
+    document.getElementById('ads-status').textContent=`${rows.length} ads encontrados · buscando capas dos top ${top.length}…`;
+    // Busca thumbnails em paralelo (best-effort, não bloqueia salvar se falhar)
+    await Promise.all(_adsResult.map(async(c)=>{
+      if(!c.ad_id) return;
+      try{
+        const thumb=await fetchAdThumbnail(c.ad_id);
+        if(thumb) c.img=thumb;
+      }catch(_){}
+    }));
     document.getElementById('ads-status').textContent=`${rows.length} ads encontrados · top ${top.length} selecionados`;
     document.getElementById('ads-preview').innerHTML=_adsResult.map(c=>
-      `<div style="padding:8px 10px;border:1px solid #E5E5EA;border-radius:8px;margin-bottom:6px">
-        <div style="font-weight:600">${esc(c.nome)}</div>
-        <div style="color:#6E6E73;font-size:11px">${esc(c.campanha)}</div>
-        <div style="margin-top:4px;font-size:11px">💰 ${c.invest} · 📊 CTR ${c.ctr} · 🎯 ${c.resultados} (CPR ${c.cpr})</div>
+      `<div style="display:flex;gap:10px;padding:8px 10px;border:1px solid #E5E5EA;border-radius:8px;margin-bottom:6px;align-items:center">
+        ${c.img?`<img src="${esc(c.img)}" alt="" style="width:56px;height:56px;object-fit:cover;border-radius:6px;flex-shrink:0;background:#F2F2F7"/>`:`<div style="width:56px;height:56px;border-radius:6px;background:#F2F2F7;display:flex;align-items:center;justify-content:center;font-size:18px;flex-shrink:0">📷</div>`}
+        <div style="flex:1;min-width:0">
+          <div style="font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(c.nome)}</div>
+          <div style="color:#6E6E73;font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(c.campanha)}</div>
+          <div style="margin-top:4px;font-size:11px">💰 ${c.invest} · 📊 CTR ${c.ctr} · 🎯 ${c.resultados} (CPR ${c.cpr})</div>
+        </div>
       </div>`
     ).join('');
     document.getElementById('ads-fill-btn').disabled=false;
@@ -2354,6 +2368,37 @@ async function fetchAdsCampeoes(){
   }
   _adsLoading=false;
 }
+// Busca thumbnail/imagem do criativo de um ad. Tenta creative.thumbnail_url
+// (mais comum) e cai para image_url. Retorna data URL (base64) para garantir
+// que sobreviva ao expirar o link Meta e funcione no PDF/print.
+async function fetchAdThumbnail(adId){
+  const params={fields:'creative{thumbnail_url,image_url,object_story_spec{video_data{image_url},link_data{picture,image_hash}}}'};
+  const res=await fetch(SURL+'/functions/v1/meta-proxy',{
+    method:'POST',
+    headers:{'Content-Type':'application/json','apikey':ANON,'Authorization':'Bearer '+_sess},
+    body:JSON.stringify({session_token:_sess,endpoint:String(adId),params,account_id:_metaAccount})
+  });
+  const j=await res.json();
+  if(!res.ok||j.error) return '';
+  const cr=j.creative||{};
+  const story=cr.object_story_spec||{};
+  const url = cr.thumbnail_url
+           || cr.image_url
+           || story.video_data?.image_url
+           || story.link_data?.picture
+           || '';
+  if(!url) return '';
+  // Converte para data URL para persistir no JSON (links Meta expiram em horas)
+  try{
+    const r=await fetch(url);
+    if(!r.ok) return url;
+    const blob=await r.blob();
+    return await new Promise(res=>{const fr=new FileReader();fr.onloadend=()=>res(fr.result);fr.readAsDataURL(blob);});
+  }catch(_){
+    return url; // fallback para URL direta se CORS bloquear
+  }
+}
+
 function fillAdsIntoReport(){
   if(!_adsResult||!_adsResult.length)return;
   D.criativos=_adsResult.map(c=>({
@@ -2365,7 +2410,7 @@ function fillAdsIntoReport(){
       {id:uid(),label:'CPR',val:c.cpr},
     ],
     porqueGanha:'',
-    img:'',
+    img:c.img||'',
   }));
   saveData();render();
   document.getElementById('ads-ok').className='meta-ok show';
