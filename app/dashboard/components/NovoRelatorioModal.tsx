@@ -43,13 +43,15 @@ const METRICS = [
   { key: 'cpm',         label: 'CPM' },
 ]
 
+// Inclui objetivos legados (CONVERSIONS, LEAD_GENERATION, etc) para casar
+// com campanhas antigas — ver AD_OBJECTIVES no relatorio-static.html
 const OBJECTIVES = [
-  { label: 'Vendas',      value: 'OUTCOME_SALES' },
-  { label: 'Leads',       value: 'OUTCOME_LEADS' },
-  { label: 'Mensagens',   value: 'OUTCOME_ENGAGEMENT,MESSAGES,OUTCOME_LEADS' },
-  { label: 'Tráfego',     value: 'OUTCOME_TRAFFIC' },
-  { label: 'Engajamento', value: 'OUTCOME_ENGAGEMENT' },
-  { label: 'Reconhec.',   value: 'OUTCOME_AWARENESS' },
+  { label: 'Vendas',      value: 'OUTCOME_SALES,CONVERSIONS,PRODUCT_CATALOG_SALES' },
+  { label: 'Leads',       value: 'OUTCOME_LEADS,LEAD_GENERATION' },
+  { label: 'Mensagens',   value: 'OUTCOME_ENGAGEMENT,MESSAGES,OUTCOME_LEADS,LEAD_GENERATION' },
+  { label: 'Tráfego',     value: 'OUTCOME_TRAFFIC,LINK_CLICKS' },
+  { label: 'Engajamento', value: 'OUTCOME_ENGAGEMENT,POST_ENGAGEMENT,PAGE_LIKES,EVENT_RESPONSES' },
+  { label: 'Reconhec.',   value: 'OUTCOME_AWARENESS,BRAND_AWARENESS,REACH,VIDEO_VIEWS' },
   { label: 'Todos',       value: '' },
 ]
 

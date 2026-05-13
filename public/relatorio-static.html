@@ -1964,10 +1964,13 @@ function handleImg(type,idx){
         else if(status.metricas==='err') parts.push('⚠ métricas');
         if(status.criativos==='pending') parts.push('⟳ criativos');
         else if(status.criativos==='ok') parts.push(`✓ ${status.countC} criativos`);
+        else if(status.criativos==='empty') parts.push('— sem criativos no objetivo escolhido');
         else if(status.criativos==='err') parts.push('⚠ criativos');
         showAutoStatus(parts.join(' · '));
         if(status.metricas!=='pending' && status.criativos!=='pending'){
-          showAutoStatus(`✓ ${status.countM} métricas e ${status.countC} criativos importados`);
+          let msg=`✓ ${status.countM} métricas e ${status.countC} criativos importados`;
+          if(status.criativos==='empty') msg=`✓ ${status.countM} métricas · ⚠ nenhum criativo encontrado para esse objetivo no período`;
+          showAutoStatus(msg);
           hideAutoStatus();
         }
       };
@@ -1999,8 +2002,11 @@ function handleImg(type,idx){
             fillAdsIntoReport({skipClose:true});
             render();
             status.countC=_adsResult.length;
+            status.criativos='ok';
+          }else{
+            // 0 ads: o filtro de objetivo não casou com nenhuma campanha do período
+            status.criativos='empty';
           }
-          status.criativos='ok';
         }catch(e){
           console.error('[autoimport criativos]',e);
           status.criativos='err';
@@ -2430,14 +2436,18 @@ function fillCompIntoReport(){
 // objectiveFilter: lista de objectives para filtrar (campaign.objective IN [...])
 // action: action_type principal usado pra ranquear "resultados" (top N).
 // Quando action contém '.', faz match exato; senão faz match por sufixo.
+// val: lista CSV de objectives (cobre nomes novos OUTCOME_* + legados como
+// CONVERSIONS, PRODUCT_CATALOG_SALES, LEAD_GENERATION, MESSAGES, LINK_CLICKS,
+// POST_ENGAGEMENT, BRAND_AWARENESS — Meta usa formatos diferentes conforme a
+// idade da campanha).
 const AD_OBJECTIVES=[
-  {label:'Vendas',       val:'OUTCOME_SALES',                                      action:'purchase'},
-  {label:'Leads',        val:'OUTCOME_LEADS',                                      action:'lead'},
-  {label:'Mensagens',    val:'OUTCOME_ENGAGEMENT,MESSAGES,OUTCOME_LEADS',          action:'onsite_conversion.messaging_conversation_started_7d'},
-  {label:'Tráfego',      val:'OUTCOME_TRAFFIC',                                    action:'link_click'},
-  {label:'Engajamento',  val:'OUTCOME_ENGAGEMENT',                                 action:'post_engagement'},
-  {label:'Reconhecim.',  val:'OUTCOME_AWARENESS',                                  action:'impressions'},
-  {label:'Todos',        val:'',                                                   action:'purchase'},
+  {label:'Vendas',       val:'OUTCOME_SALES,CONVERSIONS,PRODUCT_CATALOG_SALES',                              action:'purchase'},
+  {label:'Leads',        val:'OUTCOME_LEADS,LEAD_GENERATION',                                                action:'lead'},
+  {label:'Mensagens',    val:'OUTCOME_ENGAGEMENT,MESSAGES,OUTCOME_LEADS,LEAD_GENERATION',                    action:'onsite_conversion.messaging_conversation_started_7d'},
+  {label:'Tráfego',      val:'OUTCOME_TRAFFIC,LINK_CLICKS',                                                  action:'link_click'},
+  {label:'Engajamento',  val:'OUTCOME_ENGAGEMENT,POST_ENGAGEMENT,PAGE_LIKES,EVENT_RESPONSES',                action:'post_engagement'},
+  {label:'Reconhecim.',  val:'OUTCOME_AWARENESS,BRAND_AWARENESS,REACH,VIDEO_VIEWS',                          action:'impressions'},
+  {label:'Todos',        val:'',                                                                              action:'purchase'},
 ];
 var _adsObjective='OUTCOME_SALES', _adsPreset='last_30d', _adsTopN=2, _adsLoading=false;
 function openAdsImport(){
@@ -2524,17 +2534,35 @@ async function fetchAdsCampeoes(){
       _adsLoading=false; return;
     }
     // Ordena: tenta pelo action específico do objetivo (desc), senão por CTR desc.
-    // Para Mensagens, aceita variações de action_type que o Meta usa.
+    // Cada objetivo tem múltiplos action_types possíveis (Pixel x CAPI x onsite).
     const actionKey=obj?obj.action:'purchase';
     const isMessaging=actionKey.includes('messaging');
+    const isPurchase=actionKey==='purchase';
+    const isLead=actionKey==='lead';
     const getResults=r=>{
       const acts=r.actions||[];
       if(isMessaging){
-        // Soma todas as variações de mensagem
         const keys=['onsite_conversion.messaging_conversation_started_7d','messaging_conversation_started_7d','onsite_conversion.messaging_first_reply','messaging_first_reply','onsite_conversion.messaging_block'];
         let total=0;
         for(const a of acts){
           if(keys.some(k=>a.action_type===k||a.action_type.endsWith(k))) total+=parseInt(a.value)||0;
+        }
+        return total;
+      }
+      if(isPurchase){
+        // Soma omni_purchase / fb_pixel_purchase / offline_conversion.purchase / purchase
+        const keys=['omni_purchase','offsite_conversion.fb_pixel_purchase','purchase','offline_conversion.purchase'];
+        let total=0;
+        for(const a of acts){
+          if(keys.some(k=>a.action_type===k)) total+=parseInt(a.value)||0;
+        }
+        return total;
+      }
+      if(isLead){
+        const keys=['lead','offsite_conversion.fb_pixel_lead','onsite_conversion.lead_grouped'];
+        let total=0;
+        for(const a of acts){
+          if(keys.some(k=>a.action_type===k)) total+=parseInt(a.value)||0;
         }
         return total;
       }
