@@ -1995,29 +1995,29 @@ function handleImg(type,idx){
         }
       };
 
-      // Métricas e criativos rodam em paralelo. Cada um re-renderiza ao acabar.
-      const pMetricas=(async()=>{
-        try{
-          await fetchMetaInsights();
-          if(_metaData){
-            META_METRIC_OPTS.forEach(m=>{
-              if(!_metaSelKeys.has(m.key))return;
-              applyToReport(m,metricValue(_metaData,m.key,m.fmt),undefined);
-              status.countM++;
-            });
-            saveData(); render();
-          }
-          status.metricas='ok';
-        }catch(e){
-          console.error('[autoimport métricas]',e);
-          status.metricas='err';
+      // SERIAL (não paralelo): mesmo flow do modal manual, evita race
+      // condition no proxy Meta. Métricas primeiro, criativos depois.
+      try{
+        await fetchMetaInsights();
+        if(_metaData){
+          META_METRIC_OPTS.forEach(m=>{
+            if(!_metaSelKeys.has(m.key))return;
+            applyToReport(m,metricValue(_metaData,m.key,m.fmt),undefined);
+            status.countM++;
+          });
+          saveData(); render();
         }
-        updateStatus();
-      })();
+        status.metricas='ok';
+      }catch(e){
+        console.error('[autoimport métricas]',e);
+        status.metricas='err';
+      }
+      updateStatus();
 
-      const pCriativos=_autoimportCriativos ? (async()=>{
-        // Sinaliza que estamos importando — render mostra placeholder em vez de "Print"
+      if(_autoimportCriativos){
         _aguardandoCriativos=true; render();
+        console.log('[autoimport criativos] _adsObjective=%s | _adsAudience=%s | _adsPreset=%s | _adsTopN=%d | _metaAccount=%s',
+          _adsObjective, _adsAudience, _adsPreset, _adsTopN, _metaAccount);
         try{
           await fetchAdsCampeoes();
           if(_adsResult && _adsResult.length){
@@ -2026,7 +2026,8 @@ function handleImg(type,idx){
             status.criativos='ok';
           }else{
             const adsStatus=document.getElementById('ads-status');
-            status.criativosMsg=(adsStatus&&adsStatus.textContent)||'Nenhum criativo encontrado';
+            const baseMsg=(adsStatus&&adsStatus.textContent)||'Nenhum criativo encontrado';
+            status.criativosMsg=`${baseMsg} | obj=${_adsObjective.split(',')[0]} aud=${_adsAudience||'todos'} preset=${_adsPreset}`;
             status.criativos='empty';
           }
         }catch(e){
@@ -2036,9 +2037,7 @@ function handleImg(type,idx){
         }
         _aguardandoCriativos=false; render();
         updateStatus();
-      })() : Promise.resolve();
-
-      await Promise.all([pMetricas,pCriativos]);
+      }
       console.log('[autoimport] concluído');
     })();
   }
