@@ -559,14 +559,17 @@ const ANON='sb_publishable_8Be9xpxGtJDsM8AGtcDwmQ_Z_WPhYQ_';
 
 const _sess        = sessionStorage.getItem('adsboard_session')    || null;
 const _relUrlParams = new URLSearchParams(window.location.search);
-const _clienteUser  = sessionStorage.getItem('ngp_viewing_username') || _relUrlParams.get('username') || null;
-// cid (cliente_id UUID) é obrigatório para amarrar relatório ao cliente.
-// Quando vem do dashboard, chega via querystring (?cid=...). Persistimos no sessionStorage
-// para sobreviver a refresh / abertura via ?id=... posterior.
-const UUID_RE_REL = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-const _cidFromUrl = _relUrlParams.get('cid');
-if(_cidFromUrl && UUID_RE_REL.test(_cidFromUrl)) sessionStorage.setItem('ngp_viewing_id', _cidFromUrl);
-const _clienteId   = (sessionStorage.getItem('ngp_viewing_id') || _cidFromUrl || '').trim();
+// cid e username: prioridade para o que vier na URL (vindo do dashboard atual),
+// caindo para sessionStorage só se a URL não trouxer nada.
+const UUID_RE_REL  = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const _cidFromUrl  = _relUrlParams.get('cid');
+const _userFromUrl = _relUrlParams.get('username');
+if(_cidFromUrl && UUID_RE_REL.test(_cidFromUrl)){
+  sessionStorage.setItem('ngp_viewing_id', _cidFromUrl);
+  if(_userFromUrl) sessionStorage.setItem('ngp_viewing_username', _userFromUrl);
+}
+const _clienteId   = ((_cidFromUrl && UUID_RE_REL.test(_cidFromUrl)) ? _cidFromUrl : (sessionStorage.getItem('ngp_viewing_id') || '')).trim();
+const _clienteUser = (_userFromUrl || sessionStorage.getItem('ngp_viewing_username') || '').trim() || null;
 
 // account_id vem da URL (passado pelo dashboard como param, sobrevive ao redirect de login)
 // Token Meta NUNCA chega ao cliente — chamadas vão pelo proxy Supabase
@@ -1347,7 +1350,7 @@ function renderForm(){
     <div class="topbar no-print">
       <div style="display:flex;align-items:center;gap:12px">
         <button class="btn-back-dash no-print" onclick="voltarDashboard()">← Dashboard</button>
-        <span class="ngp-badge">NGP</span><span class="topbar-sub">Relatório ${getTipoRelatorio(D.periodo)}</span>
+        <span class="ngp-badge">NGP</span><span class="topbar-sub">Relatório ${getTipoRelatorio(D.periodo)}${_clienteId||_clienteUser?` · <span style="color:#34C759;font-weight:600">vinculado a ${esc((new URLSearchParams(window.location.search)).get('cliente')||_clienteUser||'cliente')}</span>`:` · <span style="color:#FF9500;font-weight:600">sem cliente</span>`}</span>
       </div>
       <div class="topbar-actions">
         <span id="stag" class="saved-tag" style="opacity:0">✓ salvo</span>

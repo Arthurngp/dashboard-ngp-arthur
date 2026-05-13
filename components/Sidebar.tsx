@@ -701,7 +701,23 @@ function SidebarInner({
         handleNav(() => window.open(item.href, '_blank', 'noopener,noreferrer'))
         return
       }
-      handleNav(() => router.push(item.href))
+      // Para /relatorio?novo=1: anexa cid/username do cliente atualmente em viewing,
+      // para que o save grave cliente_id corretamente.
+      let target = item.href
+      if (target.startsWith('/relatorio') && typeof window !== 'undefined') {
+        const cid  = sessionStorage.getItem('ngp_viewing_id') || ''
+        const user = sessionStorage.getItem('ngp_viewing_username') || ''
+        const name = sessionStorage.getItem('ngp_viewing_name') || ''
+        if (cid || user) {
+          const [base, q] = target.split('?')
+          const sp = new URLSearchParams(q || '')
+          if (cid && !sp.get('cid')) sp.set('cid', cid)
+          if (user && !sp.get('username')) sp.set('username', user)
+          if (name && !sp.get('cliente')) sp.set('cliente', name)
+          target = `${base}?${sp.toString()}`
+        }
+      }
+      handleNav(() => router.push(target))
     }
 
     return (
