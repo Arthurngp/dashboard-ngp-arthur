@@ -157,8 +157,8 @@ textarea.field{resize:vertical;line-height:1.6;min-height:48px}
 .criativo-preview-text{font-size:12px;color:#3A3A3C;line-height:1.4;white-space:pre-wrap;word-wrap:break-word}
 /* Iframe do Meta: usar aspect-ratio do feed mobile (~9:14) — height ajusta
    automaticamente ao width disponível, sem espaço branco embaixo */
-.criativo-preview-iframe-wrap{border:1px solid var(--border);border-radius:var(--radius-sm);overflow:hidden;background:#fff;width:100%;aspect-ratio:9/14;min-height:380px;max-height:600px;position:relative;animation:criativo-fade-in .25s ease-out}
-.criativo-preview-iframe{width:100%;height:100%;border:0;display:block;position:absolute;inset:0}
+.criativo-preview-iframe-wrap{border:1px solid var(--border);border-radius:var(--radius-sm);overflow:hidden;background:#fff;width:100%;min-height:380px;height:380px;animation:criativo-fade-in .25s ease-out;transition:height .2s ease-out}
+.criativo-preview-iframe{width:100%;height:100%;border:0;display:block}
 .criativo-preview-img{animation:criativo-fade-in .25s ease-out}
 .criativo-aguardando{border:2px dashed var(--border-strong);border-radius:var(--radius-sm);padding:32px 20px;background:linear-gradient(180deg,#FAFAFA,#F5F5F7);display:flex;align-items:center;gap:14px;min-height:200px}
 .criativo-aguardando-spinner{width:26px;height:26px;border:3px solid #E5E5EA;border-top-color:#1877F2;border-radius:50%;animation:criativo-spin .8s linear infinite;flex-shrink:0}
@@ -1024,7 +1024,7 @@ function renderCriativoCard(c,ci){
           <div class="lbl">Preview do criativo</div>
           ${c.previewHtml ? `
             <div class="criativo-preview-iframe-wrap only-screen">
-              <iframe class="criativo-preview-iframe" srcdoc="${esc(c.previewHtml)}" sandbox="allow-scripts allow-same-origin allow-popups" loading="lazy"></iframe>
+              <iframe class="criativo-preview-iframe" srcdoc="${esc(c.previewHtml)}" sandbox="allow-scripts allow-same-origin allow-popups" loading="lazy" onload="autoSizeAdIframe(this)"></iframe>
             </div>
           ` : ''}
           <div class="criativo-preview ${c.previewHtml?'only-print':''}">
@@ -1056,6 +1056,42 @@ function renderCriativoCard(c,ci){
   </div>`;
 }
 function trocarCriativoImg(ci){handleImg('criativo',ci);}
+
+// Mede a altura real do conteúdo do iframe (preview Meta) e ajusta o wrapper
+// para colar no fim do anúncio, sem espaço branco. Faz polling curto pra
+// pegar imagens/vídeos que carregam tarde.
+function autoSizeAdIframe(iframe){
+  if(!iframe||!iframe.parentElement) return;
+  const wrap=iframe.parentElement;
+  let lastH=0, stable=0;
+  const measure=()=>{
+    try{
+      const doc=iframe.contentDocument;
+      if(!doc||!doc.body) return;
+      // Considera todos os elementos visíveis para pegar a altura real
+      const h=Math.max(
+        doc.body.scrollHeight,
+        doc.body.offsetHeight,
+        doc.documentElement.scrollHeight,
+        doc.documentElement.offsetHeight
+      );
+      if(h>0 && Math.abs(h-lastH)<2){
+        stable++;
+        if(stable>=2){clearInterval(timer); return;}
+      }else{
+        stable=0;
+        // Adiciona 6px de respiro, clamp em 200-720
+        const target=Math.min(720,Math.max(200,h+6));
+        wrap.style.height=target+'px';
+        lastH=h;
+      }
+    }catch(_){clearInterval(timer);}
+  };
+  measure();
+  const timer=setInterval(measure,250);
+  // Hard stop após 4s
+  setTimeout(()=>clearInterval(timer),4000);
+}
 function imgBox(src,label,type,idx){
   if(src)return`<div class="img-upload" onclick="handleImg('${type}',${idx})"><img src="${esc(src)}" alt=""/></div>`;
   return`<div class="img-upload" onclick="handleImg('${type}',${idx})"><div class="img-placeholder"><div class="img-plus">+</div><div class="img-lbl">${label}</div></div></div>`;
