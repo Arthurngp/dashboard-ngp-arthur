@@ -146,6 +146,11 @@ textarea.field{resize:vertical;line-height:1.6}
 .criativo-card-body{padding:16px}
 
 /* IMG UPLOAD */
+.criativo-preview{border:1px solid var(--border);border-radius:var(--radius-sm);overflow:hidden;background:#fff;display:flex;flex-direction:column}
+.criativo-preview-img{width:auto;max-width:100%;display:block;max-height:420px;object-fit:contain;margin:0 auto;background:#000}
+.criativo-preview-body{padding:10px 12px;border-top:1px solid var(--border);background:#FAFAFA}
+.criativo-preview-title{font-size:13px;font-weight:700;color:#111;line-height:1.3;margin-bottom:4px}
+.criativo-preview-text{font-size:12px;color:#3A3A3C;line-height:1.4;white-space:pre-wrap;word-wrap:break-word}
 .img-upload{border:2px dashed var(--border-strong);border-radius:var(--radius-sm);cursor:pointer;background:#FAFAFA;overflow:hidden;min-height:96px;display:flex;align-items:center;justify-content:center;transition:border-color .15s,background .15s}
 .img-upload:hover{border-color:var(--red);background:var(--red-light)}
 .img-upload img{width:auto;max-width:100%;display:block;max-height:380px;object-fit:contain;margin:0 auto}
@@ -967,6 +972,10 @@ function imgBoxMini(src,label,type,idx){
 
 // ── CRIATIVO CARD (chips grid) ────────────────────────────────────────────────
 function renderCriativoCard(c,ci){
+  // Se a capa veio do Meta (img preenchida + flag fromMeta), mostra como
+  // preview do criativo (imagem + título + legenda); senão, mantém box de
+  // upload tradicional.
+  const hasImported=!!c.img && c.fromMeta;
   return`<div class="criativo-card">
     <div class="criativo-card-head">
       <span class="criativo-card-badge">CRIATIVO ${ci+1}</span>
@@ -989,11 +998,24 @@ function renderCriativoCard(c,ci){
       </div>
       <div style="margin-bottom:12px"><div class="lbl">Por que está ganhando</div>
         <textarea class="field" rows="2" placeholder="1 frase: o que faz converter" oninput="updCriativo(${ci},'porqueGanha',this.value)">${esc(c.porqueGanha)}</textarea></div>
-      <div class="lbl">Print</div>
-      ${imgBox(c.img,'Clique para adicionar','criativo',ci)}
+      ${hasImported ? `
+        <div class="lbl">Preview do criativo</div>
+        <div class="criativo-preview">
+          <img src="${esc(c.img)}" alt="" class="criativo-preview-img"/>
+          <div class="criativo-preview-body">
+            ${c.tituloAd?`<div class="criativo-preview-title">${esc(c.tituloAd)}</div>`:''}
+            ${c.legenda?`<div class="criativo-preview-text">${esc(c.legenda)}</div>`:''}
+            <button class="btn-outline no-print" style="margin-top:8px;font-size:10px" onclick="trocarCriativoImg(${ci})">Trocar imagem</button>
+          </div>
+        </div>
+      ` : `
+        <div class="lbl">Print</div>
+        ${imgBox(c.img,'Clique para adicionar','criativo',ci)}
+      `}
     </div>
   </div>`;
 }
+function trocarCriativoImg(ci){handleImg('criativo',ci);}
 function imgBox(src,label,type,idx){
   if(src)return`<div class="img-upload" onclick="handleImg('${type}',${idx})"><img src="${esc(src)}" alt=""/></div>`;
   return`<div class="img-upload" onclick="handleImg('${type}',${idx})"><div class="img-placeholder"><div class="img-plus">+</div><div class="img-lbl">${label}</div></div></div>`;
@@ -2305,7 +2327,7 @@ async function fetchAdsCampeoes(){
     const params={
       level:'ad',
       limit:50,
-      fields:'ad_id,ad_name,campaign_id,campaign_name,objective,spend,impressions,clicks,ctr,actions,cost_per_action_type',
+      fields:'ad_id,ad_name,campaign_id,campaign_name,objective,spend,impressions,clicks,ctr,actions,action_values,cost_per_action_type',
       date_preset:_adsPreset,
     };
     if(_adsObjective){
@@ -2347,28 +2369,59 @@ async function fetchAdsCampeoes(){
     };
     const sorted=rows.slice().sort((a,b)=>getResults(b)-getResults(a)||parseFloat(b.ctr||0)-parseFloat(a.ctr||0));
     const top=sorted.slice(0,_adsTopN);
+    // Pega revenue (action_values) para purchase, quando objetivo for Vendas
+    const PURCHASE_KEYS=['omni_purchase','offsite_conversion.fb_pixel_purchase','purchase'];
+    const getRevenue=r=>{
+      const vals=r.action_values||[];
+      let v=0;
+      for(const a of vals){
+        if(PURCHASE_KEYS.some(k=>a.action_type===k||a.action_type.endsWith('.'+k))){
+          v+=parseFloat(a.value)||0;
+        }
+      }
+      return v;
+    };
+    // Label para o chip "Resultados" muda conforme objetivo
+    const labelResultados=(()=>{
+      switch(_adsObjective){
+        case 'OUTCOME_SALES': return 'Compras';
+        case 'OUTCOME_LEADS': return 'Leads';
+        case 'OUTCOME_TRAFFIC': return 'Cliques';
+        case 'OUTCOME_AWARENESS': return 'Impressões';
+        default: if(isMessaging) return 'Mensagens';
+                 if(_adsObjective==='OUTCOME_ENGAGEMENT') return 'Engajamentos';
+                 return 'Resultados';
+      }
+    })();
     _adsResult=top.map(r=>{
       const conv=getResults(r);
       const spend=parseFloat(r.spend||0);
       const cpr=conv>0?spend/conv:null;
+      const revenue=getRevenue(r);
+      const fmt2=n=>n.toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2});
       return {
         ad_id:r.ad_id,
         nome:r.ad_name||'Sem nome',
         campanha:r.campaign_name||'',
-        invest:'R$ '+spend.toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2}),
+        invest:'R$ '+fmt2(spend),
         ctr:(parseFloat(r.ctr||0)).toFixed(2)+'%',
-        cpr:cpr!==null?'R$ '+cpr.toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2}):'—',
+        cpr:cpr!==null?'R$ '+fmt2(cpr):'—',
         resultados:String(conv),
+        labelResultados,
+        valor: revenue>0 ? 'R$ '+fmt2(revenue) : '',
+        roas: (revenue>0&&spend>0) ? (revenue/spend).toFixed(2)+'x' : '',
         img:'',
       };
     });
     document.getElementById('ads-status').textContent=`${rows.length} ads encontrados · buscando capas dos top ${top.length}…`;
-    // Busca thumbnails em paralelo (best-effort, não bloqueia salvar se falhar)
+    // Busca capa + texto em paralelo (best-effort, não bloqueia salvar)
     await Promise.all(_adsResult.map(async(c)=>{
       if(!c.ad_id) return;
       try{
-        const thumb=await fetchAdThumbnail(c.ad_id);
-        if(thumb) c.img=thumb;
+        const r=await fetchAdCreative(c.ad_id);
+        c.img=r.img||'';
+        c.tituloAd=r.title||'';
+        c.legenda=r.body||'';
       }catch(_){}
     }));
     document.getElementById('ads-status').textContent=`${rows.length} ads encontrados · top ${top.length} selecionados`;
@@ -2378,7 +2431,7 @@ async function fetchAdsCampeoes(){
         <div style="flex:1;min-width:0">
           <div style="font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(c.nome)}</div>
           <div style="color:#6E6E73;font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(c.campanha)}</div>
-          <div style="margin-top:4px;font-size:11px">💰 ${c.invest} · 📊 CTR ${c.ctr} · 🎯 ${c.resultados} (CPR ${c.cpr})</div>
+          <div style="margin-top:4px;font-size:11px">💰 ${c.invest} · 📊 CTR ${c.ctr} · 🎯 ${c.labelResultados}: ${c.resultados} (CPR ${c.cpr})${c.valor?` · 💵 ${c.valor}`:''}${c.roas?` · ROAS ${c.roas}`:''}</div>
         </div>
       </div>`
     ).join('');
@@ -2391,33 +2444,37 @@ async function fetchAdsCampeoes(){
 // Busca thumbnail/imagem do criativo de um ad. Tenta creative.thumbnail_url
 // (mais comum) e cai para image_url. Retorna data URL (base64) para garantir
 // que sobreviva ao expirar o link Meta e funcione no PDF/print.
-async function fetchAdThumbnail(adId){
+async function fetchAdCreative(adId){
   // endpoint precisa ter '/' para o proxy não prefixar com act_<accountId>.
-  // Usar "<adId>/" mantém a chamada como /v19.0/<adId>/?fields=...
-  // Pede thumbnail_width/height grandes para a Meta entregar imagem em alta
-  // (default é 64x64); image_url vem na resolução nativa do criativo.
-  const params={fields:'creative{thumbnail_url.width(600).height(600),image_url,object_story_spec{video_data{image_url},link_data{picture}}}'};
+  // Pede thumbnail_url grande, image_url nativa, e textos do object_story_spec.
+  const fields='creative{thumbnail_url.width(600).height(600),image_url,title,body,object_story_spec{link_data{picture,message,name,description,caption,call_to_action},video_data{image_url,message,title,call_to_action},photo_data{image_url,caption}}}';
   const res=await fetch(SURL+'/functions/v1/meta-proxy',{
     method:'POST',
     headers:{'Content-Type':'application/json','apikey':ANON,'Authorization':'Bearer '+_sess},
-    body:JSON.stringify({session_token:_sess,endpoint:String(adId)+'/',params,account_id:_metaAccount})
+    body:JSON.stringify({session_token:_sess,endpoint:String(adId)+'/',params:{fields},account_id:_metaAccount})
   });
   const j=await res.json();
-  if(!res.ok||j.error){console.warn('[fetchAdThumbnail] falhou:',adId,j);return '';}
+  if(!res.ok||j.error){console.warn('[fetchAdCreative] falhou:',adId,j);return {img:'',title:'',body:''};}
   const cr=j.creative||{};
   const story=cr.object_story_spec||{};
-  // Prefere image_url (resolução nativa), depois link_data.picture, depois
-  // video frame, e thumbnail_url só como último recurso (mesmo em 600 ainda
-  // é menor que a mídia original).
+  const link=story.link_data||{};
+  const video=story.video_data||{};
+  const photo=story.photo_data||{};
+  // Imagem: prefere alta resolução
   const url = cr.image_url
-           || story.link_data?.picture
-           || story.video_data?.image_url
+           || link.picture
+           || video.image_url
+           || photo.image_url
            || cr.thumbnail_url
            || '';
-  if(!url){console.warn('[fetchAdThumbnail] sem url:',adId,cr);return '';}
-  // Converte para data URL para persistir no JSON (links Meta expiram em horas).
-  // Tenta fetch direto primeiro; se CORS bloquear (CDN do Meta normalmente bloqueia),
-  // cai para o meta-proxy que busca server-side e devolve base64.
+  // Título e legenda: tenta link_data primeiro (formato mais comum)
+  const title = link.name || video.title || cr.title || '';
+  const body  = link.message || video.message || photo.caption || cr.body || link.description || '';
+  const img = url ? await urlToDataUrl(url) : '';
+  return { img, title, body };
+}
+async function urlToDataUrl(url){
+  // Tenta fetch direto; se CORS bloquear, cai para o meta-proxy.
   try{
     const r=await fetch(url,{mode:'cors'});
     if(!r.ok) throw new Error('http '+r.status);
@@ -2433,23 +2490,39 @@ async function fetchAdThumbnail(adId){
       const pj=await pr.json();
       if(pj.data_url) return pj.data_url;
     }catch(__){}
-    return url; // último fallback: URL direta (pode quebrar no PDF mas serve para preview)
+    return url;
   }
+}
+// Wrapper retrocompatível
+async function fetchAdThumbnail(adId){
+  const r=await fetchAdCreative(adId);
+  return r.img||'';
 }
 
 function fillAdsIntoReport(){
   if(!_adsResult||!_adsResult.length)return;
-  D.criativos=_adsResult.map(c=>({
-    id:uid(),
-    nome:c.nome,
-    chips:[
+  D.criativos=_adsResult.map(c=>{
+    // Chips dinâmicos: sempre Invest./CTR/CPR; depois resultados (label dinâmico)
+    // e — quando houver — valor das compras (revenue).
+    const chips=[
       {id:uid(),label:'Invest. R$',val:c.invest},
       {id:uid(),label:'CTR',val:c.ctr},
+      {id:uid(),label:c.labelResultados||'Resultados',val:c.resultados},
       {id:uid(),label:'CPR',val:c.cpr},
-    ],
-    porqueGanha:'',
-    img:c.img||'',
-  }));
+    ];
+    if(c.valor) chips.push({id:uid(),label:'Valor em compras',val:c.valor});
+    if(c.roas)  chips.push({id:uid(),label:'ROAS',val:c.roas});
+    return {
+      id:uid(),
+      nome:c.nome,
+      chips,
+      porqueGanha:'',
+      img:c.img||'',
+      tituloAd:c.tituloAd||'',
+      legenda:c.legenda||'',
+      fromMeta:true,
+    };
+  });
   saveData();render();
   document.getElementById('ads-ok').className='meta-ok show';
   setTimeout(closeAdsImport,1500);
