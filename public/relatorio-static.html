@@ -2043,7 +2043,7 @@ function voltarDashboard(){
 }
 
 // ── META IMPORT ───────────────────────────────────────────────────────────────
-const META_PERIODS = [
+var META_PERIODS = [
   {label:'Hoje',          preset:'today'},
   {label:'Ontem',         preset:'yesterday'},
   {label:'7 dias',        preset:'last_7d'},
@@ -2058,7 +2058,7 @@ const META_PERIODS = [
 ];
 
 // Available Meta metrics catalogue
-const META_METRIC_OPTS=[
+var META_METRIC_OPTS=[
   {key:'spend',       label:'Investimento',       names:['invest'],                   fmt:'brl'},
   {key:'results',     label:'Leads / Resultados', names:['lead','venda','result','conv'],fmt:'int',isAction:true},
   {key:'cpl',         label:'CPL / CPA',          names:['cpl','cpa','roas'],         fmt:'brl',isCalc:true},
@@ -2444,7 +2444,7 @@ function fillCompIntoReport(){
 // idade da campanha).
 // nameTokens: padrões da nomenclatura NGP. Match no nome da campanha (case-insensitive,
 // normalizado). Ad é considerado do tipo se objective casa OU nome contém qualquer token.
-const AD_OBJECTIVES=[
+var AD_OBJECTIVES=[
   {label:'Vendas',       val:'OUTCOME_SALES,CONVERSIONS,PRODUCT_CATALOG_SALES',                              action:'purchase',
    nameTokens:['venda','vendas','ecommerc','ecomm','compra','catalog','catálog']},
   {label:'Leads',        val:'OUTCOME_LEADS,LEAD_GENERATION',                                                action:'lead',
@@ -2461,7 +2461,7 @@ const AD_OBJECTIVES=[
 ];
 
 // Públicos / temperatura — tokens nos nomes ou emojis convencionais
-const AD_AUDIENCES=[
+var AD_AUDIENCES=[
   {label:'Todos', val:'', tokens:[],            emojis:[]},
   {label:'Frio',  val:'frio',  tokens:['frio','novo','aquisicao','aquisição','novo cliente','prospect'], emojis:['❄','❄️','🥶']},
   {label:'Rmkt',  val:'rmkt',  tokens:['rmkt','rmk','remarketing','requente','quente','aquecid'],         emojis:['🔥','♨','♨️']},
