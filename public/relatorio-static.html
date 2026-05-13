@@ -1915,6 +1915,12 @@ function handleImg(type,idx){
       if(_metaData){fillMetaIntoReport();}
     },600);
   }
+  // Wizard: ao criar Novo Relatório (?novo=1) e tendo conta Meta + sessão,
+  // abre o modal de importação ANTES de o usuário começar — pode pular.
+  // Pode ser desligado com ?wizard=0
+  if(isNovo && _sess && _metaAccount && params.get('wizard')!=='0' && params.get('autoimport')!=='1' && !params.get('id')){
+    setTimeout(()=>openMetaImport(),350);
+  }
   // Libera autosave só depois do bootstrap, para não disparar no load inicial
   setTimeout(()=>{autosaveReady=true;},800);
 })();
@@ -2674,7 +2680,10 @@ function fillAdsIntoReport(opts){
       <div id="ads-preview" style="margin-top:6px;max-height:200px;overflow:auto;font-size:11px"></div>
     </div>
 
-    <button class="meta-btn-fill" onclick="fillAllIntoReport()" style="margin-top:14px">✓ Preencher relatório</button>
+    <div style="display:flex;gap:8px;margin-top:14px">
+      <button class="meta-btn-fill" onclick="fillAllIntoReport()" style="flex:1">✓ Preencher relatório</button>
+      <button class="meta-btn-fill" onclick="closeMetaImport()" style="flex:0 0 auto;background:#fff;color:#6E6E73;border:1.5px solid #E5E5EA">Pular</button>
+    </div>
 
     <div id="meta-ok" class="meta-ok">✓ Métricas importadas com sucesso!</div>
     <div id="meta-err" class="meta-err"></div>
