@@ -2372,14 +2372,16 @@ async function fetchAdsCampeoes(){
 // (mais comum) e cai para image_url. Retorna data URL (base64) para garantir
 // que sobreviva ao expirar o link Meta e funcione no PDF/print.
 async function fetchAdThumbnail(adId){
+  // endpoint precisa ter '/' para o proxy não prefixar com act_<accountId>.
+  // Usar "<adId>/" mantém a chamada como /v19.0/<adId>/?fields=...
   const params={fields:'creative{thumbnail_url,image_url,object_story_spec{video_data{image_url},link_data{picture,image_hash}}}'};
   const res=await fetch(SURL+'/functions/v1/meta-proxy',{
     method:'POST',
     headers:{'Content-Type':'application/json','apikey':ANON,'Authorization':'Bearer '+_sess},
-    body:JSON.stringify({session_token:_sess,endpoint:String(adId),params,account_id:_metaAccount})
+    body:JSON.stringify({session_token:_sess,endpoint:String(adId)+'/',params,account_id:_metaAccount})
   });
   const j=await res.json();
-  if(!res.ok||j.error) return '';
+  if(!res.ok||j.error){console.warn('[fetchAdThumbnail] falhou:',adId,j);return '';}
   const cr=j.creative||{};
   const story=cr.object_story_spec||{};
   const url = cr.thumbnail_url
@@ -2387,15 +2389,26 @@ async function fetchAdThumbnail(adId){
            || story.video_data?.image_url
            || story.link_data?.picture
            || '';
-  if(!url) return '';
-  // Converte para data URL para persistir no JSON (links Meta expiram em horas)
+  if(!url){console.warn('[fetchAdThumbnail] sem url:',adId,cr);return '';}
+  // Converte para data URL para persistir no JSON (links Meta expiram em horas).
+  // Tenta fetch direto primeiro; se CORS bloquear (CDN do Meta normalmente bloqueia),
+  // cai para o meta-proxy que busca server-side e devolve base64.
   try{
-    const r=await fetch(url);
-    if(!r.ok) return url;
+    const r=await fetch(url,{mode:'cors'});
+    if(!r.ok) throw new Error('http '+r.status);
     const blob=await r.blob();
     return await new Promise(res=>{const fr=new FileReader();fr.onloadend=()=>res(fr.result);fr.readAsDataURL(blob);});
   }catch(_){
-    return url; // fallback para URL direta se CORS bloquear
+    try{
+      const pr=await fetch(SURL+'/functions/v1/meta-proxy',{
+        method:'POST',
+        headers:{'Content-Type':'application/json','apikey':ANON,'Authorization':'Bearer '+_sess},
+        body:JSON.stringify({session_token:_sess,image_url:url})
+      });
+      const pj=await pr.json();
+      if(pj.data_url) return pj.data_url;
+    }catch(__){}
+    return url; // último fallback: URL direta (pode quebrar no PDF mas serve para preview)
   }
 }
 
