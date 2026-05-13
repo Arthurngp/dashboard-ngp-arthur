@@ -1906,21 +1906,48 @@ function handleImg(type,idx){
   }
   render();
   if(cloudId)showCloudLink();
-  // Auto-importa métricas Meta — setTimeout garante que _metaPreset já foi declarado
+  // Auto-importa métricas Meta + criativos campeões a partir dos params
+  // configurados no wizard do Dashboard. Sem UI de modal — preenche direto.
   if(isNovo && params.get('autoimport')==='1' && _metaAccount){
     const _autoperiod=params.get('period');
+    const _autometrics=params.get('metrics');
+    const _autoobjective=params.get('objective');
+    const _autotopN=params.get('topN');
+    const _autoimportCriativos=params.get('importCriativos')==='1';
     setTimeout(async()=>{
-      if(_autoperiod){_metaPreset=_autoperiod;_metaMode='preset';}
+      if(_autoperiod){_metaPreset=_autoperiod;_metaMode='preset';_adsPreset=_autoperiod;}
+      // Filtra métricas selecionadas (se vier no param)
+      if(_autometrics){
+        _metaSelKeys=new Set(_autometrics.split(',').filter(Boolean));
+      }
+      // Configura criativos
+      if(_autoimportCriativos){
+        if(_autoobjective!==null) _adsObjective=_autoobjective;
+        if(_autotopN) _adsTopN=parseInt(_autotopN,10)||2;
+      }
+      // Busca métricas e (se ativado) criativos em paralelo
       await fetchMetaInsights();
-      if(_metaData){fillMetaIntoReport();}
+      if(_autoimportCriativos){
+        await fetchAdsCampeoes();
+      }
+      // Aplica tudo de uma vez
+      if(_metaData) {
+        META_METRIC_OPTS.forEach(m=>{
+          if(!_metaSelKeys.has(m.key))return;
+          applyToReport(m,metricValue(_metaData,m.key,m.fmt),undefined);
+        });
+        const r=rangeFromMeta(_metaMode,_metaPreset,_metaFrom,_metaUntil);
+        if(r) D.periodo=r;
+      }
+      if(_autoimportCriativos && _adsResult && _adsResult.length){
+        fillAdsIntoReport({skipClose:true});
+      }
+      saveData(); render();
     },600);
   }
-  // Wizard: ao criar Novo Relatório (?novo=1) e tendo conta Meta + sessão,
-  // abre o modal de importação ANTES de o usuário começar — pode pular.
-  // Pode ser desligado com ?wizard=0
-  if(isNovo && _sess && _metaAccount && params.get('wizard')!=='0' && params.get('autoimport')!=='1' && !params.get('id')){
-    setTimeout(()=>openMetaImport(),350);
-  }
+  // Wizard inline removido: a configuração de importação agora é feita no
+  // Dashboard antes de redirecionar (modal NovoRelatorioModal). Aqui só
+  // executamos o autoimport quando os params do wizard chegam via URL.
   // Libera autosave só depois do bootstrap, para não disparar no load inicial
   setTimeout(()=>{autosaveReady=true;},800);
 })();

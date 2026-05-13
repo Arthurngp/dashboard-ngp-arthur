@@ -1,5 +1,5 @@
 'use client'
-import React, { useEffect, useRef, useMemo, Suspense } from 'react'
+import React, { useEffect, useRef, useMemo, useState, Suspense } from 'react'
 import { useRouter } from 'next/navigation'
 import { fmt, fmtN, fmtI } from '@/lib/utils'
 import { SURL } from '@/lib/constants'
@@ -13,6 +13,7 @@ import styles from './dashboard.module.css'
 import AccountModal from './components/AccountModal'
 import MetricsModal from './components/MetricsModal'
 import AdPreviewModal from './components/AdPreviewModal'
+import NovoRelatorioModal, { NovoRelatorioConfig } from './components/NovoRelatorioModal'
 import KpiSection from './components/KpiSection'
 import CustomSelect from '@/components/CustomSelect'
 import { shellIcons } from './components/ShellIcons'
@@ -72,6 +73,33 @@ export default function DashboardPage() {
 
   const colMenuRef = useRef<HTMLDivElement>(null)
   const campFilterRef = useRef<HTMLDivElement>(null)
+  const [novoRelatorioOpen, setNovoRelatorioOpen] = useState(false)
+
+  function openNovoRelatorio() {
+    if (!viewing) { alert('Selecione um cliente antes de criar um relatório.'); return }
+    setNovoRelatorioOpen(true)
+  }
+
+  function handleNovoRelatorioConfirm(config: NovoRelatorioConfig) {
+    setNovoRelatorioOpen(false)
+    if (!viewing) return
+    const qs = new URLSearchParams({
+      novo: '1',
+      cliente: viewing.name || '',
+      username: viewing.username || '',
+      cid: viewing.id || '',
+    })
+    if (config.period) qs.set('period', config.period)
+    if (config.metrics.length) qs.set('metrics', config.metrics.join(','))
+    if (config.importCriativos) {
+      qs.set('importCriativos', '1')
+      if (config.objective) qs.set('objective', config.objective)
+      qs.set('topN', String(config.topN))
+    }
+    // autoimport=1 dispara a importação no relatório sem mostrar o modal lá
+    if (config.metrics.length || config.importCriativos) qs.set('autoimport', '1')
+    window.open(`/relatorio?${qs.toString()}`, '_blank')
+  }
 
   useEffect(() => {
     const handleDown = (e: MouseEvent) => {
@@ -422,11 +450,7 @@ export default function DashboardPage() {
                   <button
                     className={styles.btnNewRel}
                     disabled={!viewing}
-                    onClick={() => {
-                      if (!viewing) { alert('Selecione um cliente antes de criar um relatório.'); return }
-                      const qs = new URLSearchParams({ novo: '1', cliente: viewing.name || '', username: viewing.username || '', cid: viewing.id || '' })
-                      window.open(`/relatorio?${qs.toString()}`, '_blank')
-                    }}
+                    onClick={openNovoRelatorio}
                   >+ Novo relatório</button>
                 </div>
                 {relatorios.length === 0
@@ -459,6 +483,7 @@ export default function DashboardPage() {
       {modalOpen && <AccountModal data={modalEdit || {}} loading={modalLoading} error={modalError} userRole={sess?.role} onSave={saveClient} onArchive={archiveClient} onDelete={deleteClient} onClose={() => { setModalOpen(false); setModalEdit(null); setModalError('') }} />}
       {metricsModalOpen && <MetricsModal visible={visibleMetrics} onToggle={toggleMetric} onReset={resetMetrics} onClose={() => setMetricsModalOpen(false)} />}
       <AdPreviewModal html={previewHtml} loading={previewLoading} adName={previewAdName} onClose={() => { setPreviewHtml(null); setPreviewLoading(false) }} />
+      <NovoRelatorioModal isOpen={novoRelatorioOpen} clienteName={viewing?.name || ''} onClose={() => setNovoRelatorioOpen(false)} onConfirm={handleNovoRelatorioConfirm} />
     </div>
   )
 }
