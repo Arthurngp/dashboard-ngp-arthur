@@ -2567,15 +2567,43 @@ async function fetchAdsCampeoes(){
     }) || AD_OBJECTIVES[AD_OBJECTIVES.length-1];
     const audienceObj=AD_AUDIENCES.find(a=>a.val===_adsAudience)||AD_AUDIENCES[0];
 
-    // Busca SEM filter por objective — pegamos todos do período e filtramos
-    // local por (objective casa OU nome casa) + (audience casa). Isso cobre
-    // campanhas com objetivo "errado" mas nomenclatura certa, e vice-versa.
-    // Limit alto pra ter base maior pro ranking.
+    // ETAPA 1: lista TODAS as campanhas da conta (rápido, sem métricas).
+    // Filtra pelo nome E objective (OR) localmente — escolhe quais buscar
+    // em level=ad na próxima etapa. Isso garante cobertura mesmo em contas
+    // com 200+ ads (em que o limit de level=ad cortaria campanhas inteiras).
+    const campsRes=await fetch(SURL+'/functions/v1/meta-proxy',{
+      method:'POST',
+      headers:{'Content-Type':'application/json','apikey':ANON,'Authorization':'Bearer '+_sess},
+      body:JSON.stringify({session_token:_sess,endpoint:'campaigns',params:{fields:'id,name,objective,status',limit:500},account_id:_metaAccount})
+    });
+    const campsJ=await campsRes.json();
+    if(!campsRes.ok||campsJ.error)throw new Error(campsJ.error?.message||campsJ.error||'Falha ao listar campanhas');
+    const todasCampanhas=campsJ.data||[];
+    console.log('[fetchAdsCampeoes] %d campanhas na conta:', todasCampanhas.length, todasCampanhas.map(c=>`${c.objective}: ${c.name}`));
+
+    const objectivesSet=new Set(objectivesArr);
+    const campsCasam=todasCampanhas.filter(c=>{
+      const passObj = objectivesSet.size===0
+        ? true
+        : (objectivesSet.has(c.objective) || nameMatchesObjective(c.name, obj));
+      const passAud = nameMatchesAudience(c.name, audienceObj);
+      return passObj && passAud;
+    });
+    console.log('[fetchAdsCampeoes] %d campanhas casam com filtro:', campsCasam.length, campsCasam.map(c=>c.name));
+    if(!campsCasam.length){
+      const audInfo=audienceObj.val?` · público "${audienceObj.label}"`:'';
+      setStatus(`Nenhuma campanha de "${obj.label}"${audInfo} encontrada. Veja console (F12) para diagnóstico.`);
+      _adsLoading=false; return;
+    }
+    const campIdsCasam=campsCasam.map(c=>c.id);
+
+    // ETAPA 2: busca ads SOMENTE das campanhas filtradas, com métricas.
     const params={
       level:'ad',
       limit:200,
       fields:'ad_id,ad_name,campaign_id,campaign_name,objective,spend,impressions,clicks,ctr,actions,action_values,cost_per_action_type',
       date_preset:_adsPreset,
+      filtering:JSON.stringify([{field:'campaign.id',operator:'IN',value:campIdsCasam}]),
     };
     const res=await fetch(SURL+'/functions/v1/meta-proxy',{
       method:'POST',
@@ -2586,24 +2614,10 @@ async function fetchAdsCampeoes(){
     if(!res.ok||j.error)throw new Error(j.error?.message||j.error||'Falha ao buscar ads');
     let rows=j.data||[];
     if(!rows.length){
-      setStatus('Nenhum ad encontrado no período.');
+      setStatus(`Encontradas ${campsCasam.length} campanhas, mas sem ads ativos no período.`);
       _adsLoading=false; return;
     }
-    // Filtro local: objective casa OU nome casa (e nome casa audience)
-    const objectivesSet=new Set(objectivesArr);
-    rows=rows.filter(r=>{
-      const camp=r.campaign_name||'';
-      const objMatchesObjective = objectivesSet.size===0 || objectivesSet.has(r.objective);
-      const objMatchesName = nameMatchesObjective(camp, obj);
-      const passObj = objectivesSet.size===0 ? true : (objMatchesObjective || objMatchesName);
-      const passAud = nameMatchesAudience(camp, audienceObj);
-      return passObj && passAud;
-    });
-    if(!rows.length){
-      const audInfo=audienceObj.val?` · público "${audienceObj.label}"`:'';
-      setStatus(`Nenhum ad encontrado para "${obj.label}"${audInfo} no período.`);
-      _adsLoading=false; return;
-    }
+    console.log('[fetchAdsCampeoes] %d ads ativos no período retornados', rows.length);
     // Ordena: tenta pelo action específico do objetivo (desc), senão por CTR desc.
     // Cada objetivo tem múltiplos action_types possíveis (Pixel x CAPI x onsite).
     const actionKey=obj?obj.action:'purchase';
