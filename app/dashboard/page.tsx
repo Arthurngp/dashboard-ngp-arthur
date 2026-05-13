@@ -77,6 +77,9 @@ export default function DashboardPage() {
 
   function openNovoRelatorio() {
     if (!viewing) { alert('Selecione um cliente antes de criar um relatório.'); return }
+    // Pre-aquece a rota: o chunk JS de /relatorio (route.ts + html estático)
+    // começa a baixar enquanto o usuário ainda configura no modal.
+    try { router.prefetch?.('/relatorio') } catch {}
     setNovoRelatorioOpen(true)
   }
 

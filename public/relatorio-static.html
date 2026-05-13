@@ -1938,49 +1938,79 @@ function handleImg(type,idx){
     const _autoobjective=params.get('objective');
     const _autotopN=params.get('topN');
     const _autoimportCriativos=params.get('importCriativos')==='1';
-    setTimeout(async()=>{
-      try{
-        if(_autoperiod){_metaPreset=_autoperiod;_metaMode='preset';_adsPreset=_autoperiod;}
-        if(_autometrics){_metaSelKeys=new Set(_autometrics.split(',').filter(Boolean));}
-        if(_autoimportCriativos){
-          if(_autoobjective!==null) _adsObjective=_autoobjective;
-          if(_autotopN) _adsTopN=parseInt(_autotopN,10)||2;
-        }
-        console.log('[autoimport] config | period=%s | metrics=%o | criativos=%s | objective=%s | topN=%s',
-          _metaPreset, Array.from(_metaSelKeys), _autoimportCriativos, _adsObjective, _adsTopN);
-
-        showAutoStatus('⟳ Buscando métricas…');
-        await fetchMetaInsights();
-        console.log('[autoimport] metaData=%o', _metaData);
-        if(_autoimportCriativos){
-          showAutoStatus('⟳ Buscando criativos campeões…');
-          await fetchAdsCampeoes();
-          console.log('[autoimport] adsResult=%o', _adsResult);
-        }
-        let countMetricas=0, countCriativos=0;
-        if(_metaData){
-          META_METRIC_OPTS.forEach(m=>{
-            if(!_metaSelKeys.has(m.key))return;
-            applyToReport(m,metricValue(_metaData,m.key,m.fmt),undefined);
-            countMetricas++;
-          });
-          const r=rangeFromMeta(_metaMode,_metaPreset,_metaFrom,_metaUntil);
-          if(r) D.periodo=r;
-        }
-        if(_autoimportCriativos && _adsResult && _adsResult.length){
-          fillAdsIntoReport({skipClose:true});
-          countCriativos=_adsResult.length;
-        }
-        saveData(); render();
-        showAutoStatus(`✓ ${countMetricas} métricas e ${countCriativos} criativos importados`);
-        hideAutoStatus();
-        console.log('[autoimport] concluído');
-      }catch(e){
-        console.error('[autoimport] erro:',e);
-        showAutoStatus('⚠ Erro: '+(e&&e.message?e.message:'tente novamente'));
-        hideAutoStatus();
+    // Dispara imediatamente (variáveis _meta*/_ads* são var-hoisted, sem TDZ).
+    // Fluxo progressivo: cada fetch (métricas e criativos) roda em paralelo
+    // e re-renderiza ASSIM QUE termina, em vez de esperar o lento.
+    (async()=>{
+      if(_autoperiod){_metaPreset=_autoperiod;_metaMode='preset';_adsPreset=_autoperiod;}
+      if(_autometrics){_metaSelKeys=new Set(_autometrics.split(',').filter(Boolean));}
+      if(_autoimportCriativos){
+        if(_autoobjective!==null) _adsObjective=_autoobjective;
+        if(_autotopN) _adsTopN=parseInt(_autotopN,10)||2;
       }
-    },600);
+      console.log('[autoimport] config | period=%s | metrics=%o | criativos=%s | objective=%s | topN=%s',
+        _metaPreset, Array.from(_metaSelKeys), _autoimportCriativos, _adsObjective, _adsTopN);
+
+      // Já aplica o período no D.periodo logo de cara — não depende de fetch
+      const r=rangeFromMeta(_metaMode,_metaPreset,_metaFrom,_metaUntil);
+      if(r){D.periodo=r;saveData();render();}
+
+      showAutoStatus('⟳ Importando…');
+      const status={metricas:'pending',criativos:_autoimportCriativos?'pending':'skip',countM:0,countC:0};
+      const updateStatus=()=>{
+        const parts=[];
+        if(status.metricas==='pending') parts.push('⟳ métricas');
+        else if(status.metricas==='ok') parts.push(`✓ ${status.countM} métricas`);
+        else if(status.metricas==='err') parts.push('⚠ métricas');
+        if(status.criativos==='pending') parts.push('⟳ criativos');
+        else if(status.criativos==='ok') parts.push(`✓ ${status.countC} criativos`);
+        else if(status.criativos==='err') parts.push('⚠ criativos');
+        showAutoStatus(parts.join(' · '));
+        if(status.metricas!=='pending' && status.criativos!=='pending'){
+          showAutoStatus(`✓ ${status.countM} métricas e ${status.countC} criativos importados`);
+          hideAutoStatus();
+        }
+      };
+
+      // Métricas e criativos rodam em paralelo. Cada um re-renderiza ao acabar.
+      const pMetricas=(async()=>{
+        try{
+          await fetchMetaInsights();
+          if(_metaData){
+            META_METRIC_OPTS.forEach(m=>{
+              if(!_metaSelKeys.has(m.key))return;
+              applyToReport(m,metricValue(_metaData,m.key,m.fmt),undefined);
+              status.countM++;
+            });
+            saveData(); render();
+          }
+          status.metricas='ok';
+        }catch(e){
+          console.error('[autoimport métricas]',e);
+          status.metricas='err';
+        }
+        updateStatus();
+      })();
+
+      const pCriativos=_autoimportCriativos ? (async()=>{
+        try{
+          await fetchAdsCampeoes();
+          if(_adsResult && _adsResult.length){
+            fillAdsIntoReport({skipClose:true});
+            render();
+            status.countC=_adsResult.length;
+          }
+          status.criativos='ok';
+        }catch(e){
+          console.error('[autoimport criativos]',e);
+          status.criativos='err';
+        }
+        updateStatus();
+      })() : Promise.resolve();
+
+      await Promise.all([pMetricas,pCriativos]);
+      console.log('[autoimport] concluído');
+    })();
   }
   // Wizard inline removido: a configuração de importação agora é feita no
   // Dashboard antes de redirecionar (modal NovoRelatorioModal). Aqui só
@@ -2033,8 +2063,9 @@ const META_METRIC_OPTS=[
 ];
 
 // ── Single modal state ───────────────────────────────────────────────────────
-let _metaPreset='last_7d', _metaMode='preset', _metaFrom='', _metaUntil='', _metaData=null;
-let _metaSelKeys=new Set(META_METRIC_OPTS.map(m=>m.key));
+// var (hoisted) para o IIFE de bootstrap poder atribuir antes desta linha
+var _metaPreset='last_7d', _metaMode='preset', _metaFrom='', _metaUntil='', _metaData=null;
+var _metaSelKeys=new Set(META_METRIC_OPTS.map(m=>m.key));
 
 // ── Comparison modal state ───────────────────────────────────────────────────
 let _compA={mode:'preset',preset:'last_7d',from:'',until:''};
@@ -2408,7 +2439,7 @@ const AD_OBJECTIVES=[
   {label:'Reconhecim.',  val:'OUTCOME_AWARENESS',                                  action:'impressions'},
   {label:'Todos',        val:'',                                                   action:'purchase'},
 ];
-let _adsObjective='OUTCOME_SALES', _adsPreset='last_30d', _adsTopN=2, _adsLoading=false;
+var _adsObjective='OUTCOME_SALES', _adsPreset='last_30d', _adsTopN=2, _adsLoading=false;
 function openAdsImport(){
   const ov=document.getElementById('ads-overlay');
   if(!ov){document.body.insertAdjacentHTML('beforeend',adsModalHTML());}
@@ -2442,7 +2473,7 @@ function adsModalHTML(){
     </div>
   </div>`;
 }
-let _adsResult=null;
+var _adsResult=null;
 function renderAdsControls(){
   document.getElementById('ads-obj-row').innerHTML=AD_OBJECTIVES.map(o=>
     `<button class="meta-pbtn ${_adsObjective===o.val?'sel':''}" onclick="setAdsObj('${o.val}')">${o.label}</button>`
