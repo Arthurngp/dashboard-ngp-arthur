@@ -153,6 +153,11 @@ textarea.field{resize:vertical;line-height:1.6}
 .criativo-preview-text{font-size:12px;color:#3A3A3C;line-height:1.4;white-space:pre-wrap;word-wrap:break-word}
 .criativo-preview-iframe-wrap{border:1px solid var(--border);border-radius:var(--radius-sm);overflow:hidden;background:#fff;width:100%;height:560px}
 .criativo-preview-iframe{width:100%;height:100%;border:0;display:block}
+.criativo-aguardando{border:2px dashed var(--border-strong);border-radius:var(--radius-sm);padding:20px 16px;background:#FAFAFA;display:flex;align-items:center;gap:14px}
+.criativo-aguardando-spinner{width:24px;height:24px;border:3px solid #E5E5EA;border-top-color:#1877F2;border-radius:50%;animation:criativo-spin 1s linear infinite;flex-shrink:0}
+.criativo-aguardando-title{font-size:12px;font-weight:700;color:#111;margin-bottom:2px}
+.criativo-aguardando-sub{font-size:11px;color:#6E6E73}
+@keyframes criativo-spin{to{transform:rotate(360deg)}}
 .only-print{display:none}
 @media print{.only-screen{display:none!important}.only-print{display:flex!important}}
 .img-upload{border:2px dashed var(--border-strong);border-radius:var(--radius-sm);cursor:pointer;background:#FAFAFA;overflow:hidden;min-height:96px;display:flex;align-items:center;justify-content:center;transition:border-color .15s,background .15s}
@@ -1028,8 +1033,16 @@ function renderCriativoCard(c,ci){
       ` : `
         <div style="margin-bottom:12px"><div class="lbl">${porqueLabel}</div>
           <textarea class="field" rows="2" placeholder="1 frase: o que faz converter" oninput="updCriativo(${ci},'porqueGanha',this.value)">${esc(c.porqueGanha)}</textarea></div>
-        <div class="lbl">Print</div>
-        ${imgBox(c.img,'Clique para adicionar','criativo',ci)}
+        <div class="lbl">Criativo</div>
+        ${_aguardandoCriativos ? `
+          <div class="criativo-aguardando no-print">
+            <div class="criativo-aguardando-spinner"></div>
+            <div>
+              <div class="criativo-aguardando-title">Importando criativo do Meta…</div>
+              <div class="criativo-aguardando-sub">Buscando o melhor desempenho do objetivo selecionado</div>
+            </div>
+          </div>
+        ` : imgBox(c.img,'Clique para adicionar','criativo',ci)}
       `}
     </div>
   </div>`;
@@ -2003,15 +2016,15 @@ function handleImg(type,idx){
       })();
 
       const pCriativos=_autoimportCriativos ? (async()=>{
+        // Sinaliza que estamos importando — render mostra placeholder em vez de "Print"
+        _aguardandoCriativos=true; render();
         try{
           await fetchAdsCampeoes();
           if(_adsResult && _adsResult.length){
             fillAdsIntoReport({skipClose:true});
-            render();
             status.countC=_adsResult.length;
             status.criativos='ok';
           }else{
-            // 0 ads: lê a mensagem de diagnóstico que fetchAdsCampeoes pôs no #ads-status
             const adsStatus=document.getElementById('ads-status');
             status.criativosMsg=(adsStatus&&adsStatus.textContent)||'Nenhum criativo encontrado';
             status.criativos='empty';
@@ -2021,6 +2034,7 @@ function handleImg(type,idx){
           status.criativosMsg=(e&&e.message)||'erro';
           status.criativos='err';
         }
+        _aguardandoCriativos=false; render();
         updateStatus();
       })() : Promise.resolve();
 
@@ -2539,6 +2553,9 @@ function adsModalHTML(){
   </div>`;
 }
 var _adsResult=null;
+// Flag global: quando true, criativos sem foto mostram "aguardando" em vez do
+// box de upload manual. Setada pelo autoimport enquanto está buscando.
+var _aguardandoCriativos=false;
 function renderAdsControls(){
   document.getElementById('ads-obj-row').innerHTML=AD_OBJECTIVES.map(o=>
     `<button class="meta-pbtn ${_adsObjective===o.val?'sel':''}" onclick="setAdsObj('${o.val}')">${o.label}</button>`

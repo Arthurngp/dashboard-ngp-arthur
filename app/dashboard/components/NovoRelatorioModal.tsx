@@ -67,10 +67,11 @@ const AUDIENCES = [
 export default function NovoRelatorioModal({ isOpen, onClose, onConfirm, clienteName }: NovoRelatorioModalProps) {
   const [period, setPeriod] = useState('last_7d')
   const [selMetrics, setSelMetrics] = useState<Set<string>>(new Set(METRICS.map(m => m.key)))
-  const [importCriativos, setImportCriativos] = useState(true)
   const [objective, setObjective] = useState('OUTCOME_SALES,CONVERSIONS,PRODUCT_CATALOG_SALES')
   const [audience, setAudience] = useState('')
   const [topN, setTopN] = useState(2)
+  // Importação de criativos é sempre ON — ficaram só os controles de configuração
+  const importCriativos = true
 
   if (!isOpen) return null
 
@@ -116,24 +117,13 @@ export default function NovoRelatorioModal({ isOpen, onClose, onConfirm, cliente
           </div>
         </Section>
 
-        <Section label={
-          <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            🏆 Criativos campeões
-            <label style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 6, textTransform: 'none', letterSpacing: 0, fontSize: 11, color: '#6E6E73', fontWeight: 500 }}>
-              <input type="checkbox" checked={importCriativos} onChange={e => setImportCriativos(e.target.checked)} /> importar
-            </label>
-          </span>
-        }>
-          {importCriativos && (
-            <>
-              <div style={{ fontSize: 11, color: '#6E6E73', marginBottom: 6 }}>Objetivo da campanha</div>
-              <Pills items={OBJECTIVES.map(o => ({ label: o.label, value: o.value }))} value={objective} onChange={setObjective} />
-              <div style={{ fontSize: 11, color: '#6E6E73', margin: '10px 0 6px' }}>Público <span style={{ color: '#AEAEB2' }}>(filtra pelo nome)</span></div>
-              <Pills items={AUDIENCES.map(a => ({ label: a.label, value: a.value }))} value={audience} onChange={setAudience} />
-              <div style={{ fontSize: 11, color: '#6E6E73', margin: '10px 0 6px' }}>Quantidade</div>
-              <Pills items={[2, 3, 4].map(n => ({ label: `Top ${n}`, value: String(n) }))} value={String(topN)} onChange={v => setTopN(Number(v))} />
-            </>
-          )}
+        <Section label="🏆 Criativos campeões">
+          <div style={{ fontSize: 11, color: '#6E6E73', marginBottom: 6 }}>Objetivo da campanha</div>
+          <Pills items={OBJECTIVES.map(o => ({ label: o.label, value: o.value }))} value={objective} onChange={setObjective} />
+          <div style={{ fontSize: 11, color: '#6E6E73', margin: '10px 0 6px' }}>Público <span style={{ color: '#AEAEB2' }}>(filtra pelo nome)</span></div>
+          <Pills items={AUDIENCES.map(a => ({ label: a.label, value: a.value }))} value={audience} onChange={setAudience} />
+          <div style={{ fontSize: 11, color: '#6E6E73', margin: '10px 0 6px' }}>Quantidade</div>
+          <Pills items={[2, 3, 4].map(n => ({ label: `Top ${n}`, value: String(n) }))} value={String(topN)} onChange={v => setTopN(Number(v))} />
         </Section>
 
         <div style={{ display: 'flex', gap: 8, marginTop: 18 }}>
