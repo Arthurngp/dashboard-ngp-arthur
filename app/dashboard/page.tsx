@@ -89,6 +89,9 @@ export default function DashboardPage() {
       username: viewing.username || '',
       cid: viewing.id || '',
     })
+    // Passa o meta_account_id no URL para o relatório usar nas chamadas Meta
+    // mesmo quando o sessionStorage da nova aba estiver vazio
+    if (viewing.account) qs.set('account', viewing.account)
     if (config.period) qs.set('period', config.period)
     if (config.metrics.length) qs.set('metrics', config.metrics.join(','))
     if (config.importCriativos) {

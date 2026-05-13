@@ -1908,41 +1908,78 @@ function handleImg(type,idx){
   if(cloudId)showCloudLink();
   // Auto-importa métricas Meta + criativos campeões a partir dos params
   // configurados no wizard do Dashboard. Sem UI de modal — preenche direto.
-  if(isNovo && params.get('autoimport')==='1' && _metaAccount){
+  if(isNovo && params.get('autoimport')==='1'){
+    console.log('[autoimport] iniciando | sess=%s | metaAccount=%s | params=%s',
+      _sess?'OK':'AUSENTE', _metaAccount||'AUSENTE', window.location.search);
+    const showAutoStatus=(t)=>{
+      let bar=document.getElementById('autoimport-bar');
+      if(!bar){
+        bar=document.createElement('div');
+        bar.id='autoimport-bar';
+        bar.style.cssText='position:fixed;top:60px;right:20px;background:#1877F2;color:#fff;padding:10px 16px;border-radius:8px;z-index:600;font-size:12px;font-weight:600;font-family:Sora,sans-serif;box-shadow:0 4px 12px rgba(0,0,0,.2);max-width:340px';
+        document.body.appendChild(bar);
+      }
+      bar.textContent=t;
+    };
+    const hideAutoStatus=()=>{const bar=document.getElementById('autoimport-bar');if(bar)setTimeout(()=>bar.remove(),3000);};
+    if(!_sess){
+      console.warn('[autoimport] sem sessão — não é possível importar');
+      showAutoStatus('⚠ Faça login para importar dados do Meta');hideAutoStatus();
+      return;
+    }
+    if(!_metaAccount){
+      console.warn('[autoimport] sem _metaAccount — passe ?account=... no URL');
+      showAutoStatus('⚠ Conta Meta não configurada para este cliente');hideAutoStatus();
+      return;
+    }
+    showAutoStatus('⟳ Importando dados do Meta…');
     const _autoperiod=params.get('period');
     const _autometrics=params.get('metrics');
     const _autoobjective=params.get('objective');
     const _autotopN=params.get('topN');
     const _autoimportCriativos=params.get('importCriativos')==='1';
     setTimeout(async()=>{
-      if(_autoperiod){_metaPreset=_autoperiod;_metaMode='preset';_adsPreset=_autoperiod;}
-      // Filtra métricas selecionadas (se vier no param)
-      if(_autometrics){
-        _metaSelKeys=new Set(_autometrics.split(',').filter(Boolean));
+      try{
+        if(_autoperiod){_metaPreset=_autoperiod;_metaMode='preset';_adsPreset=_autoperiod;}
+        if(_autometrics){_metaSelKeys=new Set(_autometrics.split(',').filter(Boolean));}
+        if(_autoimportCriativos){
+          if(_autoobjective!==null) _adsObjective=_autoobjective;
+          if(_autotopN) _adsTopN=parseInt(_autotopN,10)||2;
+        }
+        console.log('[autoimport] config | period=%s | metrics=%o | criativos=%s | objective=%s | topN=%s',
+          _metaPreset, Array.from(_metaSelKeys), _autoimportCriativos, _adsObjective, _adsTopN);
+
+        showAutoStatus('⟳ Buscando métricas…');
+        await fetchMetaInsights();
+        console.log('[autoimport] metaData=%o', _metaData);
+        if(_autoimportCriativos){
+          showAutoStatus('⟳ Buscando criativos campeões…');
+          await fetchAdsCampeoes();
+          console.log('[autoimport] adsResult=%o', _adsResult);
+        }
+        let countMetricas=0, countCriativos=0;
+        if(_metaData){
+          META_METRIC_OPTS.forEach(m=>{
+            if(!_metaSelKeys.has(m.key))return;
+            applyToReport(m,metricValue(_metaData,m.key,m.fmt),undefined);
+            countMetricas++;
+          });
+          const r=rangeFromMeta(_metaMode,_metaPreset,_metaFrom,_metaUntil);
+          if(r) D.periodo=r;
+        }
+        if(_autoimportCriativos && _adsResult && _adsResult.length){
+          fillAdsIntoReport({skipClose:true});
+          countCriativos=_adsResult.length;
+        }
+        saveData(); render();
+        showAutoStatus(`✓ ${countMetricas} métricas e ${countCriativos} criativos importados`);
+        hideAutoStatus();
+        console.log('[autoimport] concluído');
+      }catch(e){
+        console.error('[autoimport] erro:',e);
+        showAutoStatus('⚠ Erro: '+(e&&e.message?e.message:'tente novamente'));
+        hideAutoStatus();
       }
-      // Configura criativos
-      if(_autoimportCriativos){
-        if(_autoobjective!==null) _adsObjective=_autoobjective;
-        if(_autotopN) _adsTopN=parseInt(_autotopN,10)||2;
-      }
-      // Busca métricas e (se ativado) criativos em paralelo
-      await fetchMetaInsights();
-      if(_autoimportCriativos){
-        await fetchAdsCampeoes();
-      }
-      // Aplica tudo de uma vez
-      if(_metaData) {
-        META_METRIC_OPTS.forEach(m=>{
-          if(!_metaSelKeys.has(m.key))return;
-          applyToReport(m,metricValue(_metaData,m.key,m.fmt),undefined);
-        });
-        const r=rangeFromMeta(_metaMode,_metaPreset,_metaFrom,_metaUntil);
-        if(r) D.periodo=r;
-      }
-      if(_autoimportCriativos && _adsResult && _adsResult.length){
-        fillAdsIntoReport({skipClose:true});
-      }
-      saveData(); render();
     },600);
   }
   // Wizard inline removido: a configuração de importação agora é feita no
@@ -2205,21 +2242,26 @@ async function fetchMetaInsights(){
   const status=document.getElementById('meta-status');
   const preview=document.getElementById('meta-preview');
   const errEl=document.getElementById('meta-err');
-  status.className='meta-status show';status.textContent='Buscando dados do Meta Ads...';
-  preview.className='meta-preview-wrap';errEl.className='meta-err';
+  if(status){status.className='meta-status show';status.textContent='Buscando dados do Meta Ads...';}
+  if(preview)preview.className='meta-preview-wrap';
+  if(errEl)errEl.className='meta-err';
   try{
     const json=await callMetaProxy(_metaMode,_metaPreset,_metaFrom,_metaUntil);
     const row=json.data&&json.data[0];
     if(!row)throw new Error('Nenhum dado encontrado para o período selecionado.');
     _metaData=parseMetaRow(row);
-    status.className='meta-status';
-    preview.className='meta-preview-wrap show';
-    document.getElementById('meta-table-body').innerHTML=META_METRIC_OPTS.map(m=>
+    if(status)status.className='meta-status';
+    if(preview)preview.className='meta-preview-wrap show';
+    const tb=document.getElementById('meta-table-body');
+    if(tb)tb.innerHTML=META_METRIC_OPTS.map(m=>
       `<tr><td>${m.label}</td><td>${metricValue(_metaData,m.key,m.fmt)}</td></tr>`
     ).join('');
   }catch(e){
-    _metaData=null;status.className='meta-status';preview.className='meta-preview-wrap';
-    errEl.className='meta-err show';errEl.textContent='Erro: '+e.message;
+    _metaData=null;
+    if(status)status.className='meta-status';
+    if(preview)preview.className='meta-preview-wrap';
+    if(errEl){errEl.className='meta-err show';errEl.textContent='Erro: '+e.message;}
+    console.error('[fetchMetaInsights] erro:',e);
   }
 }
 
@@ -2419,9 +2461,10 @@ function setAdsTopN(n){_adsTopN=n;renderAdsControls();}
 async function fetchAdsCampeoes(){
   if(_adsLoading)return;
   _adsLoading=true; _adsResult=null;
-  document.getElementById('ads-status').textContent='Buscando ads…';
-  document.getElementById('ads-preview').innerHTML='';
-  document.getElementById('ads-fill-btn').disabled=true;
+  const setStatus=(t)=>{const el=document.getElementById('ads-status');if(el)el.textContent=t;};
+  const setPreview=(h)=>{const el=document.getElementById('ads-preview');if(el)el.innerHTML=h;};
+  const setBtnDisabled=(d)=>{const el=document.getElementById('ads-fill-btn');if(el)el.disabled=d;};
+  setStatus('Buscando ads…'); setPreview(''); setBtnDisabled(true);
   try{
     const obj=AD_OBJECTIVES.find(o=>o.val===_adsObjective);
     const params={
@@ -2446,7 +2489,7 @@ async function fetchAdsCampeoes(){
     if(!res.ok||j.error)throw new Error(j.error?.message||j.error||'Falha ao buscar ads');
     const rows=j.data||[];
     if(!rows.length){
-      document.getElementById('ads-status').textContent='Nenhum ad encontrado para esse filtro.';
+      setStatus('Nenhum ad encontrado para esse filtro.');
       _adsLoading=false; return;
     }
     // Ordena: tenta pelo action específico do objetivo (desc), senão por CTR desc.
@@ -2528,8 +2571,8 @@ async function fetchAdsCampeoes(){
         c.previewHtml=previewHtml||'';
       }catch(_){}
     }));
-    document.getElementById('ads-status').textContent=`${rows.length} ads encontrados · top ${top.length} selecionados`;
-    document.getElementById('ads-preview').innerHTML=_adsResult.map(c=>
+    setStatus(`${rows.length} ads encontrados · top ${top.length} selecionados`);
+    setPreview(_adsResult.map(c=>
       `<div style="display:flex;gap:10px;padding:8px 10px;border:1px solid #E5E5EA;border-radius:8px;margin-bottom:6px;align-items:flex-start">
         ${c.img?`<img src="${esc(c.img)}" alt="" style="width:80px;max-height:140px;object-fit:contain;border-radius:6px;flex-shrink:0;background:#F2F2F7"/>`:`<div style="width:80px;height:80px;border-radius:6px;background:#F2F2F7;display:flex;align-items:center;justify-content:center;font-size:20px;flex-shrink:0">📷</div>`}
         <div style="flex:1;min-width:0">
@@ -2538,10 +2581,11 @@ async function fetchAdsCampeoes(){
           <div style="margin-top:4px;font-size:11px">💰 ${c.invest} · 📊 CTR ${c.ctr} · 🎯 ${c.labelResultados}: ${c.resultados} (CPR ${c.cpr})${c.valor?` · 💵 ${c.valor}`:''}${c.roas?` · ROAS ${c.roas}`:''}</div>
         </div>
       </div>`
-    ).join('');
-    document.getElementById('ads-fill-btn').disabled=false;
+    ).join(''));
+    setBtnDisabled(false);
   }catch(e){
-    document.getElementById('ads-status').textContent='Erro: '+(e&&e.message?e.message:'tente novamente');
+    setStatus('Erro: '+(e&&e.message?e.message:'tente novamente'));
+    console.error('[fetchAdsCampeoes] erro:',e);
   }
   _adsLoading=false;
 }
