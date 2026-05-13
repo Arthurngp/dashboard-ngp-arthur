@@ -975,11 +975,17 @@ function imgBoxMini(src,label,type,idx){
 }
 
 // ── CRIATIVO CARD (chips grid) ────────────────────────────────────────────────
+function ordinalPt(n){
+  const map={1:'1º',2:'2º',3:'3º',4:'4º',5:'5º',6:'6º',7:'7º',8:'8º',9:'9º',10:'10º'};
+  return map[n]||(n+'º');
+}
 function renderCriativoCard(c,ci){
   // Se a capa veio do Meta (img preenchida + flag fromMeta), mostra como
   // preview do criativo (imagem + título + legenda); senão, mantém box de
   // upload tradicional.
   const hasImported=!!c.img && c.fromMeta;
+  const pos=ordinalPt(ci+1);
+  const porqueLabel = hasImported ? `Por que este criativo está em ${pos} lugar` : 'Por que está ganhando';
   return`<div class="criativo-card">
     <div class="criativo-card-head">
       <span class="criativo-card-badge">CRIATIVO ${ci+1}</span>
@@ -1000,24 +1006,28 @@ function renderCriativoCard(c,ci){
           <button class="chip-add-card" onclick="addChip(${ci})">+ métrica</button>
         </div>
       </div>
-      <div style="margin-bottom:12px"><div class="lbl">Por que está ganhando</div>
-        <textarea class="field" rows="2" placeholder="1 frase: o que faz converter" oninput="updCriativo(${ci},'porqueGanha',this.value)">${esc(c.porqueGanha)}</textarea></div>
       ${hasImported ? `
-        <div class="lbl">Preview do criativo</div>
-        ${c.previewHtml ? `
-          <div class="criativo-preview-iframe-wrap only-screen">
-            <iframe class="criativo-preview-iframe" srcdoc="${esc(c.previewHtml)}" sandbox="allow-scripts allow-same-origin allow-popups" loading="lazy"></iframe>
-          </div>
-        ` : ''}
-        <div class="criativo-preview ${c.previewHtml?'only-print':''}">
-          ${c.img?`<img src="${esc(c.img)}" alt="" class="criativo-preview-img"/>`:''}
-          <div class="criativo-preview-body">
-            ${c.tituloAd?`<div class="criativo-preview-title">${esc(c.tituloAd)}</div>`:''}
-            ${c.legenda?`<div class="criativo-preview-text">${esc(c.legenda)}</div>`:''}
-            <button class="btn-outline no-print" style="margin-top:8px;font-size:10px" onclick="trocarCriativoImg(${ci})">Trocar imagem</button>
+        <div style="margin-bottom:12px">
+          <div class="lbl">Preview do criativo</div>
+          ${c.previewHtml ? `
+            <div class="criativo-preview-iframe-wrap only-screen">
+              <iframe class="criativo-preview-iframe" srcdoc="${esc(c.previewHtml)}" sandbox="allow-scripts allow-same-origin allow-popups" loading="lazy"></iframe>
+            </div>
+          ` : ''}
+          <div class="criativo-preview ${c.previewHtml?'only-print':''}">
+            ${c.img?`<img src="${esc(c.img)}" alt="" class="criativo-preview-img"/>`:''}
+            <div class="criativo-preview-body">
+              ${c.tituloAd?`<div class="criativo-preview-title">${esc(c.tituloAd)}</div>`:''}
+              ${c.legenda?`<div class="criativo-preview-text">${esc(c.legenda)}</div>`:''}
+              <button class="btn-outline no-print" style="margin-top:8px;font-size:10px" onclick="trocarCriativoImg(${ci})">Trocar imagem</button>
+            </div>
           </div>
         </div>
+        <div><div class="lbl">${porqueLabel}</div>
+          <textarea class="field" rows="2" placeholder="1 frase: o que faz converter" oninput="updCriativo(${ci},'porqueGanha',this.value)">${esc(c.porqueGanha)}</textarea></div>
       ` : `
+        <div style="margin-bottom:12px"><div class="lbl">${porqueLabel}</div>
+          <textarea class="field" rows="2" placeholder="1 frase: o que faz converter" oninput="updCriativo(${ci},'porqueGanha',this.value)">${esc(c.porqueGanha)}</textarea></div>
         <div class="lbl">Print</div>
         ${imgBox(c.img,'Clique para adicionar','criativo',ci)}
       `}
@@ -1290,10 +1300,9 @@ function renderSecNumeros(n,metaBtn){return`
     ${renderMetricsTable(D.metricas,D.extraCols,'main_')}
   </div>`;}
 function renderSecCriativos(n){
-  const importBtn=_sess&&_metaAccount?`<button class="btn-meta-import no-print" onclick="openAdsImport()" style="margin-left:auto;font-size:11px;padding:6px 12px">📊 Importar campeões</button>`:'';
   return`
   <div class="card">
-    <div class="sec-head"><div class="sec-num">${n}</div><input class="sec-title-input" value="${esc(D.secTitles?.criativos||'Criativos Campeões')}" oninput="updSecTitle('criativos',this.value)" title="Clique para editar o título"/>${importBtn}<span class="sec-sub" style="margin-left:12px">${D.criativos.length}/4</span></div>
+    <div class="sec-head"><div class="sec-num">${n}</div><input class="sec-title-input" value="${esc(D.secTitles?.criativos||'Criativos Campeões')}" oninput="updSecTitle('criativos',this.value)" title="Clique para editar o título"/><span class="sec-sub" style="margin-left:auto">${D.criativos.length}/4 · use o botão Meta no topo para importar</span></div>
     <div class="criativos-grid">${D.criativos.map((c,ci)=>renderCriativoCard(c,ci)).join('')}</div>
     ${D.criativos.length<4?`<div style="margin-top:12px"><button class="btn-add" onclick="addCriativo()">+ Adicionar criativo</button></div>`:''}
   </div>`;}
@@ -2076,14 +2085,23 @@ function applyToReport(opt, resultado, semAnt){
 }
 
 // ── Single import modal ───────────────────────────────────────────────────────
+let _adsImportEnabled=true;
 function openMetaImport(){
   document.getElementById('meta-overlay').classList.add('open');
   document.getElementById('meta-ok').className='meta-ok';
   document.getElementById('meta-err').className='meta-err';
   renderMetaControls();
   fetchMetaInsights();
+  // Sincroniza período usado na busca de ads campeões com o do Meta
+  _adsPreset=_metaPreset;
+  if(_adsImportEnabled) fetchAdsCampeoes();
 }
-function closeMetaImport(){document.getElementById('meta-overlay').classList.remove('open');_metaData=null;}
+function closeMetaImport(){document.getElementById('meta-overlay').classList.remove('open');_metaData=null;_adsResult=null;}
+function toggleAdsImport(on){
+  _adsImportEnabled=on;
+  document.getElementById('meta-ads-controls').style.display=on?'block':'none';
+  if(on){_adsPreset=_metaPreset;fetchAdsCampeoes();}
+}
 
 function renderMetaControls(){
   document.getElementById('meta-periods').innerHTML=
@@ -2092,15 +2110,55 @@ function renderMetaControls(){
   const cr=document.getElementById('meta-custom-row');
   cr.className='meta-custom-row'+(_metaMode==='custom'?' show':'');
   renderMetaChecks();
+  // Renderiza também os controles de criativos campeões dentro do mesmo modal
+  const objRow=document.getElementById('ads-obj-row');
+  if(objRow){
+    objRow.innerHTML=AD_OBJECTIVES.map(o=>
+      `<button class="meta-pbtn ${_adsObjective===o.val?'sel':''}" onclick="setAdsObjFromMeta('${o.val}')">${o.label}</button>`
+    ).join('');
+  }
+  const topRow=document.getElementById('ads-topn-row');
+  if(topRow){
+    topRow.innerHTML=[2,3,4].map(n=>
+      `<button class="meta-pbtn ${_adsTopN===n?'sel':''}" onclick="setAdsTopNFromMeta(${n})">Top ${n}</button>`
+    ).join('');
+  }
 }
 
-function selectMetaPeriod(preset){_metaMode='preset';_metaPreset=preset;renderMetaControls();fetchMetaInsights();}
+function selectMetaPeriod(preset){
+  _metaMode='preset';_metaPreset=preset;_adsPreset=preset;
+  renderMetaControls();fetchMetaInsights();
+  if(_adsImportEnabled) fetchAdsCampeoes();
+}
 function selectMetaCustom(){_metaMode='custom';renderMetaControls();}
 function applyMetaCustom(){
   _metaFrom=document.getElementById('meta-from').value;
   _metaUntil=document.getElementById('meta-until').value;
   if(!_metaFrom||!_metaUntil){alert('Selecione as duas datas.');return;}
   fetchMetaInsights();
+}
+function setAdsObjFromMeta(v){_adsObjective=v;renderMetaControls();if(_adsImportEnabled) fetchAdsCampeoes();}
+function setAdsTopNFromMeta(n){_adsTopN=n;renderMetaControls();if(_adsImportEnabled) fetchAdsCampeoes();}
+
+// Preenche métricas + criativos com base no que foi configurado no modal único
+async function fillAllIntoReport(){
+  if(!_metaData && !(_adsImportEnabled&&_adsResult&&_adsResult.length)){
+    alert('Aguarde os dados carregarem.'); return;
+  }
+  if(_metaData){
+    META_METRIC_OPTS.forEach(m=>{
+      if(!_metaSelKeys.has(m.key))return;
+      applyToReport(m,metricValue(_metaData,m.key,m.fmt),undefined);
+    });
+  }
+  const r=rangeFromMeta(_metaMode,_metaPreset,_metaFrom,_metaUntil);
+  if(r) D.periodo=r;
+  if(_adsImportEnabled && _adsResult && _adsResult.length){
+    fillAdsIntoReport({skipClose:true});
+  }
+  saveData();render();
+  document.getElementById('meta-ok').className='meta-ok show';
+  setTimeout(closeMetaImport,1500);
 }
 
 function renderMetaChecks(){
@@ -2530,7 +2588,8 @@ async function fetchAdPreviewHtml(adId){
   return html;
 }
 
-function fillAdsIntoReport(){
+function fillAdsIntoReport(opts){
+  const skipClose=!!(opts&&opts.skipClose);
   if(!_adsResult||!_adsResult.length)return;
   D.criativos=_adsResult.map(c=>{
     // Chips dinâmicos: sempre Invest./CTR/CPR; depois resultados (label dinâmico)
@@ -2555,9 +2614,14 @@ function fillAdsIntoReport(){
       fromMeta:true,
     };
   });
+  if(skipClose){
+    saveData(); // não renderiza nem fecha; quem chamou cuida
+    return;
+  }
   saveData();render();
-  document.getElementById('ads-ok').className='meta-ok show';
-  setTimeout(closeAdsImport,1500);
+  const ok=document.getElementById('ads-ok');
+  if(ok) ok.className='meta-ok show';
+  setTimeout(()=>{const c=window.closeAdsImport;if(typeof c==='function')c();},1500);
 }
 </script>
 
@@ -2593,8 +2657,24 @@ function fillAdsIntoReport(){
         <tbody id="meta-table-body"></tbody>
       </table>
       <div style="font-size:11px;color:#6E6E73;margin-bottom:14px">As métricas marcadas serão preenchidas no campo <b>Resultado</b>. Métricas não encontradas são adicionadas como nova linha.</div>
-      <button class="meta-btn-fill" onclick="fillMetaIntoReport()">✓ Preencher relatório</button>
     </div>
+
+    <div class="meta-section-lbl" style="display:flex;align-items:center;gap:8px">
+      🏆 Criativos campeões
+      <label style="margin-left:auto;display:flex;align-items:center;gap:6px;text-transform:none;letter-spacing:0;font-size:11px;color:#6E6E73;font-weight:500">
+        <input type="checkbox" id="meta-import-ads-toggle" checked onchange="toggleAdsImport(this.checked)"/> importar
+      </label>
+    </div>
+    <div id="meta-ads-controls">
+      <div style="font-size:11px;color:#6E6E73;margin-bottom:6px">Objetivo da campanha</div>
+      <div id="ads-obj-row" class="meta-period-row"></div>
+      <div style="font-size:11px;color:#6E6E73;margin:10px 0 6px">Quantidade</div>
+      <div id="ads-topn-row" class="meta-period-row"></div>
+      <div id="ads-status" style="margin-top:10px;font-size:11px;color:#6E6E73;min-height:14px"></div>
+      <div id="ads-preview" style="margin-top:6px;max-height:200px;overflow:auto;font-size:11px"></div>
+    </div>
+
+    <button class="meta-btn-fill" onclick="fillAllIntoReport()" style="margin-top:14px">✓ Preencher relatório</button>
 
     <div id="meta-ok" class="meta-ok">✓ Métricas importadas com sucesso!</div>
     <div id="meta-err" class="meta-err"></div>
