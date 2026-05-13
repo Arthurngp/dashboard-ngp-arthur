@@ -19,7 +19,7 @@ import { shellIcons } from './components/ShellIcons'
 import OverviewTab from './components/OverviewTab'
 import AccountSelector from './components/AccountSelector'
 import { Tab, WorkspaceNavSection } from './types'
-import { getPeriodBudgetFactor } from './dashboard-utils'
+import { getPeriodBudgetFactor, fmtDate } from './dashboard-utils'
 import { useDashboard } from './hooks/useDashboard'
 import { META_METRICS, DEFAULT_METRICS } from '@/lib/meta-metrics'
 
@@ -416,7 +416,29 @@ export default function DashboardPage() {
                   <GraficosTab campaigns={campaigns} chartMetric={chartMetric} chartData={chartData} donutData={donutData} timeSeriesData={timeSeriesData} timeSeriesLoading={timeSeriesLoading} timeSeriesError={timeSeriesError} onSetChartMetric={setChartMetric} />
                 </Suspense>
               )}
-              {activeTab === 'relatorios' && <div className={styles.relList}>{relatorios.map(r => (<div key={r.id} className={styles.relCard}>{r.titulo} <button onClick={() => deleteRelatorio(r.id)}>🗑</button></div>))}</div>}
+              {activeTab === 'relatorios' && <>
+                <div className={styles.relHeader}>
+                  <span className={styles.relTitle}>Relatórios salvos</span>
+                  <button className={styles.btnNewRel} onClick={() => window.open('/relatorio?novo=1', '_blank')}>+ Novo relatório</button>
+                </div>
+                {relatorios.length === 0
+                  ? <div className={styles.empty}>Nenhum relatório salvo para esta conta.</div>
+                  : <div className={styles.relList}>
+                      {relatorios.map(r => (
+                        <div key={r.id} className={styles.relCard}>
+                          <div className={styles.relIcon}>{r.dados?.tipo === 'v2' ? '✦' : '📄'}</div>
+                          <div className={styles.relInfo}>
+                            <div className={styles.relName}>{r.titulo}</div>
+                            <div className={styles.relMeta}>{r.periodo} · {fmtDate(r.updated_at)}</div>
+                          </div>
+                          {r.dados?.tipo === 'v2' && <span className={styles.proBadge}>PRO</span>}
+                          <button className={styles.btnOpenRel} onClick={() => window.open(`/relatorio?id=${r.id}`, '_blank')}>Abrir →</button>
+                          <button className={styles.btnDelRel} onClick={() => deleteRelatorio(r.id)}>🗑</button>
+                        </div>
+                      ))}
+                    </div>
+                }
+              </>}
               {activeTab === 'notificacoes' && (
                 <Suspense fallback={<NGPLoading loading loadingText="Carregando notificações..." />}>
                   <NotificacoesTab alertsLoading={alertsLoading} budgetAlerts={budgetAlerts} alertsDismissed={alertsDismissed} clients={clients} onLoadBudgetAlerts={() => {}} onDismissAlert={dismissAlert} onClearDismissed={clearDismissed} />
