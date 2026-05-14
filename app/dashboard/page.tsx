@@ -15,6 +15,7 @@ import MetricsModal from './components/MetricsModal'
 import AdPreviewModal from './components/AdPreviewModal'
 import NovoRelatorioModal, { NovoRelatorioConfig } from './components/NovoRelatorioModal'
 import RelatoriosListView from './components/RelatoriosListView'
+import PresentMode from './components/PresentMode'
 import KpiSection from './components/KpiSection'
 import CustomSelect from '@/components/CustomSelect'
 import { shellIcons } from './components/ShellIcons'
@@ -75,6 +76,7 @@ export default function DashboardPage() {
   const colMenuRef = useRef<HTMLDivElement>(null)
   const campFilterRef = useRef<HTMLDivElement>(null)
   const [novoRelatorioOpen, setNovoRelatorioOpen] = useState(false)
+  const [presentMode, setPresentMode] = useState(false)
   // overview pode mostrar a tabela de KPIs ou a lista global de relatórios
   const [overviewView, setOverviewView] = useState<'overview' | 'relatorios'>('overview')
   const [allRelatorios, setAllRelatorios] = useState<any[]>([])
@@ -513,7 +515,7 @@ export default function DashboardPage() {
               )}
               {activeTab === 'graficos' && (
                 <Suspense fallback={<NGPLoading loading loadingText="Carregando gráficos..." />}>
-                  <GraficosTab campaigns={campaigns} chartMetric={chartMetric} chartData={chartData} donutData={donutData} timeSeriesData={timeSeriesData} timeSeriesLoading={timeSeriesLoading} timeSeriesError={timeSeriesError} onSetChartMetric={setChartMetric} />
+                  <GraficosTab campaigns={campaigns} chartMetric={chartMetric} chartData={chartData} donutData={donutData} timeSeriesData={timeSeriesData} timeSeriesLoading={timeSeriesLoading} timeSeriesError={timeSeriesError} onSetChartMetric={setChartMetric} onPresent={() => setPresentMode(true)} />
                 </Suspense>
               )}
               {activeTab === 'relatorios' && <>
@@ -556,6 +558,23 @@ export default function DashboardPage() {
       {metricsModalOpen && <MetricsModal visible={visibleMetrics} onToggle={toggleMetric} onReset={resetMetrics} onClose={() => setMetricsModalOpen(false)} />}
       <AdPreviewModal html={previewHtml} loading={previewLoading} adName={previewAdName} onClose={() => { setPreviewHtml(null); setPreviewLoading(false) }} />
       <NovoRelatorioModal isOpen={novoRelatorioOpen} clienteName={viewing?.name || ''} onClose={() => setNovoRelatorioOpen(false)} onConfirm={handleNovoRelatorioConfirm} />
+      {presentMode && (
+        <PresentMode
+          clienteName={viewing?.name || ''}
+          metaAccount={viewing?.account || ''}
+          periodLabel={periodLabel}
+          campaigns={campaigns}
+          chartMetric={chartMetric}
+          chartData={chartData}
+          donutData={donutData}
+          timeSeriesData={timeSeriesData}
+          timeSeriesLoading={timeSeriesLoading}
+          timeSeriesError={timeSeriesError}
+          onSetChartMetric={setChartMetric}
+          onApplyPeriod={onPeriodApply}
+          onClose={() => setPresentMode(false)}
+        />
+      )}
     </div>
   )
 }
