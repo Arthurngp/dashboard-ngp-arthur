@@ -24,6 +24,7 @@ interface AccountTotals {
   clicks: number
   reach: number
   results: number
+  resultsValue: number  // Receita total (action_values) — usado pra VENDAS
 }
 
 interface TopAd {
@@ -313,7 +314,7 @@ export default function PresentMode(p: Props) {
     const baseInsights = async () => {
       const r = await metaCall('insights', {
         level: 'account', limit: '1',
-        fields: 'spend,impressions,clicks,reach,actions',
+        fields: 'spend,impressions,clicks,reach,actions,action_values',
         ...p.period,
       }, p.metaAccount)
       const row = (r?.data && r.data[0]) || {}
@@ -323,6 +324,7 @@ export default function PresentMode(p: Props) {
         clicks: +row.clicks || 0,
         reach: +row.reach || 0,
         results: sumActions(row.actions, actionKeys),
+        resultsValue: sumActions(row.action_values, actionKeys),  // mesma key, fonte = action_values
       } as AccountTotals
     }
 
@@ -413,7 +415,7 @@ export default function PresentMode(p: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tipoTop])
 
-  const totals = accountTotals || { spend: 0, impressions: 0, clicks: 0, reach: 0, results: 0 }
+  const totals = accountTotals || { spend: 0, impressions: 0, clicks: 0, reach: 0, results: 0, resultsValue: 0 }
   const cpr = totals.results > 0 ? totals.spend / totals.results : 0
 
   return (
@@ -441,15 +443,24 @@ export default function PresentMode(p: Props) {
       <div style={{ flex: 1, display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1.4fr)', gap: 'clamp(8px, 1.2vw, 18px)', minHeight: 0 }}>
         {/* COLUNA ESQUERDA */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: 'clamp(6px, 1vw, 14px)', minHeight: 0 }}>
-          {/* 6 KPIs em 2x3 */}
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 'clamp(6px, .8vw, 12px)', flexShrink: 0 }}>
-            <Kpi label="Valor Investido" value={`R$ ${fmt(totals.spend)}`} />
-            <Kpi label={resultLabel} value={totals.results > 0 ? String(totals.results) : '—'} />
-            <Kpi label={cprLabel} value={cpr > 0 ? `R$ ${cpr.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '—'} />
-            <Kpi label="Impressões" value={fmtI(totals.impressions)} />
-            <Kpi label="Alcance" value={fmtI(totals.reach)} />
-            <Kpi label="Cliques" value={fmtI(totals.clicks)} />
-          </div>
+          {/* KPIs — 4×2 quando VENDAS (inclui Valor em Compras + ROAS), 3×2 nos outros tipos */}
+          {(() => {
+            const isVendas = tipo === 'VENDAS' && totals.resultsValue > 0
+            const roas = totals.spend > 0 ? totals.resultsValue / totals.spend : 0
+            const cols = isVendas ? 4 : 3
+            return (
+              <div style={{ display: 'grid', gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))`, gap: 'clamp(6px, .8vw, 12px)', flexShrink: 0 }}>
+                <Kpi label="Valor Investido" value={`R$ ${fmt(totals.spend)}`} />
+                <Kpi label={resultLabel} value={totals.results > 0 ? String(totals.results) : '—'} />
+                {isVendas && <Kpi label="Valor em Compras" value={`R$ ${fmt(totals.resultsValue)}`} />}
+                {isVendas && <Kpi label="ROAS" value={roas > 0 ? `${roas.toFixed(2)}x` : '—'} />}
+                <Kpi label={cprLabel} value={cpr > 0 ? `R$ ${cpr.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '—'} />
+                <Kpi label="Impressões" value={fmtI(totals.impressions)} />
+                <Kpi label="Alcance" value={fmtI(totals.reach)} />
+                <Kpi label="Cliques" value={fmtI(totals.clicks)} />
+              </div>
+            )
+          })()}
           <Card
             title={`Idade × ${labelOfTipo(tipoIdadeEff)}`}
             style={{ flex: '1 1 0', minHeight: 0 }}
