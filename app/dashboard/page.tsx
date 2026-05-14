@@ -187,30 +187,32 @@ export default function DashboardPage() {
 
   const overviewSidebarSections: WorkspaceNavSection[] = [
     { label: 'Fluxo', items: [
-      { id: 'overview-home', label: 'Painel geral', meta: 'Entrada macro do módulo antes do cliente.', icon: shellIcons.overview, active: true, onClick: () => scrollToSection('overview-hero') },
-      { id: 'overview-clients', label: 'Clientes Meta', meta: `${filteredOverviewRows.length} conta(s) visível(is)`, icon: shellIcons.clients, onClick: () => scrollToSection('overview-table') },
-      { id: 'overview-comparison', label: 'Comparativos', meta: cmpLabel || 'Sem comparação ativa', icon: shellIcons.compare, onClick: () => scrollToSection('overview-summary') },
+      { id: 'overview-home', label: 'Painel geral', icon: shellIcons.overview, active: true, onClick: () => scrollToSection('overview-hero') },
+      { id: 'overview-clients', label: 'Clientes Meta', icon: shellIcons.clients, onClick: () => scrollToSection('overview-table') },
+      { id: 'overview-comparison', label: 'Comparativos', icon: shellIcons.compare, onClick: () => scrollToSection('overview-summary') },
+      { id: 'overview-relatorios', label: 'Relatórios', icon: shellIcons.reports, onClick: () => router.push('/relatorio?novo=1') },
+      { id: 'overview-notificacoes', label: 'Notificações', icon: shellIcons.alerts, onClick: () => scrollToSection('overview-alerts') },
     ]},
     { label: 'Canais', items: [
-      { id: 'overview-ads', label: 'Anúncios', meta: 'Meta Ads em produção', icon: shellIcons.ads, active: true },
-      { id: 'overview-social', label: 'Mídias sociais', meta: 'Fase seguinte do módulo', badge: 'breve', icon: shellIcons.social, disabled: true },
-      { id: 'overview-seo', label: 'SEO', meta: 'Planejado para evolução', badge: 'depois', icon: shellIcons.seo, disabled: true },
-      { id: 'overview-commerce', label: 'E-commerce', meta: 'Planejado para evolução', badge: 'depois', icon: shellIcons.commerce, disabled: true },
+      { id: 'overview-ads', label: 'Anúncios', icon: shellIcons.ads, active: true },
+      { id: 'overview-social', label: 'Mídias sociais', badge: 'breve', icon: shellIcons.social, disabled: true },
+      { id: 'overview-seo', label: 'SEO', badge: 'depois', icon: shellIcons.seo, disabled: true },
+      { id: 'overview-commerce', label: 'E-commerce', badge: 'depois', icon: shellIcons.commerce, disabled: true },
     ]},
   ]
 
   const dashboardSidebarSections: WorkspaceNavSection[] = [
     { label: 'Navegação', items: [
-      { id: 'tab-resumo', label: 'Resumo', meta: 'KPIs e leitura executiva', icon: shellIcons.summary, active: activeTab === 'resumo', onClick: () => switchTab('resumo') },
-      { id: 'tab-plataformas', label: 'Plataformas', meta: 'Conexões e contas', icon: shellIcons.platforms, active: activeTab === 'plataformas', onClick: () => switchTab('plataformas') },
-      { id: 'tab-campanhas', label: 'Campanhas', meta: 'Aprofunde campanhas e criativos', icon: shellIcons.campaigns, active: activeTab === 'campanhas', onClick: () => switchTab('campanhas') },
-      { id: 'tab-graficos', label: 'Gráficos', meta: 'Evolução e distribuição', icon: shellIcons.charts, active: activeTab === 'graficos', onClick: () => switchTab('graficos') },
-      { id: 'tab-relatorios', label: 'Relatórios', meta: 'Saídas e entregáveis', icon: shellIcons.reports, active: activeTab === 'relatorios', onClick: () => switchTab('relatorios') },
-      { id: 'tab-alerts', label: 'Notificações', meta: 'Saldo, orçamento e status', icon: shellIcons.alerts, active: activeTab === 'notificacoes', onClick: () => switchTab('notificacoes') },
+      { id: 'tab-resumo', label: 'Resumo', icon: shellIcons.summary, active: activeTab === 'resumo', onClick: () => switchTab('resumo') },
+      { id: 'tab-plataformas', label: 'Plataformas', icon: shellIcons.platforms, active: activeTab === 'plataformas', onClick: () => switchTab('plataformas') },
+      { id: 'tab-campanhas', label: 'Campanhas', icon: shellIcons.campaigns, active: activeTab === 'campanhas', onClick: () => switchTab('campanhas') },
+      { id: 'tab-graficos', label: 'Gráficos', icon: shellIcons.charts, active: activeTab === 'graficos', onClick: () => switchTab('graficos') },
+      { id: 'tab-relatorios', label: 'Relatórios', icon: shellIcons.reports, active: activeTab === 'relatorios', onClick: () => switchTab('relatorios') },
+      { id: 'tab-alerts', label: 'Notificações', icon: shellIcons.alerts, active: activeTab === 'notificacoes', onClick: () => switchTab('notificacoes') },
     ]},
     { label: 'Canais', items: [
-      { id: 'channel-meta', label: 'Meta Ads', meta: viewing?.account || 'Conta ativa', icon: shellIcons.ads, active: true },
-      { id: 'channel-google', label: 'Google Ads', meta: 'Entrada posterior no Space', icon: shellIcons.commerce, badge: 'depois', disabled: true },
+      { id: 'channel-meta', label: 'Meta Ads', icon: shellIcons.ads, active: true },
+      { id: 'channel-google', label: 'Google Ads', icon: shellIcons.commerce, badge: 'depois', disabled: true },
     ]},
   ]
 
@@ -278,11 +280,7 @@ export default function DashboardPage() {
         </aside>
         <main className={styles.workspaceCanvas}>
           <div className={styles.workspaceCanvasInner}>
-            <div id="overview-hero" className={styles.workspaceHeroCard}>
-              <div className={styles.workspaceHeroCopy}>
-                <div className={styles.workspaceHeroEyebrow}>Análise de Dados e Relatórios</div>
-                <h1 className={styles.workspaceHeroTitle}>Painel de visão geral</h1>
-              </div>
+            <div id="overview-hero" className={`${styles.workspaceHeroCard} ${styles.workspaceHeroCardCompact}`}>
               <div className={styles.workspaceHeroActions}>
                 <PeriodFilter onApply={onPeriodApply} />
                 <button className={styles.overviewRefreshBtn} onClick={() => loadOverviewData(period, cmpPeriodParam)}>↻ Atualizar</button>
@@ -330,11 +328,7 @@ export default function DashboardPage() {
         </aside>
         <div className={styles.workspaceCanvas}>
           <div className={styles.workspaceCanvasInner}>
-            <div className={styles.workspaceHeroCard}>
-              <div className={styles.workspaceHeroCopy}>
-                <div className={styles.workspaceHeroEyebrow}>Meta Ads · {activeTabLabel[activeTab]}</div>
-                <h1 className={styles.workspaceHeroTitle}>{viewing?.name}</h1>
-              </div>
+            <div className={`${styles.workspaceHeroCard} ${styles.workspaceHeroCardCompact}`}>
               <div className={styles.workspaceHeroActions}>
                 <PeriodFilter onApply={onPeriodApply} />
                 <AccountSelector clients={clients} viewing={viewing} onSelect={selectAccount} />
