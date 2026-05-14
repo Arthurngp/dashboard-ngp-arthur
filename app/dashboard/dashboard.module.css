@@ -205,17 +205,32 @@
   border: 1px solid rgba(191, 219, 254, 0.75);
   background: linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(247, 251, 255, 0.95));
   box-shadow: 0 18px 48px rgba(15, 23, 42, 0.08);
-  /* Trava na viewport: altura máxima = viewport - topbar - margens, e
-     scroll interno quando o conteúdo passar disso. Sidebar fica sempre
-     visível mesmo com conteúdo da página rolando. */
+  /* Trava na viewport: altura máxima = viewport - topbar - margens.
+     Head e Footer ficam fixos (flex-shrink:0); só o .workspaceSidebarBody
+     do meio rola quando o conteúdo excede. */
   max-height: calc(100vh - var(--workspace-topbar-height, 88px) - 36px);
+  overflow: hidden;
+}
+.workspaceSidebarHead,
+.workspaceSidebarFooter {
+  flex-shrink: 0;
+}
+.workspaceSidebarBody {
+  flex: 1 1 auto;
+  min-height: 0;
   overflow-y: auto;
   overscroll-behavior: contain;
   scrollbar-width: thin;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  /* Margem negativa para o scroll cair na borda interna da sidebar */
+  margin: 0 -18px 0 0;
+  padding-right: 12px;
 }
-.workspaceSidebar::-webkit-scrollbar{width:6px}
-.workspaceSidebar::-webkit-scrollbar-thumb{background:rgba(15,23,42,.18);border-radius:3px}
-.workspaceSidebar::-webkit-scrollbar-thumb:hover{background:rgba(15,23,42,.32)}
+.workspaceSidebarBody::-webkit-scrollbar{width:6px}
+.workspaceSidebarBody::-webkit-scrollbar-thumb{background:rgba(15,23,42,.18);border-radius:3px}
+.workspaceSidebarBody::-webkit-scrollbar-thumb:hover{background:rgba(15,23,42,.32)}
 
 .workspaceSidebarHead {
   padding-bottom: 18px;
@@ -917,7 +932,12 @@
   .workspaceSidebar {
     position: static;
     max-height: none;
-    overflow-y: visible;
+    overflow: visible;
+  }
+  .workspaceSidebarBody {
+    overflow: visible;
+    margin-right: 0;
+    padding-right: 0;
   }
 }
 

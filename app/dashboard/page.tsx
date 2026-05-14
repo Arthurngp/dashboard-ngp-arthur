@@ -264,10 +264,12 @@ export default function DashboardPage() {
             <div className={styles.workspaceSidebarTitle}>Painel geral</div>
             <p className={styles.workspaceSidebarText}>Primeiro enxergamos o espaço inteiro; depois aprofundamos cliente por cliente.</p>
           </div>
-          {renderSidebarSections(overviewSidebarSections)}
-          <div className={styles.workspaceSidebarMetaGrid}>
-            <div className={styles.workspaceSidebarMetaCard}><span className={styles.workspaceSidebarMetaLabel}>Período</span><strong className={styles.workspaceSidebarMetaValue}>{periodLabel}</strong></div>
-            <div className={styles.workspaceSidebarMetaCard}><span className={styles.workspaceSidebarMetaLabel}>Comparação</span><strong className={styles.workspaceSidebarMetaValue}>{cmpLabel || 'Sem'}</strong></div>
+          <div className={styles.workspaceSidebarBody}>
+            {renderSidebarSections(overviewSidebarSections)}
+            <div className={styles.workspaceSidebarMetaGrid}>
+              <div className={styles.workspaceSidebarMetaCard}><span className={styles.workspaceSidebarMetaLabel}>Período</span><strong className={styles.workspaceSidebarMetaValue}>{periodLabel}</strong></div>
+              <div className={styles.workspaceSidebarMetaCard}><span className={styles.workspaceSidebarMetaLabel}>Comparação</span><strong className={styles.workspaceSidebarMetaValue}>{cmpLabel || 'Sem'}</strong></div>
+            </div>
           </div>
           <div className={styles.workspaceSidebarFooter}>
             <button className={styles.workspaceSidebarSecondaryBtn} onClick={() => router.push('/setores')}>Voltar aos setores</button>
@@ -314,10 +316,12 @@ export default function DashboardPage() {
             <div className={styles.workspaceSidebarEyebrow}>Cliente ativo</div>
             <div className={styles.workspaceSidebarTitle}>{viewing?.name}</div>
           </div>
-          {renderSidebarSections(dashboardSidebarSections)}
-          <div className={styles.workspaceSidebarMetaGrid}>
-            <div className={styles.workspaceSidebarMetaCard}><span className={styles.workspaceSidebarMetaLabel}>Conta</span><strong className={styles.workspaceSidebarMetaValue}>{viewing?.account || '—'}</strong></div>
-            <div className={styles.workspaceSidebarMetaCard}><span className={styles.workspaceSidebarMetaLabel}>Período</span><strong className={styles.workspaceSidebarMetaValue}>{periodLabel}</strong></div>
+          <div className={styles.workspaceSidebarBody}>
+            {renderSidebarSections(dashboardSidebarSections)}
+            <div className={styles.workspaceSidebarMetaGrid}>
+              <div className={styles.workspaceSidebarMetaCard}><span className={styles.workspaceSidebarMetaLabel}>Conta</span><strong className={styles.workspaceSidebarMetaValue}>{viewing?.account || '—'}</strong></div>
+              <div className={styles.workspaceSidebarMetaCard}><span className={styles.workspaceSidebarMetaLabel}>Período</span><strong className={styles.workspaceSidebarMetaValue}>{periodLabel}</strong></div>
+            </div>
           </div>
           <div className={styles.workspaceSidebarFooter}>
             <button className={styles.workspaceSidebarSecondaryBtn} onClick={backToSelect}>Voltar à visão geral</button>
