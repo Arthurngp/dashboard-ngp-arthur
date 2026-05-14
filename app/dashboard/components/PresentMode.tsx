@@ -50,6 +50,17 @@ interface TopCamp {
   spendShare: number
 }
 
+interface TopAdset {
+  id: string
+  name: string
+  campaignId: string
+  campaignName: string
+  spend: number
+  results: number
+  cpl: number
+  spendShare: number
+}
+
 // Action keys candidatos por tipo (cobre variações Pixel/CAPI/onsite)
 const ACTION_KEYS: Record<string, string[]> = {
   VENDAS: ['omni_purchase', 'offsite_conversion.fb_pixel_purchase', 'purchase', 'offline_conversion.purchase'],
@@ -95,6 +106,9 @@ export default function PresentMode(p: Props) {
   const [accountTotals, setAccountTotals] = useState<AccountTotals | null>(null)
   const [topAds, setTopAds] = useState<TopAd[]>([])
   const [topCamps, setTopCamps] = useState<TopCamp[]>([])
+  const [topAdsets, setTopAdsets] = useState<TopAdset[]>([])
+  const [topView, setTopView] = useState<'campanhas' | 'conjuntos'>('campanhas')
+  const [expandedCampId, setExpandedCampId] = useState<string | null>(null)
   const [previewAd, setPreviewAd] = useState<TopAd | null>(null)
   const [previewHtml, setPreviewHtml] = useState<string>('')
   const [previewLoading, setPreviewLoading] = useState(false)
@@ -269,8 +283,33 @@ export default function PresentMode(p: Props) {
         .slice(0, 5)
     }
 
-    Promise.all([baseInsights(), ageBreakdown(), genderBreakdown(), deviceBreakdown(), topCreatives(), topCampaigns()])
-      .then(([totals, a, g, d, ads, camps]) => {
+    const topAdsetsAll = async () => {
+      const r = await metaCall('insights', {
+        level: 'adset', limit: '100',
+        fields: 'adset_id,adset_name,campaign_id,campaign_name,spend,actions',
+        ...dp,
+      }, p.metaAccount)
+      const rows = Array.isArray(r?.data) ? r.data : []
+      const totalSpend = rows.reduce((s: number, x: any) => s + (+x.spend || 0), 0) || 1
+      return rows.map((x: any) => {
+        const results = sumActions(x.actions, actionKeys)
+        const spend = +x.spend || 0
+        return {
+          id: x.adset_id || '',
+          name: x.adset_name || '—',
+          campaignId: x.campaign_id || '',
+          campaignName: x.campaign_name || '—',
+          spend,
+          results,
+          cpl: results > 0 ? spend / results : 0,
+          spendShare: (spend / totalSpend) * 100,
+        } as TopAdset
+      })
+        .sort((a, b) => b.results - a.results || b.spend - a.spend)
+    }
+
+    Promise.all([baseInsights(), ageBreakdown(), genderBreakdown(), deviceBreakdown(), topCreatives(), topCampaigns(), topAdsetsAll()])
+      .then(([totals, a, g, d, ads, camps, adsets]) => {
         if (cancelled) return
         setAccountTotals(totals)
         setAge(a)
@@ -278,6 +317,7 @@ export default function PresentMode(p: Props) {
         setDevice(d)
         setTopAds(ads)
         setTopCamps(camps)
+        setTopAdsets(adsets)
         setLoading(false)
       })
       .catch(e => {
@@ -341,9 +381,17 @@ export default function PresentMode(p: Props) {
             <Card title="Dispositivos">
               {loading && !device.length ? <Loading /> : device.length === 0 ? <Empty msg="Sem dados" /> : <DonutChart data={device} />}
             </Card>
-            <Card title={`🥇 Top campanhas (${resultLabel.toLowerCase()})`}>
-              {loading && !topCamps.length ? <Loading /> : topCamps.length === 0 ? <Empty msg="Sem campanhas no período" /> : <TopCampsList camps={topCamps} resultLabel={resultLabel} cprLabel={cprLabel} />}
-            </Card>
+            <TopBox
+              loading={loading}
+              view={topView}
+              onSetView={(v) => { setTopView(v); setExpandedCampId(null) }}
+              camps={topCamps}
+              adsets={topAdsets}
+              expandedCampId={expandedCampId}
+              onToggleCamp={(id) => setExpandedCampId(prev => prev === id ? null : id)}
+              resultLabel={resultLabel}
+              cprLabel={cprLabel}
+            />
           </div>
         </div>
       </div>
@@ -514,29 +562,133 @@ function TimelineChart({ data, totalResults, resultLabel }: { data: Array<{ date
   )
 }
 
-function TopCampsList({ camps, resultLabel, cprLabel }: { camps: TopCamp[]; resultLabel: string; cprLabel: string }) {
+function TopBox(p: {
+  loading: boolean
+  view: 'campanhas' | 'conjuntos'
+  onSetView: (v: 'campanhas' | 'conjuntos') => void
+  camps: TopCamp[]
+  adsets: TopAdset[]
+  expandedCampId: string | null
+  onToggleCamp: (id: string) => void
+  resultLabel: string
+  cprLabel: string
+}) {
   const fmtBrl = (n: number) => 'R$ ' + n.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
-  const max = Math.max(...camps.map(c => c.results)) || 1
+
+  const isLoading = p.loading && !p.camps.length && !p.adsets.length
+  const isEmpty = p.view === 'campanhas' ? p.camps.length === 0 : p.adsets.length === 0
+
   return (
-    <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 6 }}>
-      {camps.map((c, i) => (
-        <div key={c.id || i} style={{ display: 'flex', flexDirection: 'column', gap: 3, padding: '6px 8px', background: 'rgba(255,255,255,.03)', borderRadius: 6 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11 }}>
-            <span style={{ width: 18, height: 18, borderRadius: '50%', background: i === 0 ? '#fbbf24' : '#475569', color: '#0a2540', fontWeight: 800, fontSize: 10, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>{i + 1}</span>
-            <span style={{ flex: 1, color: '#fff', fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={c.name}>{c.name}</span>
-            <strong style={{ color: '#7dd3fc', fontSize: 13 }}>{c.results}</strong>
-          </div>
-          <div style={{ height: 3, background: 'rgba(255,255,255,.06)', borderRadius: 2, overflow: 'hidden' }}>
-            <div style={{ width: `${(c.results / max) * 100}%`, height: '100%', background: '#22d3ee' }} />
-          </div>
-          <div style={{ display: 'flex', gap: 8, fontSize: 10, color: '#94a3b8' }}>
-            <span>{cprLabel}: <strong style={{ color: '#cbd5e1' }}>{c.cpl > 0 ? fmtBrl(c.cpl) : '—'}</strong></span>
-            <span style={{ marginLeft: 'auto' }}>{c.spendShare.toFixed(1)}% invest.</span>
-          </div>
+    <div style={{ background: 'rgba(255,255,255,.04)', border: '1px solid rgba(255,255,255,.08)', borderRadius: 12, padding: 14, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+      {/* Header com toggle */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10, flexShrink: 0 }}>
+        <div style={{ fontSize: 11, fontWeight: 700, color: '#fff', letterSpacing: '.06em', textTransform: 'uppercase', flex: 1 }}>🥇 Top {p.view === 'campanhas' ? 'campanhas' : 'conjuntos'} ({p.resultLabel.toLowerCase()})</div>
+        <div style={{ display: 'flex', background: 'rgba(0,0,0,.25)', borderRadius: 6, padding: 2 }}>
+          <button onClick={() => p.onSetView('campanhas')} style={toggleBtnStyle(p.view === 'campanhas')}>C</button>
+          <button onClick={() => p.onSetView('conjuntos')} style={toggleBtnStyle(p.view === 'conjuntos')}>S</button>
         </div>
-      ))}
+      </div>
+
+      <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 6 }}>
+        {isLoading ? (
+          <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#94a3b8', fontSize: 11 }}>Carregando…</div>
+        ) : isEmpty ? (
+          <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#64748b', fontSize: 11, textAlign: 'center', padding: 14 }}>
+            Sem {p.view === 'campanhas' ? 'campanhas' : 'conjuntos'} no período
+          </div>
+        ) : p.view === 'campanhas' ? (
+          // CAMPANHAS — clicáveis pra expandir e mostrar adsets dela
+          (() => {
+            const max = Math.max(...p.camps.map(c => c.results)) || 1
+            return p.camps.map((c, i) => {
+              const expanded = p.expandedCampId === c.id
+              const childAdsets = expanded ? p.adsets.filter(a => a.campaignId === c.id) : []
+              return (
+                <div key={c.id || i}>
+                  <button
+                    type="button"
+                    onClick={() => p.onToggleCamp(c.id)}
+                    style={{ all: 'unset', display: 'flex', flexDirection: 'column', gap: 3, padding: '6px 8px', background: expanded ? 'rgba(34,211,238,.08)' : 'rgba(255,255,255,.03)', borderRadius: 6, cursor: 'pointer', width: '100%', boxSizing: 'border-box', borderLeft: expanded ? '2px solid #22d3ee' : '2px solid transparent' }}
+                  >
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11 }}>
+                      <span style={{ width: 18, height: 18, borderRadius: '50%', background: i === 0 ? '#fbbf24' : '#475569', color: '#0a2540', fontWeight: 800, fontSize: 10, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>{i + 1}</span>
+                      <span style={{ flex: 1, color: '#fff', fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={c.name}>{c.name}</span>
+                      <strong style={{ color: '#7dd3fc', fontSize: 13 }}>{c.results}</strong>
+                      <span style={{ fontSize: 9, color: '#94a3b8', transform: expanded ? 'rotate(90deg)' : 'rotate(0)', transition: 'transform .12s', display: 'inline-block' }}>▶</span>
+                    </div>
+                    <div style={{ height: 3, background: 'rgba(255,255,255,.06)', borderRadius: 2, overflow: 'hidden' }}>
+                      <div style={{ width: `${(c.results / max) * 100}%`, height: '100%', background: '#22d3ee' }} />
+                    </div>
+                    <div style={{ display: 'flex', gap: 8, fontSize: 10, color: '#94a3b8' }}>
+                      <span>{p.cprLabel}: <strong style={{ color: '#cbd5e1' }}>{c.cpl > 0 ? fmtBrl(c.cpl) : '—'}</strong></span>
+                      <span style={{ marginLeft: 'auto' }}>{c.spendShare.toFixed(1)}% invest.</span>
+                    </div>
+                  </button>
+
+                  {/* Adsets da campanha expandida */}
+                  {expanded && (
+                    <div style={{ paddingLeft: 16, paddingTop: 4, display: 'flex', flexDirection: 'column', gap: 3 }}>
+                      {childAdsets.length === 0 ? (
+                        <div style={{ fontSize: 10, color: '#64748b', padding: '4px 8px', fontStyle: 'italic' }}>Sem conjuntos com dados no período</div>
+                      ) : childAdsets.slice(0, 5).map((a, ai) => (
+                        <div key={a.id || ai} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 10, padding: '4px 8px', background: 'rgba(255,255,255,.02)', borderRadius: 4 }}>
+                          <span style={{ color: '#7dd3fc' }}>↳</span>
+                          <span style={{ flex: 1, color: '#cbd5e1', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={a.name}>{a.name}</span>
+                          <strong style={{ color: '#fff' }}>{a.results}</strong>
+                          <span style={{ color: '#94a3b8' }}>·</span>
+                          <span style={{ color: '#94a3b8' }}>{a.cpl > 0 ? fmtBrl(a.cpl) : '—'}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )
+            })
+          })()
+        ) : (
+          // CONJUNTOS — lista flat (top 8) com nome do adset + nome da campanha em cima
+          (() => {
+            const top = p.adsets.slice(0, 8)
+            const max = Math.max(...top.map(a => a.results)) || 1
+            return top.map((a, i) => (
+              <div key={a.id || i} style={{ display: 'flex', flexDirection: 'column', gap: 3, padding: '6px 8px', background: 'rgba(255,255,255,.03)', borderRadius: 6 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11 }}>
+                  <span style={{ width: 18, height: 18, borderRadius: '50%', background: i === 0 ? '#fbbf24' : '#475569', color: '#0a2540', fontWeight: 800, fontSize: 10, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>{i + 1}</span>
+                  <span style={{ flex: 1, minWidth: 0 }}>
+                    <span style={{ display: 'block', color: '#fff', fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={a.name}>{a.name}</span>
+                    <span style={{ display: 'block', color: '#64748b', fontSize: 9, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={a.campaignName}>↳ {a.campaignName}</span>
+                  </span>
+                  <strong style={{ color: '#7dd3fc', fontSize: 13 }}>{a.results}</strong>
+                </div>
+                <div style={{ height: 3, background: 'rgba(255,255,255,.06)', borderRadius: 2, overflow: 'hidden' }}>
+                  <div style={{ width: `${(a.results / max) * 100}%`, height: '100%', background: '#22d3ee' }} />
+                </div>
+                <div style={{ display: 'flex', gap: 8, fontSize: 10, color: '#94a3b8' }}>
+                  <span>{p.cprLabel}: <strong style={{ color: '#cbd5e1' }}>{a.cpl > 0 ? fmtBrl(a.cpl) : '—'}</strong></span>
+                  <span style={{ marginLeft: 'auto' }}>{a.spendShare.toFixed(1)}% invest.</span>
+                </div>
+              </div>
+            ))
+          })()
+        )}
+      </div>
     </div>
   )
+}
+
+function toggleBtnStyle(active: boolean): React.CSSProperties {
+  return {
+    background: active ? 'linear-gradient(135deg, #22d3ee, #3b82f6)' : 'transparent',
+    border: 'none',
+    color: active ? '#0a2540' : '#94a3b8',
+    fontSize: 10,
+    fontWeight: 800,
+    padding: '4px 9px',
+    borderRadius: 4,
+    cursor: 'pointer',
+    fontFamily: 'inherit',
+    minWidth: 22,
+  }
 }
 
 function CreativesGrid({ creatives, resultLabel, cprLabel, onClick }: { creatives: TopAd[]; resultLabel: string; cprLabel: string; onClick?: (c: TopAd) => void }) {
