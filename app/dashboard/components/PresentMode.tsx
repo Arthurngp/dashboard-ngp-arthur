@@ -33,7 +33,12 @@ interface TopAd {
   ctr: number
   results: number
   cpl: number
+  impressions: number
+  frequency: number
+  cpm: number
+  reach: number
   thumb: string
+  spendShare: number  // % do investimento total
 }
 
 // Action keys candidatos por tipo (cobre variações Pixel/CAPI/onsite)
@@ -163,20 +168,29 @@ export default function PresentMode(p: Props) {
       // Busca top 50 ads e ranqueia local por results do tipo correto
       const r = await metaCall('insights', {
         level: 'ad', limit: '50',
-        fields: 'ad_id,ad_name,spend,ctr,actions',
+        fields: 'ad_id,ad_name,spend,ctr,actions,impressions,frequency,cpm,reach',
         ...dp,
       }, p.metaAccount)
       const rows = Array.isArray(r?.data) ? r.data : []
-      const ranked = rows.map((ad: any) => ({
-        id: ad.ad_id || '',
-        name: ad.ad_name || '—',
-        spend: +ad.spend || 0,
-        ctr: +ad.ctr || 0,
-        results: sumActions(ad.actions, actionKeys),
-        cpl: 0,
-        thumb: '',
-      } as TopAd))
-        .map(a => ({ ...a, cpl: a.results > 0 ? a.spend / a.results : 0 }))
+      const totalSpend = rows.reduce((s: number, ad: any) => s + (+ad.spend || 0), 0) || 1
+      const ranked = rows.map((ad: any) => {
+        const results = sumActions(ad.actions, actionKeys)
+        const spend = +ad.spend || 0
+        return {
+          id: ad.ad_id || '',
+          name: ad.ad_name || '—',
+          spend,
+          ctr: +ad.ctr || 0,
+          results,
+          cpl: results > 0 ? spend / results : 0,
+          impressions: +ad.impressions || 0,
+          frequency: +ad.frequency || 0,
+          cpm: +ad.cpm || 0,
+          reach: +ad.reach || 0,
+          spendShare: (spend / totalSpend) * 100,
+          thumb: '',
+        } as TopAd
+      })
         .sort((a, b) => b.results - a.results || b.ctr - a.ctr)
         .slice(0, 5)
 
@@ -223,7 +237,7 @@ export default function PresentMode(p: Props) {
             {(p.clienteName || 'CLIENTE').toUpperCase()} — {tipo} — META ADS
           </div>
         </div>
-        <div style={{ filter: 'invert(1) hue-rotate(180deg)', borderRadius: 999, overflow: 'hidden' }}>
+        <div>
           <PeriodFilter onApply={p.onApplyPeriod} />
         </div>
         <button onClick={p.onClose} style={{ padding: '9px 14px', background: 'rgba(255,255,255,.08)', border: '1.5px solid rgba(255,255,255,.16)', borderRadius: 10, color: '#fff', fontSize: 12, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit' }}>← Voltar</button>
@@ -252,10 +266,10 @@ export default function PresentMode(p: Props) {
 
         {/* COLUNA DIREITA */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12, minHeight: 0 }}>
-          <Card title="🏆 Criativos campeões" style={{ flexShrink: 0, maxHeight: '50%' }}>
+          <Card title="🏆 Criativos campeões" style={{ flex: 2, minHeight: 0 }}>
             {loading && !topAds.length ? <Loading /> : topAds.length === 0 ? <Empty msg="Sem criativos no período" /> : <CreativesGrid creatives={topAds} resultLabel={resultLabel} cprLabel={cprLabel} />}
           </Card>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, flex: 1, minHeight: 0 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, flex: 1, minHeight: 0, maxHeight: 240 }}>
             <Card title="Gênero × impressões">
               {loading && !gender.length ? <Loading /> : gender.length === 0 ? <Empty msg="Sem dados" /> : <DonutChart data={gender} />}
             </Card>
@@ -298,18 +312,29 @@ function Empty({ msg }: { msg: string }) {
 
 function BarChart({ data, color }: { data: Bucket[]; color: string }) {
   const max = Math.max(...data.map(d => d.value)) || 1
+  // SVG escala automaticamente ao container (preserveAspectRatio:none),
+  // não depende de height definido no pai.
+  const w = 600, h = 240, pad = { l: 10, r: 10, t: 28, b: 32 }
+  const innerW = w - pad.l - pad.r
+  const innerH = h - pad.t - pad.b
+  const slot = innerW / data.length
+  const bw = slot * 0.6
   return (
-    <div style={{ flex: 1, display: 'flex', alignItems: 'flex-end', justifyContent: 'space-around', gap: 6, padding: '10px 4px 0' }}>
-      {data.map(d => {
-        const h = (d.value / max) * 100
-        return (
-          <div key={d.label} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4, minWidth: 0 }}>
-            <div style={{ fontSize: 11, fontWeight: 700, color: '#fff' }}>{d.value}</div>
-            <div style={{ width: '70%', height: `${h}%`, minHeight: 2, background: color, borderRadius: '4px 4px 0 0', opacity: .85 }} />
-            <div style={{ fontSize: 10, color: '#94a3b8', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', width: '100%', textAlign: 'center' }}>{d.label}</div>
-          </div>
-        )
-      })}
+    <div style={{ flex: 1, minHeight: 0, display: 'flex' }}>
+      <svg viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="none" style={{ width: '100%', height: '100%' }}>
+        {data.map((d, i) => {
+          const bh = (d.value / max) * innerH
+          const x = pad.l + i * slot + (slot - bw) / 2
+          const y = h - pad.b - bh
+          return (
+            <g key={d.label}>
+              <text x={x + bw / 2} y={y - 6} textAnchor="middle" fontSize={13} fontWeight={700} fill="#fff" fontFamily="Sora">{d.value}</text>
+              <rect x={x} y={y} width={bw} height={bh} rx={3} fill={color} opacity={.85} />
+              <text x={x + bw / 2} y={h - pad.b + 18} textAnchor="middle" fontSize={11} fill="#94a3b8" fontFamily="Sora">{d.label}</text>
+            </g>
+          )
+        })}
+      </svg>
     </div>
   )
 }
@@ -362,11 +387,10 @@ function TimelineChart({ data, totalResults, resultLabel }: { data: Array<{ date
   const xy = (i: number, v: number, max: number): [number, number] => [pad.l + i * stepX, h - pad.b - (h - pad.t - pad.b) * (v / max)]
   const bw = Math.max(6, stepX * 0.55)
 
-  // Eixo X: mostra só ~6 labels distribuídos pra não sobrepor
+  // Eixo X: mostra só ~6 labels distribuídos pra não sobrepor.
+  // useDashboard.ts já formata o date como "17 mai" (pt-BR) — uso direto.
   const labelStep = Math.max(1, Math.floor(enriched.length / 6))
-  const fmtDate = (iso: string) => {
-    try { return new Date(`${iso}T00:00:00`).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' }) } catch { return iso.slice(5) }
-  }
+  const fmtDate = (s: string) => s
 
   return (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
@@ -397,30 +421,36 @@ function TimelineChart({ data, totalResults, resultLabel }: { data: Array<{ date
 
 function CreativesGrid({ creatives, resultLabel, cprLabel }: { creatives: TopAd[]; resultLabel: string; cprLabel: string }) {
   const fmtBrl = (n: number) => 'R$ ' + n.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+  const fmtN = (n: number) => n.toLocaleString('pt-BR')
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 8, minHeight: 0, flex: 1 }}>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 10, minHeight: 0, flex: 1 }}>
       {/* Thumbnails */}
-      <div style={{ display: 'grid', gridTemplateColumns: `repeat(${creatives.length}, 1fr)`, gap: 6, flexShrink: 0 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: `repeat(${creatives.length}, 1fr)`, gap: 8, flexShrink: 0 }}>
         {creatives.map((c, i) => (
-          <div key={i} style={{ aspectRatio: '1', background: '#0a2540', borderRadius: 8, overflow: 'hidden', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-            {c.thumb ? <img src={c.thumb} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : <span style={{ fontSize: 18, opacity: .4 }}>📷</span>}
+          <div key={i} style={{ aspectRatio: '1', background: '#0a2540', borderRadius: 10, overflow: 'hidden', display: 'flex', alignItems: 'center', justifyContent: 'center', border: '1px solid rgba(255,255,255,.05)' }}>
+            {c.thumb ? <img src={c.thumb} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : <span style={{ fontSize: 20, opacity: .4 }}>📷</span>}
           </div>
         ))}
       </div>
-      {/* Tabela comparativa */}
+      {/* Tabela comparativa — 8 métricas pra análise rica */}
       <div style={{ overflowY: 'auto', minHeight: 0, flex: 1 }}>
-        <table style={{ width: '100%', borderCollapse: 'separate', borderSpacing: 0, fontSize: 11, color: '#e2e8f0' }}>
+        <table style={{ width: '100%', borderCollapse: 'separate', borderSpacing: 0, fontSize: 12, color: '#e2e8f0' }}>
           <tbody>
             {[
-              { lbl: resultLabel, val: (c: TopAd) => String(c.results) },
-              { lbl: cprLabel, val: (c: TopAd) => c.cpl > 0 ? fmtBrl(c.cpl) : '—' },
+              { lbl: resultLabel, val: (c: TopAd) => String(c.results), highlight: true },
+              { lbl: cprLabel, val: (c: TopAd) => c.cpl > 0 ? fmtBrl(c.cpl) : '—', highlight: true },
               { lbl: 'CTR', val: (c: TopAd) => c.ctr.toFixed(2) + '%' },
               { lbl: 'Investido', val: (c: TopAd) => fmtBrl(c.spend) },
+              { lbl: '% Investimento', val: (c: TopAd) => c.spendShare.toFixed(1) + '%' },
+              { lbl: 'Impressões', val: (c: TopAd) => fmtN(c.impressions) },
+              { lbl: 'Alcance', val: (c: TopAd) => c.reach > 0 ? fmtN(c.reach) : '—' },
+              { lbl: 'Frequência', val: (c: TopAd) => c.frequency > 0 ? c.frequency.toFixed(2) : '—' },
+              { lbl: 'CPM', val: (c: TopAd) => c.cpm > 0 ? fmtBrl(c.cpm) : '—' },
             ].map((row, ri) => (
               <tr key={ri}>
-                <td style={{ padding: '5px 4px', textAlign: 'left', color: '#94a3b8', fontWeight: 600, fontSize: 10, letterSpacing: '.04em', textTransform: 'uppercase', borderBottom: '1px solid rgba(255,255,255,.04)' }}>{row.lbl}</td>
+                <td style={{ padding: '6px 4px', textAlign: 'left', color: '#94a3b8', fontWeight: 600, fontSize: 10, letterSpacing: '.04em', textTransform: 'uppercase', borderBottom: '1px solid rgba(255,255,255,.04)' }}>{row.lbl}</td>
                 {creatives.map((c, ci) => (
-                  <td key={ci} style={{ padding: '5px 4px', textAlign: 'right', fontWeight: 700, color: '#fff', borderBottom: '1px solid rgba(255,255,255,.04)' }}>{row.val(c)}</td>
+                  <td key={ci} style={{ padding: '6px 4px', textAlign: 'right', fontWeight: 700, color: row.highlight ? '#7dd3fc' : '#fff', fontSize: row.highlight ? 13 : 12, borderBottom: '1px solid rgba(255,255,255,.04)' }}>{row.val(c)}</td>
                 ))}
               </tr>
             ))}
