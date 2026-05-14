@@ -4,7 +4,10 @@ import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import ProfileModal from './ProfileModal'
 import SettingsModal from './SettingsModal'
+import ChatTopbarButton from './ChatTopbarButton'
 import styles from './WorkspaceTopbar.module.css'
+
+const CHAT_ENABLED = process.env.NEXT_PUBLIC_INTERNAL_CHAT_ENABLED === 'true'
 import { clearSession, getSession } from '@/lib/auth'
 import { SURL } from '@/lib/constants'
 import { efHeaders } from '@/lib/api'
@@ -180,6 +183,8 @@ export default function WorkspaceTopbar({
               </div>
             </div>
           )}
+
+          {CHAT_ENABLED && mounted && sess?.auth === '1' && <ChatTopbarButton />}
 
           <button
             type="button"
