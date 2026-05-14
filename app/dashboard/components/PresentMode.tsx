@@ -41,6 +41,15 @@ interface TopAd {
   spendShare: number  // % do investimento total
 }
 
+interface TopCamp {
+  id: string
+  name: string
+  spend: number
+  results: number
+  cpl: number
+  spendShare: number
+}
+
 // Action keys candidatos por tipo (cobre variações Pixel/CAPI/onsite)
 const ACTION_KEYS: Record<string, string[]> = {
   VENDAS: ['omni_purchase', 'offsite_conversion.fb_pixel_purchase', 'purchase', 'offline_conversion.purchase'],
@@ -85,6 +94,37 @@ export default function PresentMode(p: Props) {
   const [device, setDevice] = useState<Bucket[]>([])
   const [accountTotals, setAccountTotals] = useState<AccountTotals | null>(null)
   const [topAds, setTopAds] = useState<TopAd[]>([])
+  const [topCamps, setTopCamps] = useState<TopCamp[]>([])
+  const [previewAd, setPreviewAd] = useState<TopAd | null>(null)
+  const [previewHtml, setPreviewHtml] = useState<string>('')
+  const [previewLoading, setPreviewLoading] = useState(false)
+
+  // ESC fecha modal de preview
+  useEffect(() => {
+    if (!previewAd) return
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setPreviewAd(null) }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [previewAd])
+
+  async function openAdPreview(ad: TopAd) {
+    if (!ad.id) return
+    setPreviewAd(ad)
+    setPreviewHtml('')
+    setPreviewLoading(true)
+    try {
+      let r = await metaCall(`${ad.id}/previews`, { ad_format: 'MOBILE_FEED_STANDARD' }, p.metaAccount)
+      let html = r?.data?.[0]?.body || ''
+      if (!html) {
+        r = await metaCall(`${ad.id}/previews`, { ad_format: 'DESKTOP_FEED_STANDARD' }, p.metaAccount)
+        html = r?.data?.[0]?.body || ''
+      }
+      setPreviewHtml(html || '<div style="padding:40px;color:#666;text-align:center">Preview indisponível para este formato.</div>')
+    } catch (e) {
+      setPreviewHtml(`<div style="padding:40px;color:#dc2626;text-align:center">Erro: ${e instanceof Error ? e.message : 'falha ao carregar'}</div>`)
+    }
+    setPreviewLoading(false)
+  }
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
 
@@ -205,14 +245,39 @@ export default function PresentMode(p: Props) {
       return ranked
     }
 
-    Promise.all([baseInsights(), ageBreakdown(), genderBreakdown(), deviceBreakdown(), topCreatives()])
-      .then(([totals, a, g, d, ads]) => {
+    const topCampaigns = async () => {
+      const r = await metaCall('insights', {
+        level: 'campaign', limit: '50',
+        fields: 'campaign_id,campaign_name,spend,actions',
+        ...dp,
+      }, p.metaAccount)
+      const rows = Array.isArray(r?.data) ? r.data : []
+      const totalSpend = rows.reduce((s: number, c: any) => s + (+c.spend || 0), 0) || 1
+      return rows.map((c: any) => {
+        const results = sumActions(c.actions, actionKeys)
+        const spend = +c.spend || 0
+        return {
+          id: c.campaign_id || '',
+          name: c.campaign_name || '—',
+          spend,
+          results,
+          cpl: results > 0 ? spend / results : 0,
+          spendShare: (spend / totalSpend) * 100,
+        } as TopCamp
+      })
+        .sort((a, b) => b.results - a.results || b.spend - a.spend)
+        .slice(0, 5)
+    }
+
+    Promise.all([baseInsights(), ageBreakdown(), genderBreakdown(), deviceBreakdown(), topCreatives(), topCampaigns()])
+      .then(([totals, a, g, d, ads, camps]) => {
         if (cancelled) return
         setAccountTotals(totals)
         setAge(a)
         setGender(g)
         setDevice(d)
         setTopAds(ads)
+        setTopCamps(camps)
         setLoading(false)
       })
       .catch(e => {
@@ -267,18 +332,48 @@ export default function PresentMode(p: Props) {
         {/* COLUNA DIREITA */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12, minHeight: 0 }}>
           <Card title="🏆 Criativos campeões" style={{ flex: 2, minHeight: 0 }}>
-            {loading && !topAds.length ? <Loading /> : topAds.length === 0 ? <Empty msg="Sem criativos no período" /> : <CreativesGrid creatives={topAds} resultLabel={resultLabel} cprLabel={cprLabel} />}
+            {loading && !topAds.length ? <Loading /> : topAds.length === 0 ? <Empty msg="Sem criativos no período" /> : <CreativesGrid creatives={topAds} resultLabel={resultLabel} cprLabel={cprLabel} onClick={openAdPreview} />}
           </Card>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, flex: 1, minHeight: 0, maxHeight: 240 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1.2fr', gap: 12, flex: 1, minHeight: 0, maxHeight: 260 }}>
             <Card title="Gênero × impressões">
               {loading && !gender.length ? <Loading /> : gender.length === 0 ? <Empty msg="Sem dados" /> : <DonutChart data={gender} />}
             </Card>
             <Card title="Dispositivos">
               {loading && !device.length ? <Loading /> : device.length === 0 ? <Empty msg="Sem dados" /> : <DonutChart data={device} />}
             </Card>
+            <Card title={`🥇 Top campanhas (${resultLabel.toLowerCase()})`}>
+              {loading && !topCamps.length ? <Loading /> : topCamps.length === 0 ? <Empty msg="Sem campanhas no período" /> : <TopCampsList camps={topCamps} resultLabel={resultLabel} cprLabel={cprLabel} />}
+            </Card>
           </div>
         </div>
       </div>
+
+      {/* Modal de preview do criativo (iframe oficial Meta) */}
+      {previewAd && (
+        <div onClick={() => setPreviewAd(null)} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.7)', zIndex: 1100, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24 }}>
+          <div onClick={e => e.stopPropagation()} style={{ background: '#0a2540', borderRadius: 14, border: '1px solid rgba(255,255,255,.12)', width: 'min(520px, 100%)', maxHeight: '92vh', display: 'flex', flexDirection: 'column', boxShadow: '0 20px 60px rgba(0,0,0,.5)' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '14px 16px', borderBottom: '1px solid rgba(255,255,255,.08)' }}>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 11, fontWeight: 700, color: '#7dd3fc', letterSpacing: '.06em', textTransform: 'uppercase' }}>Preview do criativo</div>
+                <div style={{ fontSize: 13, fontWeight: 700, color: '#fff', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{previewAd.name}</div>
+              </div>
+              <button onClick={() => setPreviewAd(null)} style={{ background: 'rgba(255,255,255,.08)', border: '1.5px solid rgba(255,255,255,.16)', borderRadius: 8, color: '#fff', padding: '6px 10px', fontSize: 14, cursor: 'pointer', fontFamily: 'inherit', lineHeight: 1 }} title="Fechar (ESC)">×</button>
+            </div>
+            <div style={{ flex: 1, minHeight: 0, overflow: 'auto', padding: 14, display: 'flex', alignItems: 'flex-start', justifyContent: 'center', background: '#fff' }}>
+              {previewLoading ? (
+                <div style={{ padding: 60, color: '#666', fontSize: 13 }}>Carregando preview…</div>
+              ) : (
+                <iframe
+                  srcDoc={previewHtml}
+                  sandbox="allow-scripts allow-same-origin allow-popups"
+                  style={{ width: '100%', height: 600, border: 0, display: 'block' }}
+                  title="Preview"
+                />
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
@@ -419,17 +514,51 @@ function TimelineChart({ data, totalResults, resultLabel }: { data: Array<{ date
   )
 }
 
-function CreativesGrid({ creatives, resultLabel, cprLabel }: { creatives: TopAd[]; resultLabel: string; cprLabel: string }) {
+function TopCampsList({ camps, resultLabel, cprLabel }: { camps: TopCamp[]; resultLabel: string; cprLabel: string }) {
+  const fmtBrl = (n: number) => 'R$ ' + n.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+  const max = Math.max(...camps.map(c => c.results)) || 1
+  return (
+    <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 6 }}>
+      {camps.map((c, i) => (
+        <div key={c.id || i} style={{ display: 'flex', flexDirection: 'column', gap: 3, padding: '6px 8px', background: 'rgba(255,255,255,.03)', borderRadius: 6 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11 }}>
+            <span style={{ width: 18, height: 18, borderRadius: '50%', background: i === 0 ? '#fbbf24' : '#475569', color: '#0a2540', fontWeight: 800, fontSize: 10, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>{i + 1}</span>
+            <span style={{ flex: 1, color: '#fff', fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={c.name}>{c.name}</span>
+            <strong style={{ color: '#7dd3fc', fontSize: 13 }}>{c.results}</strong>
+          </div>
+          <div style={{ height: 3, background: 'rgba(255,255,255,.06)', borderRadius: 2, overflow: 'hidden' }}>
+            <div style={{ width: `${(c.results / max) * 100}%`, height: '100%', background: '#22d3ee' }} />
+          </div>
+          <div style={{ display: 'flex', gap: 8, fontSize: 10, color: '#94a3b8' }}>
+            <span>{cprLabel}: <strong style={{ color: '#cbd5e1' }}>{c.cpl > 0 ? fmtBrl(c.cpl) : '—'}</strong></span>
+            <span style={{ marginLeft: 'auto' }}>{c.spendShare.toFixed(1)}% invest.</span>
+          </div>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+function CreativesGrid({ creatives, resultLabel, cprLabel, onClick }: { creatives: TopAd[]; resultLabel: string; cprLabel: string; onClick?: (c: TopAd) => void }) {
   const fmtBrl = (n: number) => 'R$ ' + n.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
   const fmtN = (n: number) => n.toLocaleString('pt-BR')
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 10, minHeight: 0, flex: 1 }}>
-      {/* Thumbnails */}
+      {/* Thumbnails — clicáveis para abrir preview do anúncio */}
       <div style={{ display: 'grid', gridTemplateColumns: `repeat(${creatives.length}, 1fr)`, gap: 8, flexShrink: 0 }}>
         {creatives.map((c, i) => (
-          <div key={i} style={{ aspectRatio: '1', background: '#0a2540', borderRadius: 10, overflow: 'hidden', display: 'flex', alignItems: 'center', justifyContent: 'center', border: '1px solid rgba(255,255,255,.05)' }}>
+          <button
+            key={i}
+            type="button"
+            onClick={() => onClick?.(c)}
+            title={`Clique para ver preview: ${c.name}`}
+            style={{ all: 'unset', aspectRatio: '1', background: '#0a2540', borderRadius: 10, overflow: 'hidden', display: 'flex', alignItems: 'center', justifyContent: 'center', border: '1px solid rgba(255,255,255,.05)', cursor: onClick ? 'pointer' : 'default', transition: 'transform .12s, box-shadow .12s', position: 'relative' }}
+            onMouseEnter={e => { if (onClick) { e.currentTarget.style.transform = 'translateY(-2px)'; e.currentTarget.style.boxShadow = '0 6px 16px rgba(34,211,238,.25)'; e.currentTarget.style.borderColor = 'rgba(34,211,238,.5)' } }}
+            onMouseLeave={e => { e.currentTarget.style.transform = ''; e.currentTarget.style.boxShadow = ''; e.currentTarget.style.borderColor = 'rgba(255,255,255,.05)' }}
+          >
             {c.thumb ? <img src={c.thumb} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : <span style={{ fontSize: 20, opacity: .4 }}>📷</span>}
-          </div>
+            {onClick && <span style={{ position: 'absolute', bottom: 4, right: 4, fontSize: 9, background: 'rgba(0,0,0,.6)', color: '#fff', padding: '2px 5px', borderRadius: 4, fontWeight: 700 }}>👁 ver</span>}
+          </button>
         ))}
       </div>
       {/* Tabela comparativa — 8 métricas pra análise rica */}
