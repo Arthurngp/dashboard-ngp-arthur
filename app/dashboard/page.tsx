@@ -563,14 +563,10 @@ export default function DashboardPage() {
           clienteName={viewing?.name || ''}
           metaAccount={viewing?.account || ''}
           periodLabel={periodLabel}
+          period={period}
           campaigns={campaigns}
-          chartMetric={chartMetric}
-          chartData={chartData}
-          donutData={donutData}
           timeSeriesData={timeSeriesData}
-          timeSeriesLoading={timeSeriesLoading}
-          timeSeriesError={timeSeriesError}
-          onSetChartMetric={setChartMetric}
+          loadedAds={loadedAds as any}
           onApplyPeriod={onPeriodApply}
           onClose={() => setPresentMode(false)}
         />
