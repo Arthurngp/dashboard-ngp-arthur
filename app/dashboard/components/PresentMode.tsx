@@ -12,7 +12,7 @@ interface Props {
   period: DateParam
   campaigns: Campaign[]
   timeSeriesData: Array<{ date: string; spend: number; impressions: number; clicks: number }>
-  onApplyPeriod: (dp: DateParam, label: string, cmpDp?: DateParam | null, cmpLabel?: string | null) => void
+  onApplyPeriod: (dp: DateParam, label: string, cmpDp?: DateParam, cmpLabel?: string) => void
   onClose: () => void
 }
 
@@ -245,11 +245,11 @@ export default function PresentMode(p: Props) {
           thumb: '',
         } as TopAd
       })
-        .sort((a, b) => b.results - a.results || b.ctr - a.ctr)
+        .sort((a: TopAd, b: TopAd) => b.results - a.results || b.ctr - a.ctr)
         .slice(0, 5)
 
       // Busca thumbnails em paralelo (best-effort)
-      await Promise.all(ranked.map(async ad => {
+      await Promise.all(ranked.map(async (ad: TopAd) => {
         if (!ad.id) return
         try {
           const cr = await metaCall(`${ad.id}/`, { fields: 'creative{thumbnail_url.width(200).height(200),image_url}' }, p.metaAccount)
@@ -279,7 +279,7 @@ export default function PresentMode(p: Props) {
           spendShare: (spend / totalSpend) * 100,
         } as TopCamp
       })
-        .sort((a, b) => b.results - a.results || b.spend - a.spend)
+        .sort((a: TopCamp, b: TopCamp) => b.results - a.results || b.spend - a.spend)
         .slice(0, 5)
     }
 
@@ -305,7 +305,7 @@ export default function PresentMode(p: Props) {
           spendShare: (spend / totalSpend) * 100,
         } as TopAdset
       })
-        .sort((a, b) => b.results - a.results || b.spend - a.spend)
+        .sort((a: TopAdset, b: TopAdset) => b.results - a.results || b.spend - a.spend)
     }
 
     Promise.all([baseInsights(), ageBreakdown(), genderBreakdown(), deviceBreakdown(), topCreatives(), topCampaigns(), topAdsetsAll()])
