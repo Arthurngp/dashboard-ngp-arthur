@@ -320,6 +320,13 @@ export default function DashboardPage() {
         <main className={styles.workspaceCanvas}>
           <div className={styles.workspaceCanvasInner}>
             <div id="overview-hero" className={`${styles.workspaceHeroCard} ${styles.workspaceHeroCardCompact}`}>
+              <div className={styles.workspaceHeroChip}>
+                <div className={styles.workspaceHeroAvatarMuted}>NGP</div>
+                <div className={styles.workspaceHeroChipBody}>
+                  <strong className={styles.workspaceHeroChipName}>Visão geral</strong>
+                  <span className={styles.workspaceHeroChipMeta}>{filteredOverviewRows.length} conta(s) Meta</span>
+                </div>
+              </div>
               <div className={styles.workspaceHeroActions}>
                 <PeriodFilter onApply={onPeriodApply} />
                 <button className={styles.overviewRefreshBtn} onClick={() => loadOverviewData(period, cmpPeriodParam)}>↻ Atualizar</button>
@@ -369,10 +376,6 @@ export default function DashboardPage() {
           </div>
           <div className={styles.workspaceSidebarBody}>
             {renderSidebarSections(dashboardSidebarSections)}
-            <div className={styles.workspaceSidebarMetaGrid}>
-              <div className={styles.workspaceSidebarMetaCard}><span className={styles.workspaceSidebarMetaLabel}>Conta</span><strong className={styles.workspaceSidebarMetaValue}>{viewing?.account || '—'}</strong></div>
-              <div className={styles.workspaceSidebarMetaCard}><span className={styles.workspaceSidebarMetaLabel}>Período</span><strong className={styles.workspaceSidebarMetaValue}>{periodLabel}</strong></div>
-            </div>
           </div>
           <div className={styles.workspaceSidebarFooter}>
             <button className={styles.workspaceSidebarSecondaryBtn} onClick={backToSelect}>Voltar à visão geral</button>
@@ -382,6 +385,13 @@ export default function DashboardPage() {
         <div className={styles.workspaceCanvas}>
           <div className={styles.workspaceCanvasInner}>
             <div className={`${styles.workspaceHeroCard} ${styles.workspaceHeroCardCompact}`}>
+              <div className={styles.workspaceHeroChip}>
+                <div className={styles.workspaceHeroAvatar}>{(viewing?.name || 'NA').slice(0, 2).toUpperCase()}</div>
+                <div className={styles.workspaceHeroChipBody}>
+                  <strong className={styles.workspaceHeroChipName}>{viewing?.name || '—'}</strong>
+                  <span className={styles.workspaceHeroChipMeta}>{viewing?.account || '—'}</span>
+                </div>
+              </div>
               <div className={styles.workspaceHeroActions}>
                 <PeriodFilter onApply={onPeriodApply} />
                 <AccountSelector clients={clients} viewing={viewing} onSelect={selectAccount} />

@@ -205,10 +205,10 @@
   border: 1px solid rgba(191, 219, 254, 0.75);
   background: linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(247, 251, 255, 0.95));
   box-shadow: 0 18px 48px rgba(15, 23, 42, 0.08);
-  /* Trava na viewport: altura máxima = viewport - topbar - margens.
+  /* Altura plena: ocupa toda a viewport disponível abaixo da topbar.
      Head e Footer ficam fixos (flex-shrink:0); só o .workspaceSidebarBody
      do meio rola quando o conteúdo excede. */
-  max-height: calc(100vh - var(--workspace-topbar-height, 88px) - 36px);
+  height: calc(100vh - var(--workspace-topbar-height, 88px) - 36px);
   overflow: hidden;
 }
 .workspaceSidebarHead,
@@ -453,14 +453,74 @@
   box-shadow: 0 20px 44px rgba(15, 23, 42, 0.08);
 }
 
-/* Variante sem título: só os botões de ação alinhados à direita.
-   O título já vive na sidebar agora. */
+/* Variante compacta: chip do cliente (esquerda) + actions (direita).
+   O título grande já vive na sidebar agora. */
 .workspaceHeroCardCompact {
-  padding: 14px 22px;
-  justify-content: flex-end;
+  padding: 12px 18px;
+  justify-content: space-between;
+  gap: 16px;
 }
 .workspaceHeroCardCompact .workspaceHeroActions {
-  margin-left: 0;
+  margin-left: auto;
+}
+
+/* Chip do cliente (lado esquerdo do hero) */
+.workspaceHeroChip {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 14px 8px 8px;
+  background: linear-gradient(135deg, #1e3a8a, #1d4ed8);
+  border-radius: 999px;
+  color: #fff;
+  min-width: 0;
+  flex-shrink: 0;
+  box-shadow: 0 8px 24px rgba(29, 78, 216, .25);
+}
+.workspaceHeroAvatar,
+.workspaceHeroAvatarMuted {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 800;
+  font-size: 11px;
+  letter-spacing: .04em;
+  flex-shrink: 0;
+}
+.workspaceHeroAvatar {
+  background: linear-gradient(135deg, #60a5fa, #3b82f6);
+  color: #fff;
+  border: 2px solid rgba(255,255,255,.25);
+}
+.workspaceHeroAvatarMuted {
+  background: rgba(255,255,255,.18);
+  color: #fff;
+  border: 2px solid rgba(255,255,255,.28);
+}
+.workspaceHeroChipBody {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  line-height: 1.2;
+}
+.workspaceHeroChipName {
+  font-size: 14px;
+  font-weight: 700;
+  color: #fff;
+  letter-spacing: -.01em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.workspaceHeroChipMeta {
+  font-size: 11px;
+  color: rgba(255,255,255,.7);
+  font-weight: 500;
+  letter-spacing: .01em;
+  margin-top: 2px;
 }
 
 .workspaceHeroCopy {
@@ -947,6 +1007,7 @@
   .workspaceSidebar {
     position: static;
     max-height: none;
+    height: auto;
     overflow: visible;
   }
   .workspaceSidebarBody {
