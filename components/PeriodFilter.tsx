@@ -191,11 +191,15 @@ function DatePickerField({
     return new Date(now.getFullYear(), now.getMonth(), now.getDate())
   }, [])
 
+  // Quando ABRE o calendário, posiciona o viewMonth na data selecionada.
+  // Depende só de `open` (e do valor ISO string, não do objeto Date) pra evitar
+  // resetar o viewMonth a cada clique nas setas de mês.
   useEffect(() => {
     if (!open) return
-    const dt = selected || parseIsoDate(rangeStart || '') || new Date()
+    const dt = parseIsoDate(value) || parseIsoDate(rangeStart || '') || new Date()
     setViewMonth(new Date(dt.getFullYear(), dt.getMonth(), 1))
-  }, [open, selected, rangeStart])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open])
 
   const days = useMemo(() => {
     const first = new Date(viewMonth.getFullYear(), viewMonth.getMonth(), 1)

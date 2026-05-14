@@ -399,6 +399,32 @@ export default function DashboardPage() {
                 </div>
               </div>
               <div className={styles.workspaceHeroActions}>
+                <button
+                  onClick={() => {
+                    // Garante que a série temporal está carregada antes de abrir o PresentMode
+                    // (caso o usuário ainda não tenha visitado a aba Gráficos)
+                    if (timeSeriesData.length === 0 && !timeSeriesLoading) loadTimeSeries(period)
+                    setPresentMode(true)
+                  }}
+                  title="Apresentar dashboard em tela cheia"
+                  style={{
+                    padding: '9px 16px',
+                    background: 'linear-gradient(135deg, #22d3ee, #3b82f6)',
+                    border: 'none',
+                    borderRadius: 10,
+                    color: '#fff',
+                    fontSize: 13,
+                    fontWeight: 700,
+                    cursor: 'pointer',
+                    fontFamily: 'inherit',
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: 6,
+                    boxShadow: '0 4px 12px rgba(34,211,238,.25)',
+                  }}
+                >
+                  🎤 Apresentar
+                </button>
                 <PeriodFilter onApply={onPeriodApply} />
                 <AccountSelector clients={clients} viewing={viewing} onSelect={selectAccount} />
               </div>
@@ -515,7 +541,7 @@ export default function DashboardPage() {
               )}
               {activeTab === 'graficos' && (
                 <Suspense fallback={<NGPLoading loading loadingText="Carregando gráficos..." />}>
-                  <GraficosTab campaigns={campaigns} chartMetric={chartMetric} chartData={chartData} donutData={donutData} timeSeriesData={timeSeriesData} timeSeriesLoading={timeSeriesLoading} timeSeriesError={timeSeriesError} onSetChartMetric={setChartMetric} onPresent={() => setPresentMode(true)} />
+                  <GraficosTab campaigns={campaigns} chartMetric={chartMetric} chartData={chartData} donutData={donutData} timeSeriesData={timeSeriesData} timeSeriesLoading={timeSeriesLoading} timeSeriesError={timeSeriesError} onSetChartMetric={setChartMetric} />
                 </Suspense>
               )}
               {activeTab === 'relatorios' && <>

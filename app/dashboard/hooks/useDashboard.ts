@@ -104,7 +104,7 @@ export function useDashboard() {
   const [breakdownError, setBreakdownError] = useState('')
 
   // ── Time series data ───────────────────────────────────────────────────────
-  const [timeSeriesData, setTimeSeriesData] = useState<Array<{ date: string; spend: number; impressions: number; clicks: number }>>([])
+  const [timeSeriesData, setTimeSeriesData] = useState<Array<{ date: string; spend: number; impressions: number; clicks: number; actions?: Array<{ action_type: string; value: string }> }>>([])
   const [timeSeriesLoading, setTimeSeriesLoading] = useState(false)
   const [timeSeriesError, setTimeSeriesError] = useState('')
 
@@ -252,11 +252,12 @@ export function useDashboard() {
     }
   }, [clients, period, cmpPeriodParam, visibleMetrics])
 
-  const loadDataInflightRef = useRef(false)
+  // Em vez de bloquear novas requisições enquanto uma está em curso (que descarta cliques
+  // rápidos no "Aplicar"), usamos um request-id: só aceita o resultado da chamada mais recente.
+  const loadDataReqIdRef = useRef(0)
   const loadData = useCallback(async (dp: DateParam = period) => {
     if (!viewing) return
-    if (loadDataInflightRef.current) return
-    loadDataInflightRef.current = true
+    const reqId = ++loadDataReqIdRef.current
     setLoading(true); setError('')
     try {
       const fieldsToFetch = ['campaign_id', 'campaign_name', ...getRequiredApiFields(visibleMetrics)].join(',')
@@ -265,15 +266,19 @@ export function useDashboard() {
           level: 'campaign', fields: fieldsToFetch, limit: '100', ...dp,
         }, viewing.account),
         metaCall('campaigns', {
-          fields: 'id,effective_status', limit: '100',
+          fields: 'id,effective_status,objective', limit: '100',
         }, viewing.account),
       ])
+      // Descarta resultado se uma requisição mais recente foi disparada
+      if (reqId !== loadDataReqIdRef.current) return
       if (d.error) throw new Error(d.error.message || JSON.stringify(d.error))
 
       const statusMap: Record<string, string> = {}
+      const objectiveMap: Record<string, string> = {}
       if (campData?.data) {
-        for (const c of campData.data as { id: string; effective_status: string }[]) {
+        for (const c of campData.data as { id: string; effective_status: string; objective: string }[]) {
           statusMap[c.id] = c.effective_status || ''
+          objectiveMap[c.id] = c.objective || ''
         }
       }
 
@@ -281,16 +286,17 @@ export function useDashboard() {
         const campId = String(c.campaign_id || '')
         return {
           id: campId, name: String(c.campaign_name || ''),
-          status: statusMap[campId] || '', objective: '',
+          status: statusMap[campId] || '', objective: objectiveMap[campId] || '',
           ...(parseIns(c) || {}),
         }
       }) as Campaign[]
       setCampaigns(mapped.sort((a, b) => b.spend - a.spend))
     } catch (e: unknown) {
+      if (reqId !== loadDataReqIdRef.current) return
       setError(e instanceof Error ? e.message : 'Erro ao carregar dados')
     } finally {
-      setLoading(false)
-      loadDataInflightRef.current = false
+      // Só limpa loading se for a request mais recente
+      if (reqId === loadDataReqIdRef.current) setLoading(false)
     }
   }, [viewing, period, visibleMetrics])
 
@@ -448,13 +454,14 @@ export function useDashboard() {
     setTimeSeriesLoading(true)
     setTimeSeriesError('')
     try {
-      const response = await metaCall('insights', { level: 'account', fields: 'spend,impressions,clicks', time_increment: '1', limit: '100', ...dp }, viewing.account)
+      const response = await metaCall('insights', { level: 'account', fields: 'spend,impressions,clicks,actions', time_increment: '1', limit: '100', ...dp }, viewing.account)
       const rows = Array.isArray(response?.data) ? response.data as Record<string, unknown>[] : []
       const data = rows.map((row) => {
         const iso = String(row.date_start || '')
         let dateLabel = iso
         try { dateLabel = new Date(`${iso}T00:00:00`).toLocaleDateString('pt-BR', { day: '2-digit', month: 'short' }) } catch {}
-        return { date: dateLabel, spend: Number(row.spend || 0), impressions: Number(row.impressions || 0), clicks: Number(row.clicks || 0) }
+        const actions = Array.isArray(row.actions) ? row.actions as Array<{ action_type: string; value: string }> : undefined
+        return { date: dateLabel, spend: Number(row.spend || 0), impressions: Number(row.impressions || 0), clicks: Number(row.clicks || 0), actions }
       })
       setTimeSeriesData(data)
     } catch (e) {
@@ -741,6 +748,9 @@ export function useDashboard() {
     setBreakdownData([]); setTimeSeriesData([])
     setBreakdownError(''); setTimeSeriesError('')
     loadData(dp)
+    // Sempre recarrega a série temporal — usada em Gráficos e no PresentMode (sem
+    // depender da aba ativa, pra evitar tela "Sem série temporal" quando muda período).
+    loadTimeSeries(dp)
     if (cmp) loadPrevData(cmp)
   }
 

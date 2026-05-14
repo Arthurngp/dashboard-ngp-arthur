@@ -19,13 +19,12 @@ interface GraficosTabProps {
   timeSeriesLoading: boolean
   timeSeriesError: string
   onSetChartMetric: (m: 'spend' | 'impressions' | 'clicks') => void
-  onPresent?: () => void
 }
 
 export default function GraficosTab({
   campaigns, chartMetric, chartData, donutData,
   timeSeriesData, timeSeriesLoading, timeSeriesError,
-  onSetChartMetric, onPresent,
+  onSetChartMetric,
 }: GraficosTabProps) {
   return (
     <>
@@ -36,14 +35,6 @@ export default function GraficosTab({
             {m === 'spend' ? 'Investido' : m === 'impressions' ? 'Impressões' : 'Cliques'}
           </button>
         ))}
-        {onPresent && (
-          <button
-            type="button"
-            onClick={onPresent}
-            style={{ marginLeft: 'auto', padding: '8px 16px', background: 'linear-gradient(135deg, #1e3a8a, #1d4ed8)', color: '#fff', border: 'none', borderRadius: 10, fontSize: 12, fontWeight: 700, cursor: 'pointer', fontFamily: 'Sora,sans-serif', boxShadow: '0 6px 18px rgba(29,78,216,.25)' }}
-            title="Modo apresentação tela cheia"
-          >🎤 Apresentar</button>
-        )}
       </div>
 
       <div className={styles.chartsRow}>
