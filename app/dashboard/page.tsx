@@ -2,7 +2,7 @@
 import React, { useEffect, useRef, useMemo, useState, Suspense } from 'react'
 import { useRouter } from 'next/navigation'
 import { fmt, fmtN, fmtI } from '@/lib/utils'
-import { SURL } from '@/lib/constants'
+import { SURL, ANON } from '@/lib/constants'
 import { DateParam, Campaign } from '@/types'
 import PeriodFilter from '@/components/PeriodFilter'
 import WorkspaceTopbar from '@/components/WorkspaceTopbar'
@@ -14,6 +14,7 @@ import AccountModal from './components/AccountModal'
 import MetricsModal from './components/MetricsModal'
 import AdPreviewModal from './components/AdPreviewModal'
 import NovoRelatorioModal, { NovoRelatorioConfig } from './components/NovoRelatorioModal'
+import RelatoriosListView from './components/RelatoriosListView'
 import KpiSection from './components/KpiSection'
 import CustomSelect from '@/components/CustomSelect'
 import { shellIcons } from './components/ShellIcons'
@@ -74,6 +75,44 @@ export default function DashboardPage() {
   const colMenuRef = useRef<HTMLDivElement>(null)
   const campFilterRef = useRef<HTMLDivElement>(null)
   const [novoRelatorioOpen, setNovoRelatorioOpen] = useState(false)
+  // overview pode mostrar a tabela de KPIs ou a lista global de relatórios
+  const [overviewView, setOverviewView] = useState<'overview' | 'relatorios'>('overview')
+  const [allRelatorios, setAllRelatorios] = useState<any[]>([])
+  const [allRelatoriosLoading, setAllRelatoriosLoading] = useState(false)
+  const [relatoriosPage, setRelatoriosPage] = useState(1)
+  const RELATORIOS_PER_PAGE = 10
+
+  async function loadAllRelatorios() {
+    setAllRelatoriosLoading(true)
+    try {
+      const res = await fetch(`${SURL}/functions/v1/get-relatorios`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'apikey': ANON, 'Authorization': `Bearer ${sess?.session || ANON}` },
+        body: JSON.stringify({ session_token: sess?.session }),
+      })
+      const data = await res.json()
+      setAllRelatorios(data.relatorios || [])
+    } catch { setAllRelatorios([]) }
+    setAllRelatoriosLoading(false)
+  }
+
+  function openOverviewRelatorios() {
+    setOverviewView('relatorios')
+    setRelatoriosPage(1)
+    loadAllRelatorios()
+  }
+
+  async function deleteAllRelatorio(id: string) {
+    if (!confirm('Apagar este relatório?')) return
+    try {
+      await fetch(`${SURL}/functions/v1/delete-relatorio`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'apikey': ANON, 'Authorization': `Bearer ${sess?.session || ANON}` },
+        body: JSON.stringify({ session_token: sess?.session, id }),
+      })
+      setAllRelatorios(prev => prev.filter(r => r.id !== id))
+    } catch {}
+  }
 
   function openNovoRelatorio() {
     if (!viewing) { alert('Selecione um cliente antes de criar um relatório.'); return }
@@ -187,11 +226,11 @@ export default function DashboardPage() {
 
   const overviewSidebarSections: WorkspaceNavSection[] = [
     { label: 'Fluxo', items: [
-      { id: 'overview-home', label: 'Painel geral', icon: shellIcons.overview, active: true, onClick: () => scrollToSection('overview-hero') },
-      { id: 'overview-clients', label: 'Clientes Meta', icon: shellIcons.clients, onClick: () => scrollToSection('overview-table') },
-      { id: 'overview-comparison', label: 'Comparativos', icon: shellIcons.compare, onClick: () => scrollToSection('overview-summary') },
-      { id: 'overview-relatorios', label: 'Relatórios', icon: shellIcons.reports, onClick: () => router.push('/relatorio?novo=1') },
-      { id: 'overview-notificacoes', label: 'Notificações', icon: shellIcons.alerts, onClick: () => scrollToSection('overview-alerts') },
+      { id: 'overview-home', label: 'Painel geral', icon: shellIcons.overview, active: overviewView === 'overview', onClick: () => { setOverviewView('overview'); scrollToSection('overview-hero') } },
+      { id: 'overview-clients', label: 'Clientes Meta', icon: shellIcons.clients, onClick: () => { setOverviewView('overview'); scrollToSection('overview-table') } },
+      { id: 'overview-comparison', label: 'Comparativos', icon: shellIcons.compare, onClick: () => { setOverviewView('overview'); scrollToSection('overview-summary') } },
+      { id: 'overview-relatorios', label: 'Relatórios', icon: shellIcons.reports, active: overviewView === 'relatorios', onClick: openOverviewRelatorios },
+      { id: 'overview-notificacoes', label: 'Notificações', icon: shellIcons.alerts, onClick: () => { setOverviewView('overview'); scrollToSection('overview-alerts') } },
     ]},
     { label: 'Canais', items: [
       { id: 'overview-ads', label: 'Anúncios', icon: shellIcons.ads, active: true },
@@ -286,18 +325,32 @@ export default function DashboardPage() {
                 <button className={styles.overviewRefreshBtn} onClick={() => loadOverviewData(period, cmpPeriodParam)}>↻ Atualizar</button>
               </div>
             </div>
-            <OverviewTab
-              initLoad={initLoad} overviewLoading={overviewLoading} overviewError={overviewError} overviewRows={overviewRows} search={search}
-              period={period} cmpPeriodParam={cmpPeriodParam} cmpLabel={cmpLabel} periodLabel={periodLabel} visibleOverviewCols={visibleOverviewCols}
-              colMenuOpen={colMenuOpen} colMenuRef={colMenuRef} overviewLastUpdated={overviewLastUpdated} overviewAutoRefresh={overviewAutoRefresh}
-              filteredOverviewRows={filteredOverviewRows} overviewTotals={overviewTotals} overviewTotalsCtr={overviewTotalsCtr}
-              overviewTotalsPrevCtr={overviewTotalsPrevCtr} overviewTotalsCpc={overviewTotalsCpc} overviewTotalsPrevCpc={overviewTotalsPrevCpc}
-              overviewTotalsCpl={overviewTotalsCpl} overviewTotalsPrevCpl={overviewTotalsPrevCpl} overviewTotalsRoas={overviewTotalsRoas}
-              overviewTotalsPrevRoas={overviewTotalsPrevRoas} overviewHeroStats={overviewHeroStats} sess={sess}
-              onSetSearch={setSearch} onSetColMenuOpen={setColMenuOpen} onToggleColumn={toggleColumn} onSetAutoRefresh={setOverviewAutoRefresh}
-              onLoadOverviewData={() => loadOverviewData(period, cmpPeriodParam)} onSelectAccount={selectAccount}
-              onOpenModal={(c) => { setModalEdit(c); setModalOpen(true) }} onApplyPeriod={onPeriodApply}
-            />
+            {overviewView === 'overview' ? (
+              <OverviewTab
+                initLoad={initLoad} overviewLoading={overviewLoading} overviewError={overviewError} overviewRows={overviewRows} search={search}
+                period={period} cmpPeriodParam={cmpPeriodParam} cmpLabel={cmpLabel} periodLabel={periodLabel} visibleOverviewCols={visibleOverviewCols}
+                colMenuOpen={colMenuOpen} colMenuRef={colMenuRef} overviewLastUpdated={overviewLastUpdated} overviewAutoRefresh={overviewAutoRefresh}
+                filteredOverviewRows={filteredOverviewRows} overviewTotals={overviewTotals} overviewTotalsCtr={overviewTotalsCtr}
+                overviewTotalsPrevCtr={overviewTotalsPrevCtr} overviewTotalsCpc={overviewTotalsCpc} overviewTotalsPrevCpc={overviewTotalsPrevCpc}
+                overviewTotalsCpl={overviewTotalsCpl} overviewTotalsPrevCpl={overviewTotalsPrevCpl} overviewTotalsRoas={overviewTotalsRoas}
+                overviewTotalsPrevRoas={overviewTotalsPrevRoas} overviewHeroStats={overviewHeroStats} sess={sess}
+                onSetSearch={setSearch} onSetColMenuOpen={setColMenuOpen} onToggleColumn={toggleColumn} onSetAutoRefresh={setOverviewAutoRefresh}
+                onLoadOverviewData={() => loadOverviewData(period, cmpPeriodParam)} onSelectAccount={selectAccount}
+                onOpenModal={(c) => { setModalEdit(c); setModalOpen(true) }} onApplyPeriod={onPeriodApply}
+              />
+            ) : (
+              <RelatoriosListView
+                relatorios={allRelatorios}
+                loading={allRelatoriosLoading}
+                page={relatoriosPage}
+                perPage={RELATORIOS_PER_PAGE}
+                onPageChange={setRelatoriosPage}
+                onRefresh={loadAllRelatorios}
+                onDelete={deleteAllRelatorio}
+                onNew={openNovoRelatorio}
+                clients={clients}
+              />
+            )}
           </div>
         </main>
       </div>
