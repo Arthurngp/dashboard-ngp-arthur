@@ -566,7 +566,6 @@ export default function DashboardPage() {
           period={period}
           campaigns={campaigns}
           timeSeriesData={timeSeriesData}
-          loadedAds={loadedAds as any}
           onApplyPeriod={onPeriodApply}
           onClose={() => setPresentMode(false)}
         />
