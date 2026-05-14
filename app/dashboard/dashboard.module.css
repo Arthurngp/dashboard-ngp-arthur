@@ -429,6 +429,35 @@
   color: var(--report-primary);
 }
 
+/* Card "Operação" no fim do footer da sidebar */
+.workspaceSidebarOpCard {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 14px 16px;
+  border-radius: 16px;
+  background: linear-gradient(180deg, rgba(239, 246, 255, 0.82), rgba(255, 255, 255, 0.96));
+  border: 1px solid rgba(191, 219, 254, 0.32);
+  margin-top: 4px;
+}
+.workspaceSidebarOpLabel {
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+  color: #94a3b8;
+}
+.workspaceSidebarOpValue {
+  font-size: 14px;
+  font-weight: 800;
+  letter-spacing: -.02em;
+  color: #0f172a;
+}
+.workspaceSidebarOpMeta {
+  font-size: 11px;
+  color: #64748b;
+}
+
 .workspaceCanvas {
   min-width: 0;
 }

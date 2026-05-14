@@ -285,12 +285,6 @@ export default function DashboardPage() {
     <WorkspaceTopbar
       subtitle="Relatórios e análise de dados"
       activeId="reports"
-      clientChip={screen === 'dashboard' && viewing ? {
-        title: viewing.name,
-        meta: viewing.account,
-        avatarText: viewing.name.slice(0, 2).toUpperCase(),
-        avatarImage: currentClient?.foto_url,
-      } : null}
       onLogout={logout}
     />
   )
@@ -315,6 +309,11 @@ export default function DashboardPage() {
           <div className={styles.workspaceSidebarFooter}>
             <button className={styles.workspaceSidebarSecondaryBtn} onClick={() => router.push('/setores')}>Voltar aos setores</button>
             {sess.role === 'admin' && <button className={styles.workspaceSidebarPrimaryBtn} onClick={() => { setModalEdit({}); setModalOpen(true) }}>+ Nova conta</button>}
+            <div className={styles.workspaceSidebarOpCard}>
+              <span className={styles.workspaceSidebarOpLabel}>Operação</span>
+              <strong className={styles.workspaceSidebarOpValue}>{sess.user || 'NGP'}</strong>
+              <span className={styles.workspaceSidebarOpMeta}>{sess.role === 'admin' ? 'Acesso administrativo' : 'Acesso interno'}</span>
+            </div>
           </div>
         </aside>
         <main className={styles.workspaceCanvas}>
@@ -380,6 +379,11 @@ export default function DashboardPage() {
           <div className={styles.workspaceSidebarFooter}>
             <button className={styles.workspaceSidebarSecondaryBtn} onClick={backToSelect}>Voltar à visão geral</button>
             {currentClient && <button className={styles.workspaceSidebarPrimaryBtn} onClick={() => { setModalEdit(currentClient); setModalOpen(true); setModalError('') }}>Editar conta</button>}
+            <div className={styles.workspaceSidebarOpCard}>
+              <span className={styles.workspaceSidebarOpLabel}>Operação</span>
+              <strong className={styles.workspaceSidebarOpValue}>{sess.user || 'NGP'}</strong>
+              <span className={styles.workspaceSidebarOpMeta}>{sess.role === 'admin' ? 'Acesso administrativo' : 'Acesso interno'}</span>
+            </div>
           </div>
         </aside>
         <div className={styles.workspaceCanvas}>
