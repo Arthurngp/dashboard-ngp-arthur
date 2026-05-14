@@ -127,11 +127,29 @@ export function useDashboard() {
   })
 
   // ── Campaign filter (resumo) ─────────────────────────────────────────────
+  // Persistido por conta Meta no localStorage. Mudar período NÃO reseta:
+  // o usuário pode estar analisando as mesmas campanhas em períodos diferentes.
   const [selectedCampIds, setSelectedCampIds] = useState<Set<string>>(new Set())
   const [campFilterOpen, setCampFilterOpen]   = useState(false)
 
-  // Reset filter when account/period changes
-  useEffect(() => { setSelectedCampIds(new Set()) }, [viewing, period])
+  // Carrega a seleção salva ao trocar de conta
+  useEffect(() => {
+    if (!viewing?.account) { setSelectedCampIds(new Set()); return }
+    try {
+      const saved = localStorage.getItem(`ngp:campFilter:${viewing.account}`)
+      setSelectedCampIds(saved ? new Set(JSON.parse(saved)) : new Set())
+    } catch { setSelectedCampIds(new Set()) }
+  }, [viewing])
+
+  // Persiste a seleção sempre que muda
+  useEffect(() => {
+    if (!viewing?.account) return
+    const key = `ngp:campFilter:${viewing.account}`
+    try {
+      if (selectedCampIds.size === 0) localStorage.removeItem(key)
+      else localStorage.setItem(key, JSON.stringify(Array.from(selectedCampIds)))
+    } catch {}
+  }, [selectedCampIds, viewing])
 
   // ── Metrics customizer ───────────────────────────────────────────────────
   const [visibleMetrics, setVisibleMetrics] = useState<string[]>(() => {

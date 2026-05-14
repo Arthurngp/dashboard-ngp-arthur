@@ -12,6 +12,8 @@ interface Props {
   period: DateParam
   campaigns: Campaign[]
   timeSeriesData: Array<{ date: string; spend: number; impressions: number; clicks: number; actions?: Array<{ action_type: string; value: string }> }>
+  selectedCampIds: Set<string>
+  onChangeSelectedCampIds: (next: Set<string> | ((prev: Set<string>) => Set<string>)) => void
   onApplyPeriod: (dp: DateParam, label: string, cmpDp?: DateParam, cmpLabel?: string) => void
   onClose: () => void
 }
@@ -40,6 +42,11 @@ interface TopAd {
   reach: number
   thumb: string
   spendShare: number  // % do investimento total
+  linkClicks: number  // inline_link_clicks (só cliques no link)
+  cpc: number          // spend / linkClicks
+  video3s: number      // video_play_actions (3s+) — pra hook rate
+  videoThruplay: number // video_thruplay_watched_actions
+  roas: number         // purchase_roas (0 quando não há pixel de compra)
 }
 
 interface TopCamp {
@@ -122,6 +129,7 @@ export default function PresentMode(p: Props) {
   const [topAds, setTopAds] = useState<TopAd[]>([])
   const [topCamps, setTopCamps] = useState<TopCamp[]>([])
   const [topAdsets, setTopAdsets] = useState<TopAdset[]>([])
+  const [filteredTimeSeries, setFilteredTimeSeries] = useState<Props['timeSeriesData'] | null>(null)
   const [topView, setTopView] = useState<'campanhas' | 'conjuntos'>('campanhas')
   const [expandedCampId, setExpandedCampId] = useState<string | null>(null)
   const [previewAd, setPreviewAd] = useState<TopAd | null>(null)
@@ -157,11 +165,31 @@ export default function PresentMode(p: Props) {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
 
+  // Campanhas que efetivamente entram nos cálculos: subset filtrado ou todas.
+  const activeCampaigns = useMemo(() => (
+    p.selectedCampIds.size > 0
+      ? p.campaigns.filter(c => p.selectedCampIds.has(c.id))
+      : p.campaigns
+  ), [p.campaigns, p.selectedCampIds])
+
+  // Filtering p/ Meta API: quando há seleção, manda só esses campaign_ids.
+  // Stringificado porque o proxy só repassa strings (URLSearchParams).
+  const filteringParam = useMemo(() => {
+    if (p.selectedCampIds.size === 0) return undefined
+    return JSON.stringify([{ field: 'campaign.id', operator: 'IN', value: Array.from(p.selectedCampIds) }])
+  }, [p.selectedCampIds])
+
+  // Helper: mescla filtering em params quando há seleção
+  const withFilter = (params: Record<string, string>): Record<string, string> => (
+    filteringParam ? { ...params, filtering: filteringParam } : params
+  )
+
   // Tipo dominante detectado automaticamente, ponderado por spend.
+  // Usa o subset filtrado: se filtrar só mensagens, detecta MENSAGENS (não VENDAS da conta toda).
   const tipoDetectado = useMemo(() => {
-    if (!p.campaigns.length) return 'LEADS'
+    if (!activeCampaigns.length) return 'LEADS'
     const weight: Record<string, number> = {}
-    p.campaigns.forEach(c => {
+    activeCampaigns.forEach(c => {
       const o = (c.objective as string) || ''
       const w = (c.spend || 0) + 1
       weight[o] = (weight[o] || 0) + w
@@ -174,7 +202,7 @@ export default function PresentMode(p: Props) {
     if (top.includes('ENGAGE') || top.includes('POST')) return 'ENGAJAMENTO'
     if (top.includes('AWARENESS') || top.includes('REACH') || top.includes('VIDEO')) return 'RECONHECIMENTO'
     return 'LEADS'
-  }, [p.campaigns])
+  }, [activeCampaigns])
 
   // Tipo global: override manual do usuário (default = detectado automaticamente).
   // Quando p.campaigns muda (cliente trocou), sincroniza com o novo detectado.
@@ -200,7 +228,7 @@ export default function PresentMode(p: Props) {
 
   // Fetchers reutilizáveis. Cada card pode rodar com keys diferentes (local override).
   const fetchAge = async (t: string) => {
-    const r = await metaCall('insights', { level: 'account', breakdowns: 'age', fields: 'actions,impressions', limit: '20', ...p.period }, p.metaAccount)
+    const r = await metaCall('insights', withFilter({ level: 'account', breakdowns: 'age', fields: 'actions,impressions', limit: '20', ...p.period }), p.metaAccount)
     const rows = Array.isArray(r?.data) ? r.data : []
     const keys = ACTION_KEYS[t] || []
     const isReconhec = t === 'RECONHECIMENTO'
@@ -215,16 +243,24 @@ export default function PresentMode(p: Props) {
 
   const fetchTopAds = async (t: string) => {
     const keys = ACTION_KEYS[t] || []
-    const r = await metaCall('insights', {
+    const r = await metaCall('insights', withFilter({
       level: 'ad', limit: '50',
-      fields: 'ad_id,ad_name,spend,ctr,actions,impressions,frequency,cpm,reach',
+      fields: 'ad_id,ad_name,spend,ctr,actions,impressions,frequency,cpm,reach,inline_link_clicks,video_play_actions,video_thruplay_watched_actions,purchase_roas',
       ...p.period,
-    }, p.metaAccount)
+    }), p.metaAccount)
     const rows = Array.isArray(r?.data) ? r.data : []
     const totalSpend = rows.reduce((s: number, ad: any) => s + (+ad.spend || 0), 0) || 1
     const ranked = rows.map((ad: any) => {
       const results = sumActions(ad.actions, keys)
       const spend = +ad.spend || 0
+      const linkClicks = +ad.inline_link_clicks || 0
+      // video_play_actions e video_thruplay_watched_actions vêm como array com action_type "video_view".
+      // Pegamos só o primeiro valor (já é o agregado total)
+      const video3s = +(ad.video_play_actions?.[0]?.value || 0)
+      const videoThruplay = +(ad.video_thruplay_watched_actions?.[0]?.value || 0)
+      // purchase_roas é array [{action_type, value}]; pegamos o omni_purchase ou o primeiro disponível
+      const roas = +(ad.purchase_roas?.find((x: any) => x.action_type === 'omni_purchase')?.value
+                  || ad.purchase_roas?.[0]?.value || 0)
       return {
         id: ad.ad_id || '',
         name: ad.ad_name || '—',
@@ -238,6 +274,11 @@ export default function PresentMode(p: Props) {
         reach: +ad.reach || 0,
         spendShare: (spend / totalSpend) * 100,
         thumb: '',
+        linkClicks,
+        cpc: linkClicks > 0 ? spend / linkClicks : 0,
+        video3s,
+        videoThruplay,
+        roas,
       } as TopAd
     })
       .sort((a: TopAd, b: TopAd) => b.results - a.results || b.ctr - a.ctr)
@@ -255,11 +296,11 @@ export default function PresentMode(p: Props) {
 
   const fetchTopCamps = async (t: string) => {
     const keys = ACTION_KEYS[t] || []
-    const r = await metaCall('insights', {
+    const r = await metaCall('insights', withFilter({
       level: 'campaign', limit: '50',
       fields: 'campaign_id,campaign_name,spend,actions',
       ...p.period,
-    }, p.metaAccount)
+    }), p.metaAccount)
     const rows = Array.isArray(r?.data) ? r.data : []
     const totalSpend = rows.reduce((s: number, c: any) => s + (+c.spend || 0), 0) || 1
     return rows.map((c: any) => {
@@ -280,11 +321,11 @@ export default function PresentMode(p: Props) {
 
   const fetchTopAdsets = async (t: string) => {
     const keys = ACTION_KEYS[t] || []
-    const r = await metaCall('insights', {
+    const r = await metaCall('insights', withFilter({
       level: 'adset', limit: '100',
       fields: 'adset_id,adset_name,campaign_id,campaign_name,spend,actions',
       ...p.period,
-    }, p.metaAccount)
+    }), p.metaAccount)
     const rows = Array.isArray(r?.data) ? r.data : []
     const totalSpend = rows.reduce((s: number, x: any) => s + (+x.spend || 0), 0) || 1
     return rows.map((x: any) => {
@@ -312,11 +353,11 @@ export default function PresentMode(p: Props) {
     setError('')
 
     const baseInsights = async () => {
-      const r = await metaCall('insights', {
+      const r = await metaCall('insights', withFilter({
         level: 'account', limit: '1',
         fields: 'spend,impressions,clicks,reach,actions,action_values',
         ...p.period,
-      }, p.metaAccount)
+      }), p.metaAccount)
       const row = (r?.data && r.data[0]) || {}
       return {
         spend: +row.spend || 0,
@@ -329,7 +370,7 @@ export default function PresentMode(p: Props) {
     }
 
     const genderBreakdown = async () => {
-      const r = await metaCall('insights', { level: 'account', breakdowns: 'gender', fields: 'impressions', limit: '10', ...p.period }, p.metaAccount)
+      const r = await metaCall('insights', withFilter({ level: 'account', breakdowns: 'gender', fields: 'impressions', limit: '10', ...p.period }), p.metaAccount)
       const rows = Array.isArray(r?.data) ? r.data : []
       return rows.map((row: any) => ({
         label: GENDER_NAMES[String(row.gender || '').toLowerCase()] || String(row.gender || '—'),
@@ -338,12 +379,32 @@ export default function PresentMode(p: Props) {
     }
 
     const deviceBreakdown = async () => {
-      const r = await metaCall('insights', { level: 'account', breakdowns: 'impression_device', fields: 'impressions', limit: '20', ...p.period }, p.metaAccount)
+      const r = await metaCall('insights', withFilter({ level: 'account', breakdowns: 'impression_device', fields: 'impressions', limit: '20', ...p.period }), p.metaAccount)
       const rows = Array.isArray(r?.data) ? r.data : []
       return rows.map((row: any) => {
         const raw = String(row.impression_device || '').toLowerCase()
         return { label: DEVICE_NAMES[raw] || raw || '—', value: +row.impressions || 0 }
       }).filter((b: Bucket) => b.value > 0).sort((a: Bucket, b: Bucket) => b.value - a.value)
+    }
+
+    // Quando há filtro, refaz a timeseries só com as campanhas selecionadas.
+    // Sem filtro, usa a série recebida do parent (já foi buscada lá).
+    const timeSeries = async () => {
+      if (!filteringParam) return null
+      const r = await metaCall('insights', withFilter({
+        level: 'account', limit: '100',
+        fields: 'spend,impressions,clicks,actions',
+        time_increment: '1',
+        ...p.period,
+      }), p.metaAccount)
+      const rows = Array.isArray(r?.data) ? r.data : []
+      return rows.map((row: any) => ({
+        date: String(row.date_start || ''),
+        spend: +row.spend || 0,
+        impressions: +row.impressions || 0,
+        clicks: +row.clicks || 0,
+        actions: row.actions,
+      }))
     }
 
     Promise.all([
@@ -354,8 +415,9 @@ export default function PresentMode(p: Props) {
       fetchTopAds(tipoCriativosEff),
       fetchTopCamps(tipoTopEff),
       fetchTopAdsets(tipoTopEff),
+      timeSeries(),
     ])
-      .then(([totals, a, g, d, ads, camps, adsets]) => {
+      .then(([totals, a, g, d, ads, camps, adsets, ts]) => {
         if (cancelled) return
         setAccountTotals(totals)
         setAge(a)
@@ -364,6 +426,7 @@ export default function PresentMode(p: Props) {
         setTopAds(ads)
         setTopCamps(camps)
         setTopAdsets(adsets)
+        setFilteredTimeSeries(ts as any)
         setLoading(false)
       })
       .catch(e => {
@@ -374,7 +437,7 @@ export default function PresentMode(p: Props) {
 
     return () => { cancelled = true }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [p.metaAccount, p.period, tipo])
+  }, [p.metaAccount, p.period, tipo, filteringParam])
 
   // Effects locais: refetch SÓ quando o override local muda.
   // - tipoIdade=null → effect principal cuida (não dispara aqui)
@@ -428,6 +491,11 @@ export default function PresentMode(p: Props) {
             {(p.clienteName || 'CLIENTE').toUpperCase()} — {labelOfTipo(tipo).toUpperCase()} — META ADS
           </div>
         </div>
+        <CampFilterDropdown
+          campaigns={p.campaigns}
+          selectedCampIds={p.selectedCampIds}
+          onChange={p.onChangeSelectedCampIds}
+        />
         <TipoSelector value={tipo} onChange={(v) => {
           setTipo(v)
           // Resetar overrides locais quando troca global (faz sentido voltarem pra "Auto")
@@ -469,7 +537,12 @@ export default function PresentMode(p: Props) {
             {loading && !age.length ? <Loading /> : age.length === 0 ? <Empty msg={error || `Sem ${labelOfTipo(tipoIdadeEff).toLowerCase()} por idade`} /> : <BarChart data={age} color="#22d3ee" />}
           </Card>
           <Card title={`Investimento e ${cprOf(tipo)} — por dia`} style={{ flex: '1 1 0', minHeight: 0 }}>
-            {p.timeSeriesData.length === 0 ? <Empty msg="Sem série temporal" /> : <TimelineChart data={p.timeSeriesData} resultLabel={resultLabel} actionKeys={actionKeys} />}
+            {(() => {
+              const tsData = filteringParam ? (filteredTimeSeries || []) : p.timeSeriesData
+              return tsData.length === 0
+                ? <Empty msg="Sem série temporal" />
+                : <TimelineChart data={tsData} resultLabel={resultLabel} actionKeys={actionKeys} />
+            })()}
           </Card>
         </div>
 
@@ -626,34 +699,392 @@ function Card({ title, children, style, headerRight }: { title: string; children
 // Lista de tipos disponíveis no seletor (ordem importa: do mais comum pro menos)
 const TIPOS_DISPONIVEIS = ['VENDAS', 'LEADS', 'MENSAGENS', 'TRÁFEGO', 'ENGAJAMENTO', 'RECONHECIMENTO'] as const
 
-// Seletor global no header — dropdown nativo, estilo dark.
+// Seletor global no header — card branco com label superior, padrão visual do PeriodFilter.
 function TipoSelector({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+  const [open, setOpen] = useState(false)
+  const rootRef = useRef<HTMLDivElement | null>(null)
+
+  useEffect(() => {
+    if (!open) return
+    const onDown = (e: MouseEvent) => {
+      if (rootRef.current && !rootRef.current.contains(e.target as Node)) setOpen(false)
+    }
+    document.addEventListener('mousedown', onDown)
+    return () => document.removeEventListener('mousedown', onDown)
+  }, [open])
+
   return (
-    <select
-      value={value}
-      onChange={(e) => onChange(e.target.value)}
-      style={{
-        padding: 'clamp(6px, .7vw, 11px) clamp(10px, 1vw, 16px)',
-        background: 'rgba(34,211,238,.1)',
-        border: '1.5px solid rgba(34,211,238,.35)',
-        borderRadius: 10,
-        color: '#7dd3fc',
-        fontSize: 'clamp(10px, .8vw, 14px)',
-        fontWeight: 700,
-        cursor: 'pointer',
-        fontFamily: 'inherit',
-        outline: 'none',
-        appearance: 'none',
-        paddingRight: 'clamp(22px, 2vw, 32px)',
-        backgroundImage: `url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'><path fill='%237dd3fc' d='M6 8L2 4h8z'/></svg>")`,
-        backgroundRepeat: 'no-repeat',
-        backgroundPosition: 'right 10px center',
-      }}
-    >
-      {TIPOS_DISPONIVEIS.map(t => (
-        <option key={t} value={t} style={{ background: '#0a2540' }}>{labelOfTipo(t)}</option>
-      ))}
-    </select>
+    <div ref={rootRef} style={{ position: 'relative' }}>
+      <button
+        type="button"
+        onClick={() => setOpen(o => !o)}
+        style={{
+          minWidth: 180,
+          minHeight: 52,
+          display: 'flex',
+          alignItems: 'center',
+          gap: 10,
+          justifyContent: 'space-between',
+          padding: '8px 12px 8px 14px',
+          borderRadius: 16,
+          border: open ? '1px solid rgba(37,99,235,.34)' : '1px solid rgba(148,163,184,.28)',
+          background: 'linear-gradient(180deg, rgba(255,255,255,.98), rgba(246,250,255,.98))',
+          boxShadow: open ? '0 16px 28px rgba(37,99,235,.12)' : '0 10px 24px rgba(15,23,42,.06)',
+          color: '#0f172a',
+          cursor: 'pointer',
+          transition: 'all .18s ease',
+          fontFamily: 'inherit',
+        }}
+      >
+        <span style={{ display: 'flex', flexDirection: 'column', gap: 4, minWidth: 0, textAlign: 'left' }}>
+          <span style={{ fontSize: 10, fontWeight: 800, color: '#7f8ea3', letterSpacing: '.12em', textTransform: 'uppercase' }}>Tipo de campanha</span>
+          <span style={{ fontSize: 16, lineHeight: 1.1, fontWeight: 700, letterSpacing: '-.03em', color: '#0f172a' }}>{labelOfTipo(value)}</span>
+        </span>
+        <svg width={18} height={18} viewBox="0 0 24 24" fill="none" stroke="#7f8ea3" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0, transition: 'transform .16s ease', transform: open ? 'rotate(180deg)' : 'none' }}>
+          <polyline points="6 9 12 15 18 9" />
+        </svg>
+      </button>
+      {open && (
+        <div role="listbox" style={{
+          position: 'absolute',
+          top: 'calc(100% + 8px)',
+          left: 0,
+          minWidth: '100%',
+          background: '#fff',
+          border: '1px solid rgba(148,163,184,.28)',
+          borderRadius: 14,
+          boxShadow: '0 20px 40px rgba(15,23,42,.16)',
+          padding: 6,
+          zIndex: 20,
+        }}>
+          {TIPOS_DISPONIVEIS.map(t => {
+            const active = t === value
+            return (
+              <button
+                key={t}
+                type="button"
+                onClick={() => { onChange(t); setOpen(false) }}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 10,
+                  width: '100%',
+                  padding: '10px 12px',
+                  border: 'none',
+                  background: active ? 'rgba(37,99,235,.08)' : 'transparent',
+                  borderRadius: 10,
+                  cursor: 'pointer',
+                  fontFamily: 'inherit',
+                  textAlign: 'left',
+                }}
+              >
+                <span style={{ width: 14, color: '#2563eb', fontWeight: 800, fontSize: 13 }}>{active ? '✓' : ''}</span>
+                <span style={{ fontSize: 14, fontWeight: 700, color: '#0f172a', letterSpacing: '-.01em' }}>{labelOfTipo(t)}</span>
+              </button>
+            )
+          })}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// Tags detectadas a partir do nome da campanha. Ordem importa: tags mais específicas
+// (B2B/B2C) vêm antes das mais genéricas (LEAD/MSG) pra aparecerem primeiro na linha.
+// Cada tag tem keywords (regex word boundary) e uma cor.
+const CAMP_TAGS: Array<{ key: string; label: string; color: string; bg: string; rx: RegExp }> = [
+  { key: 'VENDAS', label: 'Vendas', color: '#15803d', bg: 'rgba(34,197,94,.12)', rx: /\b(vendas?|sales|venda)\b/i },
+  { key: 'LEAD', label: 'Lead', color: '#1d4ed8', bg: 'rgba(59,130,246,.12)', rx: /\b(lead|leads|cadastro)\b/i },
+  { key: 'MSG', label: 'Mensagens', color: '#7c3aed', bg: 'rgba(124,58,237,.12)', rx: /\b(msg|mensag|whats|chat)\b/i },
+  { key: 'TRAFEGO', label: 'Tráfego', color: '#0891b2', bg: 'rgba(8,145,178,.12)', rx: /\b(tr[áa]fego|trafic|trafego|tr[aá]fico)\b/i },
+  { key: 'B2B', label: 'B2B', color: '#b45309', bg: 'rgba(245,158,11,.14)', rx: /\bb2b\b/i },
+  { key: 'B2C', label: 'B2C', color: '#be185d', bg: 'rgba(236,72,153,.12)', rx: /\bb2c\b/i },
+  { key: 'CATALOGO', label: 'Catálogo', color: '#c2410c', bg: 'rgba(249,115,22,.12)', rx: /\b(cat[áa]logo|catalog)\b/i },
+  { key: 'REMARKETING', label: 'Remkt', color: '#475569', bg: 'rgba(71,85,105,.14)', rx: /\b(remarketing|remkt|retarget)\b/i },
+  { key: 'TESTE', label: 'Teste', color: '#6b21a8', bg: 'rgba(168,85,247,.12)', rx: /\b(teste|test|ab\-?test)\b/i },
+]
+
+function detectTags(name: string) {
+  return CAMP_TAGS.filter(t => t.rx.test(name))
+}
+
+// Filtro manual de campanhas — card branco no header, dropdown com checkboxes.
+// Vazio = todas as campanhas (sem filtragem). Com seleção = só essas vão pros KPIs/breakdowns/tops.
+function CampFilterDropdown({ campaigns, selectedCampIds, onChange }: {
+  campaigns: Campaign[]
+  selectedCampIds: Set<string>
+  onChange: (next: Set<string> | ((prev: Set<string>) => Set<string>)) => void
+}) {
+  const [open, setOpen] = useState(false)
+  const [draft, setDraft] = useState<Set<string>>(selectedCampIds)
+  const [search, setSearch] = useState('')
+  const rootRef = useRef<HTMLDivElement | null>(null)
+
+  // Sincroniza o rascunho quando o estado externo muda ou ao abrir (evita estado "perdido")
+  useEffect(() => { if (open) setDraft(new Set(selectedCampIds)) }, [open, selectedCampIds])
+
+  useEffect(() => {
+    if (!open) return
+    const onDown = (e: MouseEvent) => {
+      if (rootRef.current && !rootRef.current.contains(e.target as Node)) setOpen(false)
+    }
+    document.addEventListener('mousedown', onDown)
+    return () => document.removeEventListener('mousedown', onDown)
+  }, [open])
+
+  const sorted = useMemo(() => (
+    [...campaigns].sort((a, b) => (b.spend || 0) - (a.spend || 0))
+  ), [campaigns])
+  const filtered = useMemo(() => {
+    const q = search.trim().toLowerCase()
+    return q ? sorted.filter(c => c.name.toLowerCase().includes(q)) : sorted
+  }, [sorted, search])
+
+  // Agrupa campanhas por tag p/ os atalhos. Cada campanha pode aparecer em várias tags.
+  const tagBuckets = useMemo(() => {
+    const map = new Map<string, { def: typeof CAMP_TAGS[number]; ids: string[] }>()
+    for (const c of campaigns) {
+      for (const t of detectTags(c.name)) {
+        if (!map.has(t.key)) map.set(t.key, { def: t, ids: [] })
+        map.get(t.key)!.ids.push(c.id)
+      }
+    }
+    return Array.from(map.values()).filter(b => b.ids.length > 0)
+  }, [campaigns])
+
+  // Aplica/desfaz seleção de um bucket de tag no draft.
+  const toggleTagBucket = (ids: string[]) => {
+    setDraft(prev => {
+      const next = new Set(prev)
+      const allIn = ids.every(id => next.has(id))
+      if (allIn) ids.forEach(id => next.delete(id))
+      else ids.forEach(id => next.add(id))
+      return next
+    })
+  }
+
+  const count = selectedCampIds.size
+  const label = count === 0
+    ? 'Todas as campanhas'
+    : count === 1
+      ? (campaigns.find(c => selectedCampIds.has(c.id))?.name || '').slice(0, 28) + ((campaigns.find(c => selectedCampIds.has(c.id))?.name || '').length > 28 ? '…' : '')
+      : `${count} selecionadas`
+
+  const apply = () => { onChange(new Set(draft)); setOpen(false) }
+  const clearAll = () => { setDraft(new Set()); onChange(new Set()); setOpen(false) }
+
+  return (
+    <div ref={rootRef} style={{ position: 'relative' }}>
+      <button
+        type="button"
+        onClick={() => setOpen(o => !o)}
+        style={{
+          minWidth: 200,
+          minHeight: 52,
+          display: 'flex',
+          alignItems: 'center',
+          gap: 10,
+          justifyContent: 'space-between',
+          padding: '8px 12px 8px 14px',
+          borderRadius: 16,
+          border: open || count > 0 ? '1px solid rgba(37,99,235,.34)' : '1px solid rgba(148,163,184,.28)',
+          background: 'linear-gradient(180deg, rgba(255,255,255,.98), rgba(246,250,255,.98))',
+          boxShadow: open || count > 0 ? '0 16px 28px rgba(37,99,235,.12)' : '0 10px 24px rgba(15,23,42,.06)',
+          color: '#0f172a',
+          cursor: 'pointer',
+          transition: 'all .18s ease',
+          fontFamily: 'inherit',
+        }}
+      >
+        <span style={{ display: 'flex', flexDirection: 'column', gap: 4, minWidth: 0, textAlign: 'left' }}>
+          <span style={{ fontSize: 10, fontWeight: 800, color: '#7f8ea3', letterSpacing: '.12em', textTransform: 'uppercase' }}>Campanhas</span>
+          <span style={{ fontSize: 16, lineHeight: 1.1, fontWeight: 700, letterSpacing: '-.03em', color: '#0f172a', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{label}</span>
+        </span>
+        <svg width={18} height={18} viewBox="0 0 24 24" fill="none" stroke="#7f8ea3" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0, transition: 'transform .16s ease', transform: open ? 'rotate(180deg)' : 'none' }}>
+          <polyline points="6 9 12 15 18 9" />
+        </svg>
+      </button>
+      {open && (
+        <div style={{
+          position: 'absolute',
+          top: 'calc(100% + 8px)',
+          left: 0,
+          width: 340,
+          background: '#fff',
+          border: '1px solid rgba(148,163,184,.28)',
+          borderRadius: 14,
+          boxShadow: '0 20px 40px rgba(15,23,42,.16)',
+          zIndex: 30,
+          display: 'flex',
+          flexDirection: 'column',
+          maxHeight: 480,
+        }}>
+          <div style={{ padding: '12px 14px 8px', borderBottom: '1px solid rgba(15,23,42,.06)' }}>
+            <div style={{ fontSize: 13, fontWeight: 800, color: '#0f172a', marginBottom: 8 }}>Filtrar métricas</div>
+            <input
+              type="text"
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              placeholder="Buscar campanha…"
+              style={{
+                width: '100%',
+                padding: '8px 10px',
+                fontSize: 13,
+                fontFamily: 'inherit',
+                border: '1px solid rgba(148,163,184,.28)',
+                borderRadius: 8,
+                outline: 'none',
+                color: '#0f172a',
+                background: '#f8fafc',
+              }}
+            />
+            {tagBuckets.length > 0 && (
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 10 }}>
+                {tagBuckets.map(({ def, ids }) => {
+                  const allIn = ids.every(id => draft.has(id))
+                  return (
+                    <button
+                      key={def.key}
+                      type="button"
+                      onClick={() => toggleTagBucket(ids)}
+                      title={allIn ? `Desmarcar ${def.label}` : `Marcar todas de ${def.label}`}
+                      style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: 5,
+                        padding: '4px 9px',
+                        borderRadius: 999,
+                        border: allIn ? `1.5px solid ${def.color}` : `1px solid ${def.bg}`,
+                        background: allIn ? def.color : def.bg,
+                        color: allIn ? '#fff' : def.color,
+                        fontSize: 11,
+                        fontWeight: 800,
+                        letterSpacing: '.02em',
+                        cursor: 'pointer',
+                        fontFamily: 'inherit',
+                        transition: 'all .14s ease',
+                      }}
+                    >
+                      {def.label}
+                      <span style={{
+                        fontSize: 10,
+                        fontWeight: 700,
+                        opacity: .85,
+                      }}>{ids.length}</span>
+                    </button>
+                  )
+                })}
+              </div>
+            )}
+          </div>
+          <div style={{ overflowY: 'auto', flex: 1, padding: '6px 0' }}>
+            {filtered.length === 0 && (
+              <div style={{ padding: 16, fontSize: 12, color: '#7f8ea3', textAlign: 'center' }}>Nenhuma campanha encontrada</div>
+            )}
+            {filtered.map(c => {
+              const checked = draft.has(c.id)
+              return (
+                <button
+                  key={c.id}
+                  type="button"
+                  onClick={() => {
+                    setDraft(prev => {
+                      const next = new Set(prev)
+                      if (next.has(c.id)) next.delete(c.id)
+                      else next.add(c.id)
+                      return next
+                    })
+                  }}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 10,
+                    width: '100%',
+                    padding: '8px 14px',
+                    border: 'none',
+                    background: 'transparent',
+                    cursor: 'pointer',
+                    fontFamily: 'inherit',
+                    textAlign: 'left',
+                  }}
+                >
+                  <span style={{
+                    width: 16,
+                    height: 16,
+                    borderRadius: 4,
+                    border: checked ? '1.5px solid #2563eb' : '1.5px solid rgba(148,163,184,.5)',
+                    background: checked ? '#2563eb' : '#fff',
+                    flexShrink: 0,
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    color: '#fff',
+                    fontSize: 11,
+                    fontWeight: 800,
+                  }}>{checked ? '✓' : ''}</span>
+                  <div style={{ minWidth: 0, flex: 1 }}>
+                    <div style={{ fontSize: 13, fontWeight: 700, color: '#0f172a', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{c.name}</div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 2, flexWrap: 'wrap' }}>
+                      <span style={{ fontSize: 11, color: '#7f8ea3', fontWeight: 600 }}>R$ {fmt(c.spend || 0)}</span>
+                      {detectTags(c.name).map(t => (
+                        <span
+                          key={t.key}
+                          style={{
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            padding: '1px 6px',
+                            borderRadius: 4,
+                            background: t.bg,
+                            color: t.color,
+                            fontSize: 9,
+                            fontWeight: 800,
+                            letterSpacing: '.04em',
+                            textTransform: 'uppercase',
+                            lineHeight: 1.4,
+                          }}
+                        >{t.label}</span>
+                      ))}
+                    </div>
+                  </div>
+                </button>
+              )
+            })}
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 14px', borderTop: '1px solid rgba(15,23,42,.06)', gap: 8 }}>
+            <button
+              type="button"
+              onClick={clearAll}
+              style={{
+                background: 'transparent',
+                border: 'none',
+                color: '#7f8ea3',
+                fontSize: 12,
+                fontWeight: 700,
+                cursor: 'pointer',
+                fontFamily: 'inherit',
+                padding: '6px 8px',
+              }}
+            >Limpar</button>
+            <button
+              type="button"
+              onClick={apply}
+              style={{
+                background: '#2563eb',
+                border: 'none',
+                color: '#fff',
+                fontSize: 13,
+                fontWeight: 700,
+                cursor: 'pointer',
+                fontFamily: 'inherit',
+                padding: '8px 18px',
+                borderRadius: 10,
+                boxShadow: '0 8px 16px rgba(37,99,235,.24)',
+              }}
+            >Aplicar</button>
+          </div>
+        </div>
+      )}
+    </div>
   )
 }
 
@@ -1112,19 +1543,31 @@ function toggleBtnStyle(active: boolean): React.CSSProperties {
 function CreativesGrid({ creatives, resultLabel, cprLabel, onClick }: { creatives: TopAd[]; resultLabel: string; cprLabel: string; onClick?: (c: TopAd) => void }) {
   const fmtBrl = (n: number) => 'R$ ' + n.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
   const fmtN = (n: number) => n.toLocaleString('pt-BR')
-  const rows = [
+  const pct = (n: number) => (n * 100).toFixed(1) + '%'
+  // Mostra ROAS só se ao menos 1 criativo tiver valor (>0). Idem hook/thruplay (vídeo).
+  const hasRoas = creatives.some(c => c.roas > 0)
+  const hasVideo = creatives.some(c => c.video3s > 0 || c.videoThruplay > 0)
+  const rows: Array<{ lbl: string; val: (c: TopAd) => string; highlight?: boolean }> = [
     { lbl: resultLabel, val: (c: TopAd) => String(c.results), highlight: true },
     { lbl: cprLabel, val: (c: TopAd) => c.cpl > 0 ? fmtBrl(c.cpl) : '—', highlight: true },
+    ...(hasRoas ? [{ lbl: 'ROAS', val: (c: TopAd) => c.roas > 0 ? c.roas.toFixed(2) + 'x' : '—', highlight: true }] : []),
     { lbl: 'CTR', val: (c: TopAd) => c.ctr.toFixed(2) + '%' },
+    { lbl: 'Cliques no link', val: (c: TopAd) => c.linkClicks > 0 ? fmtN(c.linkClicks) : '—' },
+    { lbl: 'CPC', val: (c: TopAd) => c.cpc > 0 ? fmtBrl(c.cpc) : '—' },
     { lbl: 'Investido', val: (c: TopAd) => fmtBrl(c.spend) },
     { lbl: '% Investimento', val: (c: TopAd) => c.spendShare.toFixed(1) + '%' },
     { lbl: 'Impressões', val: (c: TopAd) => fmtN(c.impressions) },
     { lbl: 'Alcance', val: (c: TopAd) => c.reach > 0 ? fmtN(c.reach) : '—' },
     { lbl: 'Frequência', val: (c: TopAd) => c.frequency > 0 ? c.frequency.toFixed(2) : '—' },
     { lbl: 'CPM', val: (c: TopAd) => c.cpm > 0 ? fmtBrl(c.cpm) : '—' },
+    ...(hasVideo ? [
+      { lbl: 'Hook rate (3s)', val: (c: TopAd) => c.impressions > 0 && c.video3s > 0 ? pct(c.video3s / c.impressions) : '—' },
+      { lbl: 'Thruplay rate', val: (c: TopAd) => c.impressions > 0 && c.videoThruplay > 0 ? pct(c.videoThruplay / c.impressions) : '—' },
+    ] : []),
   ]
-  // Grid compartilhado: 1ª coluna fixa pro rótulo (auto), demais colunas iguais — alinha rótulo/valor à thumb correspondente.
-  const gridCols = `minmax(110px, max-content) repeat(${creatives.length}, minmax(0, 1fr))`
+  // Coluna de rótulos mais larga p/ caber labels longos ("Custo por Engajamento") sem cortar.
+  // Valores numéricos ficam menores pra compensar.
+  const gridCols = `minmax(160px, max-content) repeat(${creatives.length}, minmax(0, 1fr))`
   const colGap = 'clamp(4px, .5vw, 10px)'
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 'clamp(6px, .7vw, 12px)', minHeight: 0, flex: 1 }}>
@@ -1152,7 +1595,7 @@ function CreativesGrid({ creatives, resultLabel, cprLabel, onClick }: { creative
           <div key={ri} style={{ display: 'grid', gridTemplateColumns: gridCols, columnGap: colGap, alignItems: 'center', borderBottom: '1px solid rgba(255,255,255,.04)' }}>
             <div style={{ padding: 'clamp(4px, .5vw, 8px) 4px', textAlign: 'left', color: '#94a3b8', fontWeight: 600, fontSize: 'clamp(8px, .65vw, 11px)', letterSpacing: '.04em', textTransform: 'uppercase' }}>{row.lbl}</div>
             {creatives.map((c, ci) => (
-              <div key={ci} style={{ padding: 'clamp(4px, .5vw, 8px) 8px', textAlign: 'right', fontWeight: 700, color: row.highlight ? '#7dd3fc' : '#fff', fontSize: row.highlight ? 'clamp(10px, .9vw, 14px)' : 'clamp(9px, .8vw, 13px)', borderLeft: ci === 0 ? '1px solid rgba(255,255,255,.06)' : '1px solid rgba(255,255,255,.04)', fontVariantNumeric: 'tabular-nums' }}>{row.val(c)}</div>
+              <div key={ci} style={{ padding: 'clamp(4px, .5vw, 8px) 8px', textAlign: 'right', fontWeight: 700, color: row.highlight ? '#7dd3fc' : '#fff', fontSize: row.highlight ? 'clamp(9px, .8vw, 12px)' : 'clamp(8px, .7vw, 11px)', borderLeft: ci === 0 ? '1px solid rgba(255,255,255,.06)' : '1px solid rgba(255,255,255,.04)', fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{row.val(c)}</div>
             ))}
           </div>
         ))}

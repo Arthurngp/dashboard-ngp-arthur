@@ -12,6 +12,7 @@ import { efCall, efHeaders } from '@/lib/api'
 import { Campaign, DateParam, Relatorio } from '@/types'
 import PeriodFilter from '@/components/PeriodFilter'
 import MetaAnalysisPanel from '@/components/MetaAnalysisPanel'
+import PresentMode from '@/app/dashboard/components/PresentMode'
 import { buildClientPortalNav } from './client-nav'
 import styles from './cliente.module.css'
 
@@ -42,9 +43,15 @@ export default function ClienteAnalyticsView() {
   const [prevCampaigns, setPrevCampaigns] = useState<Campaign[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
+  const [period, setPeriod] = useState<DateParam>({ date_preset: 'last_30d' })
   const [periodLabel, setPeriodLabel] = useState('Últimos 30 dias')
   const [comparisonLabel, setComparisonLabel] = useState('')
   const [openCards, setOpenCards] = useState<Set<string>>(new Set())
+  // Apresentação nativa: estado só na sessão (não persiste no localStorage do cliente).
+  const [presentMode, setPresentMode] = useState(false)
+  const [presentLoading, setPresentLoading] = useState(false)
+  const [selectedCampIds, setSelectedCampIds] = useState<Set<string>>(new Set())
+  const [timeSeriesData, setTimeSeriesData] = useState<Array<{ date: string; spend: number; impressions: number; clicks: number; actions?: Array<{ action_type: string; value: string }> }>>([])
   const [relatorios, setRelatorios] = useState<Relatorio[]>([])
   const [accessChecked, setAccessChecked] = useState(false)
   const [analyticsEnabled, setAnalyticsEnabled] = useState(false)
@@ -150,8 +157,40 @@ export default function ClienteAnalyticsView() {
 
   function onPeriodApply(dp: DateParam, label: string, cmpDp?: DateParam, cmpLbl?: string) {
     if (!analyticsEnabled) return
+    setPeriod(dp)
     setPeriodLabel(label)
     loadAll(dp, cmpDp, cmpLbl)
+  }
+
+  // Carrega série temporal (time_increment=1) e abre o PresentMode.
+  // Mesma lógica do dashboard interno: o PresentMode pega a série do parent
+  // quando não há filtro, e refaz quando o cliente filtra.
+  async function openPresentMode() {
+    if (!campaigns.length) return
+    setPresentLoading(true)
+    try {
+      const r = await metaCall('insights', {
+        level: 'account', limit: '100',
+        fields: 'spend,impressions,clicks,actions',
+        time_increment: '1',
+        ...period,
+      })
+      const rows = Array.isArray(r?.data) ? r.data : []
+      setTimeSeriesData(rows.map((row: { date_start?: string; spend?: string; impressions?: string; clicks?: string; actions?: Array<{ action_type: string; value: string }> }) => ({
+        date: String(row.date_start || ''),
+        spend: +(row.spend || 0),
+        impressions: +(row.impressions || 0),
+        clicks: +(row.clicks || 0),
+        actions: row.actions,
+      })))
+      setPresentMode(true)
+    } catch {
+      // Mesmo se a série falhar, abre o PresentMode — ele cuida do empty state
+      setTimeSeriesData([])
+      setPresentMode(true)
+    } finally {
+      setPresentLoading(false)
+    }
   }
 
   function toggleCard(id: string) {
@@ -199,6 +238,23 @@ export default function ClienteAnalyticsView() {
           <div className={styles.headerRight}>
             <button className={styles.btnSecondary} onClick={() => router.push('/cliente')}>← Ferramentas</button>
             {analyticsEnabled && <PeriodFilter onApply={onPeriodApply} />}
+            {analyticsEnabled && campaigns.length > 0 && (
+              <button
+                className={styles.btnSecondary}
+                onClick={openPresentMode}
+                disabled={presentLoading}
+                style={{
+                  background: presentLoading ? '#94a3b8' : 'linear-gradient(135deg, #2563eb, #22d3ee)',
+                  color: '#fff',
+                  border: 'none',
+                  fontWeight: 700,
+                  cursor: presentLoading ? 'wait' : 'pointer',
+                }}
+                title="Abrir apresentação em tela cheia"
+              >
+                {presentLoading ? 'Carregando…' : '🎬 Apresentar'}
+              </button>
+            )}
             <button className={styles.userPill} onClick={() => setProfileOpen(true)} type="button">
               <div className={styles.userDot}>{(sess.user || 'CL').slice(0, 2).toUpperCase()}</div>
               <span className={styles.userName}>{sess.user}</span>
@@ -300,6 +356,20 @@ export default function ClienteAnalyticsView() {
       </div>
 
       <ProfileModal isOpen={profileOpen} onClose={() => setProfileOpen(false)} />
+      {presentMode && (
+        <PresentMode
+          clienteName={sess.user || 'CLIENTE'}
+          metaAccount=""
+          periodLabel={periodLabel}
+          period={period}
+          campaigns={campaigns}
+          timeSeriesData={timeSeriesData}
+          selectedCampIds={selectedCampIds}
+          onChangeSelectedCampIds={setSelectedCampIds}
+          onApplyPeriod={(dp, label, cmpDp, cmpLbl) => { onPeriodApply(dp, label, cmpDp, cmpLbl) }}
+          onClose={() => setPresentMode(false)}
+        />
+      )}
     </div>
   )
 }

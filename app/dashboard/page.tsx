@@ -592,6 +592,8 @@ export default function DashboardPage() {
           period={period}
           campaigns={campaigns}
           timeSeriesData={timeSeriesData}
+          selectedCampIds={selectedCampIds}
+          onChangeSelectedCampIds={setSelectedCampIds}
           onApplyPeriod={onPeriodApply}
           onClose={() => setPresentMode(false)}
         />
