@@ -20,6 +20,7 @@ import {
 import { CSS } from '@dnd-kit/utilities'
 import { getSession } from '@/lib/auth'
 import WorkspaceTopbar from '@/components/WorkspaceTopbar'
+import { useChatNotifications } from '@/lib/team-chat/notifications-provider'
 import {
   isChatEnabled,
   useChannels,
@@ -237,8 +238,13 @@ function ChatShell({ usuarioId, isAdmin }: { usuarioId: string; isAdmin: boolean
       >
         <aside className={styles.sidebar}>
           <div className={styles.sidebarHeader}>
-            Chat NGP
-            <small>{loadingChannels ? 'carregando…' : `${channels.length} canais`}</small>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+              <div style={{ display: 'flex', flexDirection: 'column' }}>
+                <span>Chat NGP</span>
+                <small>{loadingChannels ? 'carregando…' : `${channels.length} canais`}</small>
+              </div>
+              <NotificationControls />
+            </div>
           </div>
           <div className={styles.sidebarScroll}>
             <SidebarSection
@@ -407,6 +413,96 @@ function SortableChannelItem({
         onToggleFavorite={onToggleFavorite}
         isClient={isClient}
       />
+    </div>
+  )
+}
+
+function NotificationControls() {
+  const { mute, setMute, desktopPermission, requestDesktopPermission } = useChatNotifications()
+  const canRequestDesktop = desktopPermission === 'default' || desktopPermission === 'unsupported'
+  const desktopOn = desktopPermission === 'granted'
+
+  async function handleRequest() {
+    const result = await requestDesktopPermission()
+    if (result === 'denied') {
+      alert('Notificações desktop bloqueadas pelo navegador. Habilite em Configurações do site.')
+    }
+  }
+
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+      {/* Toggle de mute (som + desktop notif) */}
+      <button
+        type="button"
+        onClick={() => setMute(!mute)}
+        title={mute ? 'Silenciado — clique para reativar notificações' : 'Notificações ativas — clique para silenciar'}
+        aria-label={mute ? 'Reativar notificações' : 'Silenciar notificações'}
+        style={{
+          background: 'none',
+          border: 'none',
+          padding: 6,
+          borderRadius: 6,
+          cursor: 'pointer',
+          color: mute ? '#ef4444' : '#6b7280',
+          display: 'inline-flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+        }}
+      >
+        {mute ? (
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <path d="M11 5L6 9H2v6h4l5 4V5z"/>
+            <line x1="23" y1="9" x2="17" y2="15"/>
+            <line x1="17" y1="9" x2="23" y2="15"/>
+          </svg>
+        ) : (
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <path d="M11 5L6 9H2v6h4l5 4V5z"/>
+            <path d="M15.54 8.46a5 5 0 0 1 0 7.07"/>
+          </svg>
+        )}
+      </button>
+
+      {/* Toggle de desktop notif — só mostra se ainda pode pedir permissão */}
+      {canRequestDesktop && (
+        <button
+          type="button"
+          onClick={handleRequest}
+          title="Habilitar notificações desktop (popups do sistema)"
+          aria-label="Habilitar notificações desktop"
+          style={{
+            background: 'none',
+            border: 'none',
+            padding: 6,
+            borderRadius: 6,
+            cursor: 'pointer',
+            color: '#6b7280',
+            display: 'inline-flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+          }}
+        >
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/>
+            <path d="M13.73 21a2 2 0 0 1-3.46 0"/>
+          </svg>
+        </button>
+      )}
+
+      {/* Indicador visual: desktop ativo */}
+      {desktopOn && (
+        <span
+          title="Notificações desktop ativadas"
+          aria-label="Notificações desktop ativas"
+          style={{
+            width: 8,
+            height: 8,
+            borderRadius: '50%',
+            background: '#10b981',
+            display: 'inline-block',
+          }}
+        />
+      )}
     </div>
   )
 }

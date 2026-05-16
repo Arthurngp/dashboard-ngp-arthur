@@ -1,7 +1,7 @@
 'use client'
 
-import React, { useState, useRef } from 'react';
-import { Target, FileText, Download, Calculator, Package, User, CreditCard, ChevronRight, Briefcase, BarChart4, ClipboardList, Plus, Trash2, LayoutDashboard, Save } from 'lucide-react';
+import React, { useState, useRef, useEffect } from 'react';
+import { Target, FileText, Download, Calculator, Package, User, CreditCard, ChevronRight, Briefcase, BarChart4, ClipboardList, Plus, Trash2, LayoutDashboard, Save, Sparkles, X, Loader2 } from 'lucide-react';
 import { crmCall } from '@/lib/crm-api';
 import CustomSelect from '@/components/CustomSelect';
 import CustomDatePicker from '@/components/CustomDatePicker';
@@ -62,6 +62,103 @@ export default function PropostasForm() {
   const [exportingPdf, setExportingPdf] = useState(false);
   const [saveMsg, setSaveMsg] = useState<{ type: 'ok' | 'err'; text: string } | null>(null);
 
+  const AI_INSTRUCTIONS_KEY = 'ngp:proposta-ai-instructions';
+  const DEFAULT_AI_INSTRUCTIONS = `Empresa: Grupo NGP (NGP + AmplaSoft).
+Tom: profissional, vendedor, direto. Foco em ROI e clareza de entregaveis.
+Sempre incluir: relatorio de performance, reuniao mensal de alinhamento, gestor dedicado.
+Se for performance: incluir auditoria de pixel, criativos por mes, otimizacao diaria.
+Se for software/site: incluir reunioes de discovery, prototipo aprovado, garantia de 30 dias pos entrega.
+Setup sempre separado da mensalidade.`;
+
+  const [aiOpen, setAiOpen] = useState(false);
+  const [aiBriefing, setAiBriefing] = useState('');
+  const [aiInstructions, setAiInstructions] = useState(DEFAULT_AI_INSTRUCTIONS);
+  const [aiLoading, setAiLoading] = useState(false);
+  const [aiError, setAiError] = useState<string | null>(null);
+  const [aiMode, setAiMode] = useState<'merge' | 'overwrite'>('merge');
+  const [aiShowInstructions, setAiShowInstructions] = useState(false);
+
+  // Modo principal da sidebar: 'manual' = formulario | 'chat' = entrevista IA
+  const [sidebarMode, setSidebarMode] = useState<'manual' | 'chat'>('manual');
+  type ChatMsg = { role: 'user' | 'assistant'; content: string };
+  const [chatHistory, setChatHistory] = useState<ChatMsg[]>([]);
+  const [chatInput, setChatInput] = useState('');
+  const [chatLoading, setChatLoading] = useState(false);
+  const [chatError, setChatError] = useState<string | null>(null);
+  const [chatDone, setChatDone] = useState(false);
+  const chatScrollRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    try {
+      const saved = typeof window !== 'undefined' ? localStorage.getItem(AI_INSTRUCTIONS_KEY) : null;
+      if (saved !== null) setAiInstructions(saved);
+    } catch {}
+  }, []);
+
+  const persistInstructions = (val: string) => {
+    setAiInstructions(val);
+    try { localStorage.setItem(AI_INSTRUCTIONS_KEY, val); } catch {}
+  };
+
+  const restoreDefaultInstructions = () => {
+    persistInstructions(DEFAULT_AI_INSTRUCTIONS);
+  };
+
+  const handleAiFill = async () => {
+    if (!aiBriefing.trim() || aiBriefing.trim().length < 10) {
+      setAiError('Descreva o cliente, dor e valores em pelo menos 10 caracteres.');
+      return;
+    }
+    setAiLoading(true);
+    setAiError(null);
+    try {
+      const res = await crmCall('crm-proposta-parse-ai', {
+        briefing: aiBriefing.trim(),
+        custom_instructions: aiInstructions.trim() || undefined,
+      });
+      if (res.error) {
+        setAiError(res.error);
+        return;
+      }
+      const extracted = res.extracted || {};
+      setFormData(prev => {
+        const next: any = { ...prev };
+        const fields: (keyof typeof prev)[] = [
+          'clienteNome', 'clienteDoc', 'clienteContato', 'clienteSegmento',
+          'tipoProjeto', 'dorPrincipal', 'faturamentoMedio', 'ticketMedio',
+          'investimentoMensal', 'canalLeads', 'tempoResposta', 'taxaConversao',
+          'crmAtual', 'prazoContrato', 'condicaoPagamento', 'onboardingDias',
+        ];
+        for (const f of fields) {
+          const val = extracted[f];
+          if (val === null || val === undefined) continue;
+          const currentEmpty = prev[f] === '' || prev[f] === null || prev[f] === undefined;
+          if (aiMode === 'overwrite' || currentEmpty) next[f] = val;
+        }
+        if (Array.isArray(extracted.itens) && extracted.itens.length > 0) {
+          const aiItems = extracted.itens.map((it: any, idx: number) => ({
+            id: Date.now() + idx,
+            descricao: it.descricao || '',
+            escopo: it.escopo || '',
+            vlr_un: Number(it.vlr_un) || 0,
+            qtd: Number(it.qtd) || 1,
+          }));
+          const existingItemsEmpty = prev.itens.length === 1 && !prev.itens[0].descricao.trim() && prev.itens[0].vlr_un === 0;
+          next.itens = (aiMode === 'overwrite' || existingItemsEmpty) ? aiItems : [...prev.itens, ...aiItems];
+        }
+        return next;
+      });
+      setAiOpen(false);
+      setAiBriefing('');
+      setSaveMsg({ type: 'ok', text: 'Proposta preenchida pela IA. Revise antes de exportar.' });
+      setTimeout(() => setSaveMsg(null), 5000);
+    } catch (e: any) {
+      setAiError(e?.message || 'Erro ao chamar a IA.');
+    } finally {
+      setAiLoading(false);
+    }
+  };
+
   const validateForm = (): string | null => {
     if (!formData.clienteNome.trim()) return 'Preencha o nome do cliente.'
     if (!formData.responsavel.trim()) return 'Preencha o responsável.'
@@ -70,6 +167,129 @@ export default function PropostasForm() {
     if (total <= 0) return 'O valor total deve ser maior que zero.'
     return null
   }
+
+  const mergeFieldsFromAi = (extracted: any) => {
+    if (!extracted) return;
+    setFormData(prev => {
+      const next: any = { ...prev };
+      const fields: (keyof typeof prev)[] = [
+        'clienteNome', 'clienteDoc', 'clienteContato', 'clienteSegmento',
+        'tipoProjeto', 'dorPrincipal', 'faturamentoMedio', 'ticketMedio',
+        'investimentoMensal', 'canalLeads', 'tempoResposta', 'taxaConversao',
+        'crmAtual', 'prazoContrato', 'condicaoPagamento', 'onboardingDias',
+      ];
+      for (const f of fields) {
+        const val = extracted[f];
+        if (val === null || val === undefined) continue;
+        next[f] = val;
+      }
+      if (Array.isArray(extracted.itens) && extracted.itens.length > 0) {
+        const norm = (s: string) => (s || '').toLowerCase().trim().replace(/\s+/g, ' ');
+        const aiItems = extracted.itens.map((it: any, idx: number) => ({
+          id: Date.now() + idx,
+          descricao: it.descricao || '',
+          escopo: it.escopo || '',
+          vlr_un: Number(it.vlr_un) || 0,
+          qtd: Number(it.qtd) || 1,
+        }));
+        const existingItemsEmpty = prev.itens.length === 1 && !prev.itens[0].descricao.trim() && prev.itens[0].vlr_un === 0;
+        if (existingItemsEmpty) {
+          next.itens = aiItems;
+        } else {
+          // Dedup por descrição normalizada: se a IA reenviar item igual, substitui o existente.
+          const byDesc = new Map<string, any>();
+          for (const it of prev.itens) byDesc.set(norm(it.descricao), it);
+          for (const ai of aiItems) {
+            const key = norm(ai.descricao);
+            const existing = byDesc.get(key);
+            if (existing) {
+              byDesc.set(key, { ...existing, escopo: ai.escopo || existing.escopo, vlr_un: ai.vlr_un || existing.vlr_un, qtd: ai.qtd || existing.qtd });
+            } else {
+              byDesc.set(key, ai);
+            }
+          }
+          next.itens = Array.from(byDesc.values());
+        }
+      }
+      return next;
+    });
+  };
+
+  const sendChatMessage = async (userText: string) => {
+    if (!userText.trim() || chatLoading) return;
+    setChatError(null);
+    const userMsg: ChatMsg = { role: 'user', content: userText.trim() };
+    const newHistory: ChatMsg[] = [...chatHistory, userMsg];
+    setChatHistory(newHistory);
+    setChatInput('');
+    setChatLoading(true);
+    try {
+      const currentState = {
+        clienteNome: formData.clienteNome,
+        clienteDoc: formData.clienteDoc,
+        clienteContato: formData.clienteContato,
+        clienteSegmento: formData.clienteSegmento,
+        tipoProjeto: formData.tipoProjeto,
+        dorPrincipal: formData.dorPrincipal,
+        faturamentoMedio: formData.faturamentoMedio,
+        investimentoMensal: formData.investimentoMensal,
+        prazoContrato: formData.prazoContrato,
+        condicaoPagamento: formData.condicaoPagamento,
+        itens: formData.itens.filter(i => i.descricao || i.vlr_un > 0),
+      };
+      const res = await crmCall('crm-proposta-chat-ai', {
+        history: newHistory,
+        current_state: currentState,
+        custom_instructions: aiInstructions.trim() || undefined,
+      });
+      if (res.error) {
+        setChatError(res.error);
+        return;
+      }
+      const aiMsg: ChatMsg = { role: 'assistant', content: res.message || '...' };
+      setChatHistory(h => [...h, aiMsg]);
+      if (res.fields_to_update) mergeFieldsFromAi(res.fields_to_update);
+      if (res.done) setChatDone(true);
+    } catch (e: any) {
+      setChatError(e?.message || 'Erro ao falar com a IA.');
+    } finally {
+      setChatLoading(false);
+      setTimeout(() => {
+        chatScrollRef.current?.scrollTo({ top: chatScrollRef.current.scrollHeight, behavior: 'smooth' });
+      }, 50);
+    }
+  };
+
+  const startChat = async () => {
+    if (chatHistory.length > 0) return;
+    setChatLoading(true);
+    setChatError(null);
+    try {
+      const res = await crmCall('crm-proposta-chat-ai', {
+        history: [{ role: 'user', content: 'Oi, quero montar uma proposta nova. Pode comecar a entrevista?' }],
+        current_state: { clienteNome: formData.clienteNome, tipoProjeto: formData.tipoProjeto },
+        custom_instructions: aiInstructions.trim() || undefined,
+      });
+      if (res.error) { setChatError(res.error); return; }
+      setChatHistory([
+        { role: 'user', content: 'Oi, quero montar uma proposta nova. Pode comecar a entrevista?' },
+        { role: 'assistant', content: res.message || 'Vamos comecar — qual o cliente que vamos atender?' },
+      ]);
+      if (res.fields_to_update) mergeFieldsFromAi(res.fields_to_update);
+      if (res.done) setChatDone(true);
+    } catch (e: any) {
+      setChatError(e?.message || 'Erro ao iniciar conversa.');
+    } finally {
+      setChatLoading(false);
+    }
+  };
+
+  const resetChat = () => {
+    setChatHistory([]);
+    setChatInput('');
+    setChatError(null);
+    setChatDone(false);
+  };
 
   const handleSave = async () => {
     const validationErr = validateForm()
@@ -165,13 +385,36 @@ export default function PropostasForm() {
            <div className={s.headerIconBox}>
               <Plus size={20} />
            </div>
-           <div>
+           <div style={{ flex: 1 }}>
               <h2 className={s.headerTitle}>Configurador Proposta</h2>
               <p className={s.headerSub}>Terminal Comercial Corporativo</p>
            </div>
         </div>
+
+        {/* Abas Manual / Com IA */}
+        <div className={s.tabBar}>
+          <button
+            type="button"
+            onClick={() => setSidebarMode('manual')}
+            className={`${s.tabBtn} ${sidebarMode === 'manual' ? s.tabBtnActive : ''}`}
+          >
+            Manual
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setSidebarMode('chat');
+              if (chatHistory.length === 0) startChat();
+            }}
+            className={`${s.tabBtn} ${sidebarMode === 'chat' ? s.tabBtnActive : ''}`}
+          >
+            <Sparkles size={12} style={{ marginRight: 4 }} />
+            Fazer com IA
+          </button>
+        </div>
         
         {/* Formulário */}
+        {sidebarMode === 'manual' && (
         <div className={s.scrollArea}>
           
           {/* 1. Identificação */}
@@ -233,7 +476,7 @@ export default function PropostasForm() {
             </div>
             <div className={s.grid2}>
               {['Site', 'Software', 'Performance/Vendas', 'Comercial Digital'].map(type => (
-                <button 
+                <button
                   key={type}
                   onClick={() => setFormData({...formData, tipoProjeto: type})}
                   className={`${s.toggleBtn} ${formData.tipoProjeto === type ? s.toggleBtnActive : ''}`}
@@ -242,6 +485,7 @@ export default function PropostasForm() {
                 </button>
               ))}
             </div>
+
           </section>
 
           {/* 3. Diagnóstico */}
@@ -342,7 +586,82 @@ export default function PropostasForm() {
             </div>
           </section>
         </div>
-        
+        )}
+
+        {/* Modo Chat IA */}
+        {sidebarMode === 'chat' && (
+          <div className={s.chatPanel}>
+            {/* Chips com campos preenchidos */}
+            <div className={s.chatChipsRow}>
+              {formData.clienteNome && <span className={s.chatChip}>✓ {formData.clienteNome}</span>}
+              {formData.tipoProjeto && <span className={s.chatChip}>✓ {formData.tipoProjeto}</span>}
+              {formData.dorPrincipal && <span className={s.chatChip} title={formData.dorPrincipal}>✓ Dor</span>}
+              {formData.itens.some(i => i.descricao && i.vlr_un > 0) && (
+                <span className={s.chatChip}>✓ {formData.itens.filter(i => i.descricao && i.vlr_un > 0).length} item(s)</span>
+              )}
+              {chatDone && <span className={`${s.chatChip} ${s.chatChipDone}`}>● Pronto</span>}
+            </div>
+
+            {/* Histórico do chat */}
+            <div ref={chatScrollRef} className={s.chatMessages}>
+              {chatHistory.length === 0 && !chatLoading && (
+                <div className={s.chatEmpty}>
+                  <Sparkles size={20} style={{ color: '#be123c', marginBottom: 8 }} />
+                  <p>A IA vai te entrevistar para montar a proposta.</p>
+                  <button onClick={startChat} className={s.chatStartBtn}>Iniciar entrevista</button>
+                </div>
+              )}
+              {chatHistory.filter((_, i) => i > 0 || chatHistory.length === 1).map((m, idx) => (
+                <div key={idx} className={m.role === 'user' ? s.chatMsgUser : s.chatMsgAssistant}>
+                  {m.content}
+                </div>
+              ))}
+              {chatLoading && (
+                <div className={s.chatMsgAssistant}>
+                  <Loader2 size={14} className={s.aiSpin} style={{ display: 'inline-block', marginRight: 6 }} />
+                  pensando...
+                </div>
+              )}
+              {chatError && <div className={s.chatErrorBox}>{chatError}</div>}
+            </div>
+
+            {/* Input do usuário */}
+            <div className={s.chatInputRow}>
+              <textarea
+                value={chatInput}
+                onChange={e => setChatInput(e.target.value)}
+                onKeyDown={e => {
+                  if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault();
+                    sendChatMessage(chatInput);
+                  }
+                }}
+                disabled={chatLoading || chatHistory.length === 0}
+                rows={2}
+                className={s.chatInput}
+                placeholder={chatHistory.length === 0 ? 'Inicie a entrevista primeiro...' : 'Responda aqui... (Enter para enviar)'}
+              />
+              <button
+                onClick={() => sendChatMessage(chatInput)}
+                disabled={chatLoading || !chatInput.trim() || chatHistory.length === 0}
+                className={s.chatSendBtn}
+                title="Enviar (Enter)"
+              >
+                <Sparkles size={14} />
+              </button>
+            </div>
+
+            <div className={s.chatFooterRow}>
+              <button onClick={resetChat} className={s.chatResetBtn} disabled={chatLoading}>
+                Reiniciar conversa
+              </button>
+              <button onClick={() => setSidebarMode('manual')} className={s.chatBackBtn}>
+                Voltar pro formulário →
+              </button>
+            </div>
+          </div>
+        )}
+
         {/* Painel de Ações Corporativas */}
         <div className={s.actionPanel}>
            {saveMsg && (
@@ -382,7 +701,10 @@ export default function PropostasForm() {
                   {/* Header PDF */}
                   <div className={s.pdfHeader}>
                     <div>
-                      <img src="/logo-ngp-proposta.png" alt="NGP Logo" className={s.pdfLogo} />
+                      <div className={s.pdfBrandLogos}>
+                        <img src="/logos/logo-ngp-proposta.png" alt="NGP" className={s.pdfLogo} />
+                        <img src="/logos/logo-amplasoft.png" alt="AmplaSoft" className={s.pdfLogoAmpla} />
+                      </div>
                       <h1 className={s.pdfTitle}>Proposta<br/>Comercial</h1>
                       <div className={s.pdfDescBox}>
                         <span className={s.pdfLine} />
@@ -518,6 +840,106 @@ export default function PropostasForm() {
 
         </div>
       </main>
+
+      {/* AI MODAL */}
+      {aiOpen && (
+        <div className={s.aiOverlay} onClick={() => !aiLoading && setAiOpen(false)}>
+          <div className={s.aiModal} onClick={e => e.stopPropagation()}>
+            <div className={s.aiModalHeader}>
+              <div className={s.aiModalTitleBlock}>
+                <Sparkles size={18} style={{ color: '#be123c' }} />
+                <div>
+                  <h3 className={s.aiModalTitle}>Preencher Proposta com IA</h3>
+                  <p className={s.aiModalSub}>Cole o briefing, transcript da reunião, ou descreva o cliente em texto livre.</p>
+                </div>
+              </div>
+              <button onClick={() => setAiOpen(false)} disabled={aiLoading} className={s.aiCloseBtn}>
+                <X size={16} />
+              </button>
+            </div>
+
+            <div className={s.aiModalBody}>
+              <textarea
+                value={aiBriefing}
+                onChange={e => setAiBriefing(e.target.value)}
+                disabled={aiLoading}
+                rows={8}
+                className={s.aiTextarea}
+                placeholder={`Exemplo:\n\nCliente Padaria Pão Quente, CNPJ 12.345.678/0001-99, segmento alimentício. Falei com o João pelo WhatsApp 11999998888. Dor: pouco lead, atendimento confuso. Faturam uns 80k/mês, hoje investem 2k em ads. Vamos vender Performance — fechei em 8k/mês por 12 meses + setup de R$ 2.500. Pagamento mensal recorrente.`}
+              />
+
+              <div className={s.aiInstructionsBlock}>
+                <button
+                  type="button"
+                  onClick={() => setAiShowInstructions(v => !v)}
+                  className={s.aiInstructionsToggle}
+                >
+                  <span>{aiShowInstructions ? '▾' : '▸'} Instruções padrão para a IA</span>
+                  <span className={s.aiInstructionsBadge}>
+                    {aiInstructions === DEFAULT_AI_INSTRUCTIONS ? 'padrão' : 'personalizado'}
+                  </span>
+                </button>
+                {aiShowInstructions && (
+                  <>
+                    <textarea
+                      value={aiInstructions}
+                      onChange={e => persistInstructions(e.target.value)}
+                      disabled={aiLoading}
+                      rows={6}
+                      className={s.aiInstructionsTextarea}
+                      placeholder="Ex: Sempre incluir relatório semanal e reunião mensal. Tom técnico para SaaS. Garantia de 30 dias..."
+                    />
+                    <div className={s.aiInstructionsHint}>
+                      Salvo automaticamente. Reaproveitado em todas as próximas propostas neste navegador.
+                      <button
+                        type="button"
+                        onClick={restoreDefaultInstructions}
+                        disabled={aiLoading}
+                        className={s.aiInstructionsRestore}
+                      >
+                        Restaurar padrão
+                      </button>
+                    </div>
+                  </>
+                )}
+              </div>
+
+              <div className={s.aiModeRow}>
+                <span className={s.aiModeLabel}>Comportamento:</span>
+                <label className={s.aiRadio}>
+                  <input
+                    type="radio"
+                    checked={aiMode === 'merge'}
+                    onChange={() => setAiMode('merge')}
+                    disabled={aiLoading}
+                  />
+                  Só preencher campos vazios
+                </label>
+                <label className={s.aiRadio}>
+                  <input
+                    type="radio"
+                    checked={aiMode === 'overwrite'}
+                    onChange={() => setAiMode('overwrite')}
+                    disabled={aiLoading}
+                  />
+                  Sobrescrever tudo
+                </label>
+              </div>
+
+              {aiError && <div className={s.aiErrorBox}>{aiError}</div>}
+            </div>
+
+            <div className={s.aiModalFooter}>
+              <button onClick={() => setAiOpen(false)} disabled={aiLoading} className={s.aiBtnGhost}>
+                Cancelar
+              </button>
+              <button onClick={handleAiFill} disabled={aiLoading} className={s.aiBtnPrimary}>
+                {aiLoading ? <><Loader2 size={14} className={s.aiSpin} /> Processando...</> : <><Sparkles size={14} /> Preencher</>}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
     </div>
   );

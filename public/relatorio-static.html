@@ -438,6 +438,62 @@ textarea.field{resize:vertical;line-height:1.6;min-height:48px}
   .p-pcard-txt.tiktok{background:#F9FAFB!important}
   .p-generic-m{background:#FAFAFA!important}
 }
+
+/* ── MODO CLIENTE (view-only) ─────────────────────────────────────────────────
+   Aplicado quando o usuário não é gestor NGP. Esconde todos os controles de
+   edição: inputs viram texto, botões somem, autosave fica off. Garante que o
+   cliente NUNCA acidentalmente edite/re-importe dados do relatório. */
+html.view-only #cloud-link-bar,
+html.view-only #stag,
+html.view-only #btn-cloud,
+html.view-only #metaDropWrap,
+html.view-only .btn-add,
+html.view-only .btn-remove,
+html.view-only .generic-add,
+html.view-only .generic-card-del,
+html.view-only .color-dot,
+html.view-only #meta-overlay,
+html.view-only .mtable-actions,
+html.view-only .btn-meta-import,
+html.view-only #ads-overlay {
+  display: none !important;
+}
+/* Inputs e textareas viram texto estático no modo cliente. */
+html.view-only input:not([type=checkbox]):not([type=radio]),
+html.view-only textarea,
+html.view-only .cell-input,
+html.view-only .sec-title-input,
+html.view-only .generic-card-lbl,
+html.view-only .generic-card-val,
+html.view-only .generic-card-meta {
+  pointer-events: none !important;
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+  resize: none !important;
+  cursor: default !important;
+  color: #0A0A0A !important;
+  -webkit-user-modify: read-only !important;
+  user-select: text !important;
+}
+html.view-only [contenteditable] { pointer-events: none !important; }
+/* Cliente NÃO PODE clicar em handlers de edição (color-dots, btn-remove, btn-add,
+   generic-add já estão hidden acima). Listamos abaixo handlers específicos que
+   sobram no DOM mas não devem ser interativos no modo view-only. Em vez de
+   blacklist genérica [onclick], usamos seletores específicos pra não quebrar
+   botões úteis (imprimir, voltar, copiar link). */
+html.view-only [onclick^="trocarCriativoImg"],
+html.view-only [onclick^="upd"],
+html.view-only [onclick^="add"],
+html.view-only [onclick^="remove"],
+html.view-only [onclick^="setCor"],
+html.view-only [onclick^="toggleMeta"],
+html.view-only [onclick^="openMetaImport"],
+html.view-only [onclick^="openAdsImport"],
+html.view-only [onclick^="gerar"],
+html.view-only [onclick^="enableSeg"],
+html.view-only [onclick^="disableSeg"],
+html.view-only [onclick^="main_"] { pointer-events: none !important; opacity: .4 !important; }
 </style>
 </head>
 <body>
@@ -580,6 +636,17 @@ const ANON='sb_publishable_8Be9xpxGtJDsM8AGtcDwmQ_Z_WPhYQ_';
 })();
 
 const _sess        = sessionStorage.getItem('adsboard_session')    || null;
+const _role        = sessionStorage.getItem('adsboard_role')       || '';
+// MODO CLIENTE: qualquer role que não seja gestor (ngp ou admin) vê o relatório
+// como view-only. Espelha exatamente o helper isNgp() do backend (_shared/roles.ts).
+// Esconde controles de edição, bloqueia autosave, bloqueia import Meta.
+const IS_NGP_USER = (_role === 'ngp' || _role === 'admin');
+const IS_VIEW_ONLY = !IS_NGP_USER;
+// Aplica a classe SINCRONAMENTE em <html> (já existe quando este script roda no
+// <head>) pra evitar flash de UI editável antes do DOMContentLoaded.
+if(IS_VIEW_ONLY && document.documentElement){
+  document.documentElement.classList.add('view-only');
+}
 const _relUrlParams = new URLSearchParams(window.location.search);
 // cid e username: prioridade para o que vier na URL (vindo do dashboard atual),
 // caindo para sessionStorage só se a URL não trouxer nada.
@@ -636,14 +703,26 @@ function saveData(){
   scheduleAutosave();
 }
 
-// ── AUTOSAVE NA NUVEM (debounced) ─────────────────────────────────────────────
-// Dispara saveToCloud ~2s após a última mudança. Só ativa se houver sessão.
+// ── AUTOSAVE NA NUVEM (debounced + flush) ────────────────────────────────────
+// Estratégia tipo Google Docs:
+//  - localStorage salva a cada keystroke (instantâneo, em saveData()).
+//  - Cloud com debounce de 800ms (era 2s) — perda máxima em queda de energia
+//    é menos de 1s de digitação.
+//  - Flush imediato no `blur` da janela (alt-tab, fechar aba) e no
+//    `beforeunload` (sendBeacon como rede de seguranca).
 // Pula durante o load inicial (autosaveReady=false). Em falha, agenda retry curto.
 let autosaveReady=false, autosaveTimer=null, autosaveInFlight=false, autosavePending=false;
 function scheduleAutosave(){
-  if(!autosaveReady||!_sess) return;
+  if(!autosaveReady||!_sess||IS_VIEW_ONLY) return;
   clearTimeout(autosaveTimer);
-  autosaveTimer=setTimeout(runAutosave,2000);
+  autosaveTimer=setTimeout(runAutosave,800);
+}
+// Flush imediato: força save agora sem esperar o debounce. Usado em eventos
+// críticos (janela perdendo foco, aba sendo fechada, etc).
+function flushAutosave(){
+  if(!autosaveReady||!_sess||IS_VIEW_ONLY) return;
+  clearTimeout(autosaveTimer);
+  runAutosave();
 }
 async function runAutosave(){
   if(autosaveInFlight){autosavePending=true;return;}
@@ -675,6 +754,32 @@ function setAutosaveStatus(s, detail){
 }
 // Reagenda quando voltar conexão
 window.addEventListener('online',()=>{if(autosaveReady&&_sess) scheduleAutosave();});
+
+// Flush imediato em eventos críticos — garante que nada se perde se o usuário
+// alt-tab/fecha aba/PC desliga no meio da digitação.
+window.addEventListener('blur', flushAutosave);
+document.addEventListener('visibilitychange', ()=>{ if(document.visibilityState==='hidden') flushAutosave(); });
+
+// pagehide: usa fetch com keepalive (mais confiável que sendBeacon porque
+// permite enviar headers Authorization/apikey que a edge function exige).
+// keepalive: true permite que o request termine mesmo depois do unload.
+window.addEventListener('pagehide', ()=>{
+  if(!autosaveReady||!_sess||!cloudId) return;
+  clearTimeout(autosaveTimer);
+  try{
+    const {data_inicio,data_fim}=extractPeriodoDates(D.periodo);
+    const payload={session_token:_sess,dados:D,titulo:D.cliente||'',periodo:D.periodo||'',cloudId};
+    if(data_inicio) payload.data_inicio=data_inicio;
+    if(data_fim)    payload.data_fim=data_fim;
+    if(_clienteId)   payload.cliente_id=_clienteId;
+    if(_clienteUser) payload.cliente_username=_clienteUser;
+    fetch(SURL+'/functions/v1/save-relatorio',{
+      method:'POST', keepalive:true,
+      headers:{'Content-Type':'application/json','apikey':ANON,'Authorization':'Bearer '+_sess},
+      body:JSON.stringify(payload)
+    });
+  }catch(_){}
+});
 
 // Extrai data_inicio/data_fim (YYYY-MM-DD) a partir do texto livre D.periodo.
 // Aceita "DD/MM a DD/MM" e "DD/MM/AAAA a DD/MM/AAAA"; trata cruzamento de ano.
@@ -755,6 +860,10 @@ function showCloudLink(){
   if(!bar||!inp||!cloudId)return;
   const url=new URL(window.location.href);
   url.searchParams.set('id',cloudId);
+  // Remove params do wizard de criação — eles só servem pro autoimport inicial.
+  // Se ficarem no link compartilhado, quem abre re-importa por cima do snapshot.
+  ['novo','autoimport','period','metrics','objective','audience','topN','importCriativos','account','cid','username','cliente']
+    .forEach(k=>url.searchParams.delete(k));
   inp.value=url.toString();
   bar.style.display='flex';
 }
@@ -826,7 +935,7 @@ function renderMetricsTable(metricas,extraCols,prefix){
       <th style="min-width:140px">Métrica</th>
       ${D.showMeta?'<th>Meta</th>':''}
       <th>Resultado</th>
-      <th style="min-width:130px">Semana Anterior</th>
+      <th style="min-width:130px">${labelDoPeriodo(D.periodo).anterior}</th>
       <th style="min-width:80px">Variação</th>
       ${eCols.map(c=>`<th>${esc(c.label)}<button class="btn-remove" style="margin-left:4px;font-size:11px" onclick="${prefix}removeCol('${c.id}')">×</button></th>`).join('')}
       <th style="width:74px;text-align:center">Cor</th>
@@ -1036,11 +1145,17 @@ function renderCriativoCard(c,ci){
             </div>
           </div>
         </div>
-        <div><div class="lbl">${porqueLabel}</div>
-          <textarea class="field" rows="2" placeholder="1 frase: o que faz converter" oninput="updCriativo(${ci},'porqueGanha',this.value)">${esc(c.porqueGanha)}</textarea></div>
+        <div>
+          <div class="lbl" style="display:flex;align-items:center;gap:6px">${porqueLabel}
+            <button class="no-print" onclick="gerarPorqueGanhaIA(${ci})" style="margin-left:auto;background:linear-gradient(135deg,#6D28D9,#9333EA);color:#fff;border:none;font-size:10px;font-weight:700;padding:4px 10px;border-radius:5px;cursor:pointer">✨ IA</button>
+          </div>
+          <textarea class="field" rows="2" placeholder="1 frase: o que faz converter" oninput="updCriativo(${ci},'porqueGanha',this.value)" id="porque-ganha-${ci}">${esc(c.porqueGanha)}</textarea>
+        </div>
       ` : `
-        <div><div class="lbl">${porqueLabel}</div>
-          <textarea class="field" rows="2" placeholder="1 frase: o que faz converter" oninput="updCriativo(${ci},'porqueGanha',this.value)">${esc(c.porqueGanha)}</textarea></div>
+        <div>
+          <div class="lbl">${porqueLabel}</div>
+          <textarea class="field" rows="2" placeholder="1 frase: o que faz converter" oninput="updCriativo(${ci},'porqueGanha',this.value)">${esc(c.porqueGanha)}</textarea>
+        </div>
         <div><div class="lbl">Criativo</div>
         ${_aguardandoCriativos ? `
           <div class="criativo-aguardando no-print">
@@ -1357,16 +1472,40 @@ function removeCustomTopico(key,idx){
 }
 
 // ── SECTION BLOCKS ────────────────────────────────────────────────────────────
-function renderSecResumo(n){return`
-  <div class="card">
-    <div class="sec-head"><div class="sec-num">${n}</div><input class="sec-title-input" value="${esc(D.secTitles?.resumo||'Resumo da Semana')}" oninput="updSecTitle('resumo',this.value)" title="Clique para editar o título"/></div>
-    <textarea class="field" rows="4" placeholder="Qual foi o foco dessa semana?" oninput="updField('resumo',this.value)">${esc(D.resumo)}</textarea>
-  </div>`;}
-function renderSecNumeros(n,metaBtn){return`
+function renderSecResumo(n){
+  const lbl = labelDoPeriodo(D.periodo);
+  const titDefault = `Resumo ${lbl.possessivo}`;
+  const compLabel  = `📊 Análise comparativa vs ${lbl.palavra.toLowerCase()} anterior`;
+  // Placeholder: usa "deste/desta período/semana/mês..." conforme gênero da palavra
+  const isFem = /^(da|dessa)/.test(lbl.possessivo) || lbl.palavra === 'Semana' || lbl.palavra === 'Quinzena';
+  const placeholder = `Qual foi o foco ${isFem?'dessa':'desse'} ${lbl.palavra.toLowerCase()}?`;
+  // Migra defaults antigos: "Resumo da Semana" salvo em relatórios pré-feature
+  // deixa virar dinâmico em vez de ficar congelado (gestor pode editar p/ travar).
+  const tit = (D.secTitles?.resumo && D.secTitles.resumo !== 'Resumo da Semana')
+    ? D.secTitles.resumo : titDefault;
+return`
   <div class="card">
     <div class="sec-head">
       <div class="sec-num">${n}</div>
-      <input class="sec-title-input" value="${esc(D.secTitles?.numeros||'Números da Semana')}" oninput="updSecTitle('numeros',this.value)" title="Clique para editar o título"/>
+      <input class="sec-title-input" value="${esc(tit)}" oninput="updSecTitle('resumo',this.value)" title="Clique para editar o título"/>
+      <button class="no-print" id="btn-ia-resumo" onclick="gerarResumoIA()" style="margin-left:auto;background:linear-gradient(135deg,#6D28D9,#9333EA);color:#fff;border:none;font-size:11px;font-weight:700;padding:6px 14px;border-radius:6px;cursor:pointer;display:flex;align-items:center;gap:5px">✨ Gerar com IA</button>
+    </div>
+    <textarea class="field" rows="4" placeholder="${esc(placeholder)}" oninput="updField('resumo',this.value)" id="resumo-textarea">${esc(D.resumo)}</textarea>
+    <div class="no-print" style="margin-top:6px;display:flex;justify-content:flex-end">
+      <button onclick="gerarComparativoIA()" style="background:none;border:1px solid #E5E5EA;color:#6E6E73;font-size:10px;font-weight:600;padding:5px 10px;border-radius:5px;cursor:pointer">${esc(compLabel)}</button>
+    </div>
+  </div>`;}
+function renderSecNumeros(n,metaBtn){
+  const lbl = labelDoPeriodo(D.periodo);
+  const titDefault = `Números ${lbl.possessivo}`;
+  // Migra default antigo (mesmo padrão do resumo)
+  const tit = (D.secTitles?.numeros && D.secTitles.numeros !== 'Números da Semana')
+    ? D.secTitles.numeros : titDefault;
+return`
+  <div class="card">
+    <div class="sec-head">
+      <div class="sec-num">${n}</div>
+      <input class="sec-title-input" value="${esc(tit)}" oninput="updSecTitle('numeros',this.value)" title="Clique para editar o título"/>
       <div style="margin-left:auto;display:flex;align-items:center;gap:8px">
         <span class="sec-sub">verde · positivo &nbsp;·&nbsp; vermelho · negativo</span>
         ${metaBtn}
@@ -1504,8 +1643,15 @@ function renderForm(){
 
       <div class="card">
         <div class="grid3">
-          ${[['Cliente','cliente','Nome do cliente'],['Gestor','gestor','Seu nome'],['Período','periodo','DD/MM a DD/MM']].map(([l,k,p])=>`
-            <div><div class="lbl">${l}</div><input class="field" value="${esc(D[k])}" placeholder="${p}" oninput="updField('${k}',this.value)"/></div>`).join('')}
+          ${[['Cliente','cliente','Nome do cliente'],['Gestor','gestor','Seu nome'],['Período','periodo','DD/MM a DD/MM']].map(([l,k,p])=>{
+            // Gestor é sempre o usuário logado — readonly, sem oninput.
+            // (Se vier vazio, ainda exibe placeholder; renderiza no autoimport.)
+            const isGestor = k==='gestor';
+            const attrs = isGestor
+              ? `readonly title="Preenchido automaticamente com seu nome de login" style="background:#F9F9FB;cursor:not-allowed"`
+              : `oninput="updField('${k}',this.value)"`;
+            return `<div><div class="lbl">${l}</div><input class="field" value="${esc(D[k])}" placeholder="${p}" ${attrs}/></div>`;
+          }).join('')}
         </div>
       </div>
 
@@ -1533,7 +1679,7 @@ function pTable(metricas,extraCols){
   return`<table class="p-table">
     <thead><tr>
       <th>Métrica</th>${D.showMeta?'<th>Meta</th>':''}
-      <th>Resultado</th><th>Semana Anterior</th><th>Variação</th>
+      <th>Resultado</th><th>${labelDoPeriodo(D.periodo).anterior}</th><th>Variação</th>
       ${eCols.map(c=>`<th>${esc(c.label)}</th>`).join('')}
     </tr></thead>
     <tbody>
@@ -1692,12 +1838,21 @@ function renderPreview(){
             }
             // ── Built-in sections ──
             switch(key){
-              case 'resumo': return`<div class="ps" style="margin-top:24px">
-                <div class="ps-head ps-head-accent"><div class="ps-num">${n}</div><div class="ps-title">${esc(d.secTitles?.resumo||'Resumo da Semana')}</div></div>
-                <p style="font-size:13px;line-height:1.8;color:${d.resumo?'#333':'#AEAEB2'};white-space:pre-wrap">${esc(d.resumo)||'Nenhum resumo informado.'}</p>
-              </div>`;
-              case 'numeros': return`<div class="ps">
-                <div class="ps-head ps-head-accent"><div class="ps-num">${n}</div><div class="ps-title">${esc(d.secTitles?.numeros||'Números da Semana')}</div></div>
+              case 'resumo': {
+                const _lblP = labelDoPeriodo(d.periodo);
+                const _titR = (d.secTitles?.resumo && d.secTitles.resumo !== 'Resumo da Semana')
+                  ? d.secTitles.resumo : ('Resumo '+_lblP.possessivo);
+                return`<div class="ps" style="margin-top:24px">
+                  <div class="ps-head ps-head-accent"><div class="ps-num">${n}</div><div class="ps-title">${esc(_titR)}</div></div>
+                  <p style="font-size:13px;line-height:1.8;color:${d.resumo?'#333':'#AEAEB2'};white-space:pre-wrap">${esc(d.resumo)||'Nenhum resumo informado.'}</p>
+                </div>`;
+              }
+              case 'numeros': {
+                const _lblN = labelDoPeriodo(d.periodo);
+                const _titN = (d.secTitles?.numeros && d.secTitles.numeros !== 'Números da Semana')
+                  ? d.secTitles.numeros : ('Números '+_lblN.possessivo);
+                return`<div class="ps">
+                <div class="ps-head ps-head-accent"><div class="ps-num">${n}</div><div class="ps-title">${esc(_titN)}</div></div>
                 ${pTable(d.metricas,d.extraCols)}
               </div>`+(d.segEnabled&&d.campanhas.length>0?`<div class="ps">
                 <div class="ps-head"><div class="ps-title">Campanhas Segmentadas</div></div>
@@ -1713,6 +1868,7 @@ function renderPreview(){
                   ${!isPlatSpec?pMiniCriativo(c.criativo):''}`;
                 }).join('')}
               </div>`:'');
+              }
               case 'criativos': return`<div class="ps">
                 <div class="ps-head ps-head-accent"><div class="ps-num">${n}</div><div class="ps-title">${esc(d.secTitles?.criativos||'Criativos Campeões')}</div></div>
                 <div class="p-criativos">
@@ -1809,7 +1965,25 @@ function showForm(){view='form';render()}
 function doPrint(){view='preview';render();setTimeout(()=>window.print(),350)}
 
 // ── DATA ACTIONS ──────────────────────────────────────────────────────────────
-function updField(k,v){D[k]=v;saveData()}
+function updField(k,v){
+  D[k]=v;saveData();
+  // Período afeta labels adaptativas em vários headers — re-render preserva
+  // o foco no próprio input do período (re-encontrado pelo placeholder).
+  if(k==='periodo'){
+    const sel = document.activeElement;
+    const wasPeriodoInput = sel && sel.tagName==='INPUT' && sel.placeholder==='DD/MM a DD/MM';
+    const caret = wasPeriodoInput ? sel.selectionStart : null;
+    render();
+    if(wasPeriodoInput){
+      // Re-foca o novo input de período
+      const inputs = document.querySelectorAll('input[placeholder="DD/MM a DD/MM"]');
+      if(inputs.length){
+        inputs[0].focus();
+        if(caret!=null) try{ inputs[0].setSelectionRange(caret,caret); }catch(_){}
+      }
+    }
+  }
+}
 function toggleMeta(){D.showMeta=!D.showMeta;saveData();render()}
 
 // main metricas
@@ -1819,7 +1993,7 @@ function main_updEx(i,id,v){D.metricas[i]['ex_'+id]=v;saveData()}
 function main_setCor(i,v){D.metricas[i].cor=v;saveData();render()}
 function main_calcRow(i){
   const m=D.metricas[i];const pct=calcVs(m.resultado,m.semAnt);
-  if(pct===null){alert('Preencha Resultado e Semana Anterior com valores numéricos.');return;}
+  if(pct===null){alert(`Preencha Resultado e ${labelDoPeriodo(D.periodo).anterior} com valores numéricos.`);return;}
   m.vsPercent=pct;if(!m.cor)m.cor=pct>=0?'green':'red';saveData();render();
 }
 function main_calcAll(){
@@ -1918,7 +2092,7 @@ function regCampFns(ci){
   window['camp'+ci+'_setCor']=(i,v)=>{D.campanhas[ci].metricas[i].cor=v;saveData();render()};
   window['camp'+ci+'_calcRow']=(i)=>{
     const m=D.campanhas[ci].metricas[i];const pct=calcVs(m.resultado,m.semAnt);
-    if(pct===null){alert('Preencha Resultado e Semana Anterior com valores numéricos.');return;}
+    if(pct===null){alert(`Preencha Resultado e ${labelDoPeriodo(D.periodo).anterior} com valores numéricos.`);return;}
     m.vsPercent=pct;if(!m.cor)m.cor=pct>=0?'green':'red';saveData();render();
   };
   window['camp'+ci+'_calcAll']=()=>{D.campanhas[ci].metricas.forEach(m=>{const p=calcVs(m.resultado,m.semAnt);if(p!==null){m.vsPercent=p;if(!m.cor)m.cor=p>=0?'green':'red';}});saveData();render()};
@@ -1972,18 +2146,35 @@ function handleImg(type,idx){
   const isNovo=params.get('novo')==='1';
   if(id){await loadFromCloud(id);}
   else if(!isNovo){loadData();}
+  // Fallback pra relatórios antigos: se gestor vazio E user é NGP, popula com nome do login.
+  // Não sobrescreve se já tinha nome (relatório feito por outro gestor da equipe).
+  if(IS_NGP_USER && !D.gestor){
+    const _gestorNome = sessionStorage.getItem('adsboard_user')
+                     || sessionStorage.getItem('ngp_viewing_name')
+                     || '';
+    if(_gestorNome){ D.gestor = _gestorNome; saveData(); }
+  }
   else{
     localStorage.removeItem(SK);
     // Pré-preenche cliente com nome vindo do dashboard
     const clienteParam=params.get('cliente');
     if(clienteParam){D.cliente=clienteParam;}
+    // Pré-preenche gestor com nome do usuário NGP logado.
+    // Source: sessionStorage.adsboard_user (definido no login). Bridge usa ngp_viewing_name.
+    const _gestorNome = sessionStorage.getItem('adsboard_user')
+                     || sessionStorage.getItem('ngp_viewing_name')
+                     || '';
+    if(_gestorNome){ D.gestor = _gestorNome; }
     // Período é aplicado no setTimeout (evita TDZ — _metaPreset declarado após este IIFE)
   }
   render();
   if(cloudId)showCloudLink();
   // Auto-importa métricas Meta + criativos campeões a partir dos params
   // configurados no wizard do Dashboard. Sem UI de modal — preenche direto.
-  if(isNovo && params.get('autoimport')==='1'){
+  // CRÍTICO: NUNCA roda se já tem ?id= (relatório existente sendo aberto)
+  // ou se o usuário é cliente (view-only). Sem essa guarda, abrir um link
+  // compartilhado sobrescreveria o snapshot.
+  if(isNovo && !id && !IS_VIEW_ONLY && params.get('autoimport')==='1'){
     console.log('[autoimport] iniciando | sess=%s | metaAccount=%s | params=%s',
       _sess?'OK':'AUSENTE', _metaAccount||'AUSENTE', window.location.search);
     const showAutoStatus=(t)=>{
@@ -2035,7 +2226,14 @@ function handleImg(type,idx){
       if(r){D.periodo=r;saveData();render();}
 
       showAutoStatus('⟳ Importando…');
-      const status={metricas:'pending',criativos:_autoimportCriativos?'pending':'skip',countM:0,countC:0};
+      const status={
+        metricas:'pending',
+        criativos:_autoimportCriativos?'pending':'skip',
+        ia:'pending', // resumo + comparativo + criativos IA
+        countM:0,countC:0,
+        iaTotal:0,iaDone:0, // contador progressivo IA
+        semHistorico:false,
+      };
       const updateStatus=()=>{
         const parts=[];
         if(status.metricas==='pending') parts.push('⟳ métricas');
@@ -2043,28 +2241,68 @@ function handleImg(type,idx){
         else if(status.metricas==='err') parts.push('⚠ métricas');
         if(status.criativos==='pending') parts.push('⟳ criativos');
         else if(status.criativos==='ok') parts.push(`✓ ${status.countC} criativos`);
-        else if(status.criativos==='empty') parts.push('— sem criativos no objetivo escolhido');
+        else if(status.criativos==='empty') parts.push('— sem criativos');
         else if(status.criativos==='err') parts.push('⚠ criativos');
+        if(status.ia==='pending') parts.push(status.iaTotal>0?`⟳ IA ${status.iaDone}/${status.iaTotal}`:'⟳ IA…');
+        else if(status.ia==='ok') parts.push('✓ análise IA');
+        else if(status.ia==='partial') parts.push('✓ IA (parcial)');
+        else if(status.ia==='skip_no_historico') parts.push('— sem comparativo (cliente novo)');
+        else if(status.ia==='skip_no_metricas') parts.push('— IA pulada (sem métricas)');
+        else if(status.ia==='err') parts.push('⚠ IA');
         showAutoStatus(parts.join(' · '));
-        if(status.metricas!=='pending' && status.criativos!=='pending'){
-          let msg=`✓ ${status.countM} métricas e ${status.countC} criativos importados`;
-          if(status.criativos==='empty') msg=`✓ ${status.countM} métricas · ⚠ ${status.criativosMsg||'nenhum criativo encontrado'}`;
-          else if(status.criativos==='err') msg=`✓ ${status.countM} métricas · ⚠ erro nos criativos: ${status.criativosMsg||''}`;
-          showAutoStatus(msg);
-          // Mensagens de erro/empty ficam mais tempo para você ler
-          const isError=status.criativos==='empty'||status.criativos==='err'||status.metricas==='err';
-          hideAutoStatus(isError?20000:3000);
+        // Hideout só quando TUDO finalizou (métricas + criativos + IA)
+        const todoFinalizou = status.metricas!=='pending'
+          && status.criativos!=='pending'
+          && (status.ia!=='pending');
+        if(todoFinalizou){
+          // Constrói msg refletindo o estado REAL de cada etapa
+          const partsFinal = [];
+          if(status.metricas==='ok')      partsFinal.push(`✓ ${status.countM} métricas`);
+          else if(status.metricas==='err')partsFinal.push('⚠ métricas falharam');
+          if(status.criativos==='ok')       partsFinal.push(`✓ ${status.countC} criativos`);
+          else if(status.criativos==='empty') partsFinal.push(`⚠ ${status.criativosMsg||'nenhum criativo'}`);
+          else if(status.criativos==='err')   partsFinal.push(`⚠ erro nos criativos: ${status.criativosMsg||''}`);
+          else if(status.criativos==='skip')  partsFinal.push('— sem criativos solicitados');
+          if(status.ia==='ok')                partsFinal.push('✓ análise IA');
+          else if(status.ia==='partial')       partsFinal.push('✓ IA parcial');
+          else if(status.ia==='skip_no_historico') partsFinal.push('— cliente novo (sem comparativo)');
+          else if(status.ia==='skip_no_metricas')  partsFinal.push('— IA pulada (métricas falharam)');
+          else if(status.ia==='err')           partsFinal.push('⚠ IA falhou');
+          showAutoStatus(partsFinal.join(' · '));
+          const isError = status.criativos==='empty'
+            || status.criativos==='err'
+            || status.metricas==='err'
+            || status.ia==='err';
+          hideAutoStatus(isError?20000:8000);
         }
       };
 
       // SERIAL (não paralelo): mesmo flow do modal manual, evita race
       // condition no proxy Meta. Métricas primeiro, criativos depois.
+      // Em paralelo, busca período anterior pra popular semAnt + viabilizar IA comparativa.
+      let _metaDataAnterior=null;
       try{
-        await fetchMetaInsights();
+        // Atual + anterior em paralelo (sem dependência entre si)
+        const prevRange = previousPeriodRange(
+          _metaMode==='custom' && _metaFrom && _metaUntil
+            ? {since:_metaFrom, until:_metaUntil}
+            : _metaPreset
+        );
+        const [_a, _b] = await Promise.allSettled([
+          fetchMetaInsights(),
+          prevRange ? callMetaProxy('custom', null, prevRange.since, prevRange.until) : Promise.resolve(null),
+        ]);
+        if(_b.status==='fulfilled' && _b.value){
+          const row = _b.value.data && _b.value.data[0];
+          if(row) _metaDataAnterior = parseMetaRow(row);
+        }
+        status.semHistorico = !_metaDataAnterior;
         if(_metaData){
           META_METRIC_OPTS.forEach(m=>{
             if(!_metaSelKeys.has(m.key))return;
-            applyToReport(m,metricValue(_metaData,m.key,m.fmt),undefined);
+            const valAtual = metricValue(_metaData, m.key, m.fmt);
+            const valAnterior = _metaDataAnterior ? metricValue(_metaDataAnterior, m.key, m.fmt) : undefined;
+            applyToReport(m, valAtual, valAnterior);
             status.countM++;
           });
           saveData(); render();
@@ -2081,7 +2319,14 @@ function handleImg(type,idx){
         console.log('[autoimport criativos] _adsObjective=%s | _adsAudience=%s | _adsPreset=%s | _adsTopN=%d | _metaAccount=%s',
           _adsObjective, _adsAudience, _adsPreset, _adsTopN, _metaAccount);
         try{
-          await fetchAdsCampeoes();
+          // Passa os params da URL explicitamente — não confia na global
+          // _adsObjective, que pode ter sido reescrita por render/setter
+          // entre o set acima (linha ~2151) e este fetch.
+          await fetchAdsCampeoes({
+            objective: _autoobjective!=null ? _autoobjective : _adsObjective,
+            audience:  _autoaudience !=null ? _autoaudience  : _adsAudience,
+            preset:    _autoperiod   !=null ? _autoperiod    : _adsPreset,
+          });
           if(_adsResult && _adsResult.length){
             fillAdsIntoReport({skipClose:true});
             status.countC=_adsResult.length;
@@ -2089,7 +2334,13 @@ function handleImg(type,idx){
           }else{
             const adsStatus=document.getElementById('ads-status');
             const baseMsg=(adsStatus&&adsStatus.textContent)||'Nenhum criativo encontrado';
-            status.criativosMsg=`${baseMsg} | obj=${_adsObjective.split(',')[0]} aud=${_adsAudience||'todos'} preset=${_adsPreset}`;
+            // Diagnóstico: lê dos params da URL (fonte de verdade do wizard atual)
+            // em vez da var global _adsObjective, que pode ter resíduo de runs
+            // anteriores. _autoobjective já foi lido acima e é estável.
+            const objLabel = (_autoobjective||'').split(',')[0] || '(sem filtro)';
+            const audLabel = _autoaudience || 'todos';
+            const presetLabel = _autoperiod || '(sem preset)';
+            status.criativosMsg=`${baseMsg} | obj=${objLabel} aud=${audLabel} preset=${presetLabel}`;
             status.criativos='empty';
           }
         }catch(e){
@@ -2099,6 +2350,187 @@ function handleImg(type,idx){
         }
         _aguardandoCriativos=false; render();
         updateStatus();
+      }
+
+      // ── FASE 3: IA automática (resumo + comparativo + por-que-ganha) ──
+      // Roda SÓ no autoimport inicial. Reabertura não dispara — edições manuais
+      // ficam intactas.
+      //
+      // GUARD-RAILS DE PRODUÇÃO:
+      // P0-1: applyResult checa se o campo já tem texto antes de escrever.
+      // P0-2: saveData()+render() dentro de cada applyResult — atômico.
+      // P0-3: Se métricas falharam, NÃO roda IA (payload vazio = alucinação).
+      // P0-novo: resumo e comparativo escrevem no MESMO campo (D.resumo).
+      //         Serializar: resumo PRIMEIRO, depois comparativo anexa.
+      if(status.metricas !== 'ok'){
+        console.warn('[autoimport IA] pulada: métricas não importaram');
+        status.ia='skip_no_metricas';
+      } else {
+      try{
+        // Snapshot inicial — usado pra detectar se gestor digitou durante IA.
+        const t0_resumo = (D.resumo||'').trim();
+        const t0_porque = (D.criativos||[]).map(c=>(c?.porqueGanha||'').trim());
+
+        // Total de tarefas pra status: resumo + (comparativo?) + N criativos importados
+        const criativosImportados = (D.criativos||[]).filter(c=>c && c.fromMeta).length;
+        status.iaTotal = 1 + (status.semHistorico ? 0 : 1) + criativosImportados;
+        status.iaDone = 0;
+        updateStatus();
+
+        let okCount=0, errCount=0;
+        const bump=(ok)=>{ if(ok) okCount++; else errCount++; status.iaDone++; updateStatus(); };
+
+        // ─── ONDA 1: Resumo + criativos em paralelo ───
+        // Resumo escreve em D.resumo; criativos em D.criativos[i].porqueGanha.
+        // SEM conflito de campo. Roda paralelo seguro.
+        const onda1 = [];
+
+        // Tarefa: resumo
+        onda1.push((async()=>{
+          try{
+            const r = await callIA('resumo',{
+              cliente: D.cliente||'',
+              periodo: D.periodo||'',
+              metricas: snapshotMetricasAtuais(),
+              metricas_anterior: snapshotMetricasAnterior(),
+              historico: status.semHistorico ? 'sem_periodo_anterior' : 'com_periodo_anterior',
+            });
+            if(r && r.texto){
+              const atual = (D.resumo||'').trim();
+              if(atual === '' || atual === t0_resumo){
+                D.resumo = r.texto;
+                saveData(); render();
+                bump(true); return 'ok_resumo';
+              } else {
+                console.log('[autoimport IA] resumo: gestor já digitou, pulando');
+                bump(true); return 'skipped_user_typed';
+              }
+            }
+            bump(false); return null;
+          }catch(e){
+            console.error('[autoimport IA resumo]', e);
+            bump(false); return null;
+          }
+        })());
+
+        // Tarefas: criativos
+        for(let ci=0; ci<(D.criativos||[]).length; ci++){
+          const c = D.criativos[ci];
+          if(!c || !c.fromMeta) continue;
+          const ciFix = ci;
+          onda1.push((async()=>{
+            try{
+              const transcricao = c.videoId ? await transcreverVideoCriativo(c.videoId) : '';
+              const outros = (D.criativos||[])
+                .map((x,idx)=>({x,idx}))
+                .filter(o=>o.idx!==ciFix && o.x && o.x.fromMeta && (o.x.img||o.x.nome))
+                .map(o=>({
+                  posicao: o.idx+1,
+                  nome: o.x.nome||'',
+                  metricas: (o.x.chips||[]).reduce((acc,ch)=>{ if(ch.label) acc[ch.label]=ch.val||''; return acc; },{}),
+                  tituloAd: o.x.tituloAd||'',
+                  legenda: o.x.legenda||'',
+                }));
+              const imgsComp = (D.criativos||[])
+                .map((x,idx)=>({x,idx}))
+                .filter(o=>o.idx!==ciFix && o.x && o.x.fromMeta && o.x.img && /^https?:\/\//i.test(o.x.img))
+                .map(o=>o.x.img).slice(0,3);
+              const imgPrincipal = (c.img && /^https?:\/\//i.test(c.img)) ? c.img : '';
+              const r = await callIA('criativo',{
+                cliente: D.cliente||'',
+                periodo: D.periodo||'',
+                posicao: ciFix+1,
+                total_criativos: criativosImportados,
+                criativo: {
+                  nome: c.nome||'',
+                  metricas: (c.chips||[]).reduce((acc,ch)=>{ if(ch.label) acc[ch.label]=ch.val||''; return acc; },{}),
+                  tituloAd: c.tituloAd||'',
+                  legenda: c.legenda||'',
+                },
+                criativos_comparativos: outros,
+                imagem_principal: imgPrincipal,
+                imagens_comparativas: imgsComp,
+                transcricao_principal: transcricao,
+              });
+              if(r && r.porqueGanha && D.criativos[ciFix]){
+                const atual = (D.criativos[ciFix].porqueGanha||'').trim();
+                if(atual === '' || atual === t0_porque[ciFix]){
+                  D.criativos[ciFix].porqueGanha = r.porqueGanha;
+                  saveData(); render();
+                  bump(true); return 'ok';
+                } else {
+                  console.log(`[autoimport IA] criativo ${ciFix+1}: gestor já digitou, pulando`);
+                  bump(true); return 'skipped_user_typed';
+                }
+              }
+              bump(false); return null;
+            }catch(e){
+              console.error(`[autoimport IA criativo-${ciFix+1}]`, e);
+              bump(false); return null;
+            }
+          })());
+        }
+
+        // Espera onda 1 completar antes de lançar comparativo (que escreve em D.resumo)
+        await Promise.allSettled(onda1);
+
+        // ─── ONDA 2: Comparativo ───
+        // Só se houver período anterior. Anexa ao D.resumo (já com o texto do resumo).
+        // Re-captura snapshot do D.resumo APÓS onda 1 — o "estado pós-IA" é
+        // referência pra detectar se gestor digitou após a onda 1.
+        if(!status.semHistorico){
+          const t1_resumo = (D.resumo||'').trim();
+          try{
+            const r = await callIA('comparativo',{
+              cliente: D.cliente||'',
+              periodo: D.periodo||'',
+              metricas: snapshotMetricasAtuais(),
+              metricas_anterior: snapshotMetricasAnterior(),
+            });
+            if(r){
+              const blocos=[];
+              if(r.melhorou?.length) blocos.push(r.melhorou.map(b=>`✓ ${b}`).join(' | '));
+              if(r.piorou?.length)   blocos.push(r.piorou.map(b=>`⚠ ${b}`).join(' | '));
+              if(r.neutro?.length)   blocos.push(r.neutro.map(b=>`— ${b}`).join(' | '));
+              const compTxt = blocos.join('\n');
+              if(compTxt){
+                const atual = (D.resumo||'').trim();
+                // Anexa SE: campo continua igual ao que a onda 1 deixou (gestor não tocou)
+                if(atual === t1_resumo){
+                  D.resumo = (D.resumo ? D.resumo + '\n' + compTxt : compTxt);
+                  saveData(); render();
+                  bump(true);
+                } else {
+                  console.log('[autoimport IA] comparativo: gestor já digitou após resumo, pulando');
+                  bump(true); // não é erro — só skip
+                }
+              } else {
+                bump(false);
+              }
+            } else {
+              bump(false);
+            }
+          }catch(e){
+            console.error('[autoimport IA comparativo]', e);
+            bump(false);
+          }
+        }
+
+        // Status final
+        if(errCount===0) status.ia='ok';
+        else if(okCount===0) status.ia='err';
+        else status.ia='partial';
+      }catch(e){
+        console.error('[autoimport IA]', e);
+        status.ia='err';
+      }
+      }
+      updateStatus();
+
+      // Limpa a URL atual: remove params do wizard, mantém só ?id=<uuid>.
+      // Garante que reload/bookmark NUNCA dispare autoimport de novo.
+      if(cloudId){
+        try{ window.history.replaceState({},'','/relatorio?id='+cloudId); }catch(_){}
       }
       console.log('[autoimport] concluído');
     })();
@@ -2123,6 +2555,205 @@ function toggleMetaMenu(){
 function voltarDashboard(){
   const role = sessionStorage.getItem('adsboard_role');
   window.location.href = role === 'ngp' ? '/dashboard' : '/cliente';
+}
+
+// ── IA (Resumo / Por que ganhou / Comparativo) ────────────────────────────────
+// Chama edge function relatorio-ia. Sempre exige sessão NGP — cliente nunca
+// vê esses botões (CSS view-only esconde). Status: botão muda pra "⟳ Gerando…"
+// durante a chamada; em caso de erro, alert; sucesso, preenche o campo e
+// dispara saveData() pra autosalvar.
+async function callIA(mode, payload){
+  if(!_sess) { alert('Faça login para usar IA.'); return null; }
+  try{
+    const res = await fetch(SURL+'/functions/v1/relatorio-ia',{
+      method:'POST',
+      headers:{'Content-Type':'application/json','apikey':ANON,'Authorization':'Bearer '+_sess},
+      body: JSON.stringify({ session_token:_sess, mode, ...payload })
+    });
+    const j = await res.json().catch(()=>({}));
+    if(!res.ok || j.error){
+      alert('Erro da IA: '+(j.error||res.status));
+      return null;
+    }
+    return j.result;
+  }catch(e){
+    alert('Falha na IA: '+(e&&e.message?e.message:'tente novamente.'));
+    return null;
+  }
+}
+
+// Coleta métricas atuais do D em formato compacto pra IA
+function snapshotMetricasAtuais(){
+  const out = {};
+  (D.metricas||[]).forEach(m=>{
+    if(!m.nome) return;
+    out[m.nome] = { resultado: m.resultado||'', meta: m.meta||'', semAnt: m.semAnt||'', variacao: m.vsPercent||'' };
+  });
+  return out;
+}
+function snapshotMetricasAnterior(){
+  const out = {};
+  (D.metricas||[]).forEach(m=>{
+    if(!m.nome || !m.semAnt) return;
+    out[m.nome] = { resultado: m.semAnt };
+  });
+  return out;
+}
+
+async function gerarResumoIA(){
+  const btn = document.getElementById('btn-ia-resumo');
+  const ta = document.getElementById('resumo-textarea');
+  if(!ta) return;
+  // Confirma antes de sobrescrever texto já digitado.
+  if(D.resumo && D.resumo.trim()){
+    if(!confirm('Sobrescrever o resumo atual com a versão gerada pela IA?')) return;
+  }
+  const oldHTML = btn ? btn.innerHTML : '';
+  if(btn){ btn.innerHTML='⟳ Gerando…'; btn.disabled=true; }
+  const result = await callIA('resumo', {
+    cliente: D.cliente||'',
+    periodo: D.periodo||'',
+    metricas: snapshotMetricasAtuais(),
+    metricas_anterior: snapshotMetricasAnterior(),
+  });
+  if(btn){ btn.innerHTML=oldHTML; btn.disabled=false; }
+  if(result && result.texto){
+    D.resumo = result.texto;
+    ta.value = result.texto;
+    saveData();
+  }
+}
+
+async function transcreverVideoCriativo(videoId){
+  if(!videoId || !_sess) return '';
+  try{
+    const res = await fetch(SURL+'/functions/v1/relatorio-transcrever-video',{
+      method:'POST',
+      headers:{'Content-Type':'application/json','apikey':ANON,'Authorization':'Bearer '+_sess},
+      body: JSON.stringify({ session_token:_sess, video_id: videoId })
+    });
+    const j = await res.json().catch(()=>({}));
+    if(!res.ok){
+      // 413 (vídeo grande) e 404 (vídeo deletado) são esperados — não bloqueiam IA
+      console.warn('[transcrever] não disponível:', j.error||res.status);
+      return '';
+    }
+    return (j && j.texto) ? String(j.texto) : '';
+  }catch(e){
+    console.warn('[transcrever] falhou, segue sem transcrição:', e);
+    return '';
+  }
+}
+
+async function gerarPorqueGanhaIA(ci){
+  const c = (D.criativos||[])[ci];
+  if(!c) return;
+  if(c.porqueGanha && c.porqueGanha.trim()){
+    if(!confirm('Sobrescrever a justificativa atual com a versão da IA?')) return;
+  }
+  const ta = document.getElementById('porque-ganha-'+ci);
+  // Procura o botão IA do card pra mostrar loading durante transcrição+IA
+  const card = ta ? ta.closest('.criativo-card') : null;
+  const btn = card ? card.querySelector('button[onclick^="gerarPorqueGanhaIA"]') : null;
+  const oldHTML = btn ? btn.innerHTML : '';
+  const setLoading=(txt)=>{ if(btn){ btn.innerHTML=txt; btn.disabled=true; } };
+  const clearLoading=()=>{ if(btn){ btn.innerHTML=oldHTML; btn.disabled=false; } };
+
+  // 1) Transcrição do vídeo principal (se for vídeo). Bloqueante — IA usa o texto.
+  let transcricao = '';
+  if(c.videoId){
+    setLoading('⟳ Transcrevendo áudio…');
+    transcricao = await transcreverVideoCriativo(c.videoId);
+  }
+
+  setLoading('⟳ Analisando…');
+
+  // Monta payload com imagem principal + criativos comparativos pra IA
+  // poder analisar visualmente E contrastar com os outros.
+  // IMPORTANTE: cada comparativo carrega a POSICAO no ranking pra IA saber
+  // que está comparando contra quem está acima ou abaixo. Sem isso a IA trata
+  // todos como vencedores e gera texto idêntico pro 1º e pro 2º.
+  const criativosArr = D.criativos||[];
+  const outros = criativosArr
+    .map((x,idx)=>({x,idx}))
+    .filter(o=>o.idx!==ci && o.x && (o.x.img||o.x.nome))
+    .map(o=>({
+      posicao: o.idx+1,
+      nome: o.x.nome||'',
+      metricas: (o.x.chips||[]).reduce((acc,ch)=>{ if(ch.label) acc[ch.label]=ch.val||''; return acc; },{}),
+      tituloAd: o.x.tituloAd||'',
+      legenda: o.x.legenda||'',
+    }));
+  const imgsComp = criativosArr
+    .map((x,idx)=>({x,idx}))
+    .filter(o=>o.idx!==ci && o.x && o.x.img && /^https?:\/\//i.test(o.x.img))
+    .map(o=>o.x.img)
+    .slice(0,3); // limita a 3 pra não estourar tokens
+  // Imagem principal: só envia se for URL pública (data URLs base64 não rolam em vision via responses API)
+  const imgPrincipal = (c.img && /^https?:\/\//i.test(c.img)) ? c.img : '';
+
+  const result = await callIA('criativo', {
+    cliente: D.cliente||'',
+    periodo: D.periodo||'',
+    posicao: ci+1,
+    total_criativos: criativosArr.length,
+    criativo: {
+      nome: c.nome||'',
+      metricas: (c.chips||[]).reduce((acc,ch)=>{ if(ch.label) acc[ch.label]=ch.val||''; return acc; },{}),
+      tituloAd: c.tituloAd||'',
+      legenda: c.legenda||'',
+    },
+    criativos_comparativos: outros,
+    imagem_principal: imgPrincipal,
+    imagens_comparativas: imgsComp,
+    transcricao_principal: transcricao,
+  });
+  clearLoading();
+  if(result && result.porqueGanha){
+    D.criativos[ci].porqueGanha = result.porqueGanha;
+    if(ta) ta.value = result.porqueGanha;
+    saveData();
+  }
+}
+
+async function gerarComparativoIA(){
+  // Idempotência: se já tem comparativo (bullets ✓/⚠/—) ou resumo, confirma.
+  // Detecta presença de bullets típicos pra não pedir confirm em campo vazio.
+  const txt = (D.resumo||'').trim();
+  const temBullets = /[✓⚠—]\s/.test(txt);
+  if(temBullets){
+    if(!confirm('Já existe uma análise comparativa no resumo. Adicionar mais uma versão da IA?')) return;
+  } else if(txt){
+    if(!confirm('O resumo já tem texto. Anexar a análise comparativa abaixo?')) return;
+  }
+  // Tem que haver dado anterior pra fazer sentido
+  if(!Object.keys(snapshotMetricasAnterior()).length){
+    alert('Não há dados do período anterior nas métricas. Preencha a coluna "Semana anterior" primeiro.');
+    return;
+  }
+  const result = await callIA('comparativo', {
+    cliente: D.cliente||'',
+    periodo: D.periodo||'',
+    metricas: snapshotMetricasAtuais(),
+    metricas_anterior: snapshotMetricasAnterior(),
+  });
+  if(!result) return;
+  // Formata como texto pra colar no resumo (junto com o que já tinha)
+  const partes = [];
+  if(result.melhorou && result.melhorou.length){
+    partes.push(result.melhorou.map(b=>'✓ '+b).join(' | '));
+  }
+  if(result.piorou && result.piorou.length){
+    partes.push(result.piorou.map(b=>'⚠ '+b).join(' | '));
+  }
+  if(result.neutro && result.neutro.length){
+    partes.push(result.neutro.map(b=>'— '+b).join(' | '));
+  }
+  const novoTexto = (D.resumo ? D.resumo + '\n\n' : '') + partes.join('\n');
+  D.resumo = novoTexto;
+  const ta = document.getElementById('resumo-textarea');
+  if(ta) ta.value = novoTexto;
+  saveData();
 }
 
 // ── META IMPORT ───────────────────────────────────────────────────────────────
@@ -2186,6 +2817,7 @@ function rangeFromMeta(mode,preset,from,until){
     case 'last_7d':     s=new Date(y,m,d-7);   e=new Date(y,m,d-1); break;
     case 'last_14d':    s=new Date(y,m,d-14);  e=new Date(y,m,d-1); break;
     case 'last_30d':    s=new Date(y,m,d-30);  e=new Date(y,m,d-1); break;
+    case 'last_90d':    s=new Date(y,m,d-90);  e=new Date(y,m,d-1); break;
     case 'this_month':  s=new Date(y,m,1);     e=new Date(y,m,d); break;
     case 'last_month':  s=new Date(y,m-1,1);   e=new Date(y,m,0); break;
     case 'this_quarter':{const q=Math.floor(m/3);s=new Date(y,q*3,1);e=new Date(y,m,d);break;}
@@ -2197,13 +2829,102 @@ function rangeFromMeta(mode,preset,from,until){
   return `${fmt(s)} a ${fmt(e)}`;
 }
 
-// Token Meta NUNCA sai para o cliente — todas as chamadas vão pelo proxy Supabase
+// Converte preset relativo (last_7d, this_month, etc) em datas ISO absolutas
+// no fuso do usuário. Garantia: o snapshot salvo sempre tem datas fixas,
+// evitando drift quando o gestor re-importar no futuro.
+function presetToAbsoluteRange(preset){
+  const today=new Date(); today.setHours(0,0,0,0);
+  const y=today.getFullYear(), m=today.getMonth(), d=today.getDate();
+  const iso=dt=>`${dt.getFullYear()}-${String(dt.getMonth()+1).padStart(2,'0')}-${String(dt.getDate()).padStart(2,'0')}`;
+  let s,e;
+  switch(preset){
+    case 'today':       s=new Date(y,m,d);     e=new Date(y,m,d); break;
+    case 'yesterday':   s=new Date(y,m,d-1);   e=new Date(y,m,d-1); break;
+    case 'last_7d':     s=new Date(y,m,d-7);   e=new Date(y,m,d-1); break;
+    case 'last_14d':    s=new Date(y,m,d-14);  e=new Date(y,m,d-1); break;
+    case 'last_30d':    s=new Date(y,m,d-30);  e=new Date(y,m,d-1); break;
+    case 'last_90d':    s=new Date(y,m,d-90);  e=new Date(y,m,d-1); break;
+    case 'this_month':  s=new Date(y,m,1);     e=new Date(y,m,d); break;
+    case 'last_month':  s=new Date(y,m-1,1);   e=new Date(y,m,0); break;
+    case 'this_quarter':{const q=Math.floor(m/3);s=new Date(y,q*3,1);e=new Date(y,m,d);break;}
+    case 'last_quarter':{const q=Math.floor(m/3)-1;const yy=q<0?y-1:y;const qq=q<0?3:q;s=new Date(yy,qq*3,1);e=new Date(yy,qq*3+3,0);break;}
+    case 'this_year':   s=new Date(y,0,1);     e=new Date(y,m,d); break;
+    case 'last_year':   s=new Date(y-1,0,1);   e=new Date(y-1,11,31); break;
+    default: return null;
+  }
+  return {since:iso(s), until:iso(e)};
+}
+
+// Calcula labels adaptativas pro período: "Semana", "Quinzena", "Mês",
+// "Bimestre", "Trimestre", "Semestre", "Ano" — baseado na duração em dias.
+// Aceita string formatada "DD/MM/AAAA a DD/MM/AAAA" (D.periodo) ou objeto
+// {since, until} ISO. Retorna { palavra, possessivo, anterior } prontos pra UI.
+//   palavra:    "Semana", "Mês" — substantivo do período
+//   possessivo: "da Semana", "do Mês" — usado em "Resumo da Semana"
+//   anterior:   "Semana Anterior", "Mês Anterior" — coluna comparativa
+function labelDoPeriodo(periodoStr){
+  // Default fallback se não conseguir parsear
+  const fallback = { palavra:'Período', possessivo:'do Período', anterior:'Período Anterior', dias:0 };
+  if(!periodoStr) return fallback;
+  let s, e;
+  if(typeof periodoStr === 'object' && periodoStr.since && periodoStr.until){
+    const [sy,sm,sd]=periodoStr.since.split('-').map(Number);
+    const [ey,em,ed]=periodoStr.until.split('-').map(Number);
+    s = new Date(sy,sm-1,sd); e = new Date(ey,em-1,ed);
+  } else if(typeof periodoStr === 'string'){
+    // "DD/MM/AAAA a DD/MM/AAAA" ou "DD/MM a DD/MM" (sem ano = ano atual)
+    const m = periodoStr.match(/^(\d{1,2})\/(\d{1,2})(?:\/(\d{2,4}))?\s+a\s+(\d{1,2})\/(\d{1,2})(?:\/(\d{2,4}))?$/i);
+    if(!m) return fallback;
+    const curYear = new Date().getFullYear();
+    const sy = m[3] ? (m[3].length===2 ? 2000+parseInt(m[3],10) : parseInt(m[3],10)) : curYear;
+    const ey = m[6] ? (m[6].length===2 ? 2000+parseInt(m[6],10) : parseInt(m[6],10)) : curYear;
+    s = new Date(sy, parseInt(m[2],10)-1, parseInt(m[1],10));
+    e = new Date(ey, parseInt(m[5],10)-1, parseInt(m[4],10));
+  } else {
+    return fallback;
+  }
+  if(isNaN(s) || isNaN(e)) return fallback;
+  const dias = Math.round((e-s)/86400000)+1; // inclusivo
+  // Mapeamento por duração. Margens cobrem variação de mês (28-31 dias).
+  if(dias<=1)          return { palavra:'Dia',       possessivo:'do Dia',       anterior:'Dia Anterior',       dias };
+  if(dias<=7)          return { palavra:'Semana',    possessivo:'da Semana',    anterior:'Semana Anterior',    dias };
+  if(dias<=15)         return { palavra:'Quinzena',  possessivo:'da Quinzena',  anterior:'Quinzena Anterior',  dias };
+  if(dias>=28&&dias<=31) return { palavra:'Mês',     possessivo:'do Mês',       anterior:'Mês Anterior',       dias };
+  if(dias>=58&&dias<=62) return { palavra:'Bimestre',possessivo:'do Bimestre',  anterior:'Bimestre Anterior',  dias };
+  if(dias>=88&&dias<=92) return { palavra:'Trimestre',possessivo:'do Trimestre',anterior:'Trimestre Anterior', dias };
+  if(dias>=178&&dias<=184) return { palavra:'Semestre',possessivo:'do Semestre',anterior:'Semestre Anterior',  dias };
+  if(dias>=362&&dias<=368) return { palavra:'Ano',   possessivo:'do Ano',       anterior:'Ano Anterior',       dias };
+  return { palavra:'Período', possessivo:'do Período', anterior:'Período Anterior', dias };
+}
+
+// Calcula o período anterior com MESMA duração do período atual.
+// Ex: atual = last_7d (7 dias). Anterior = 7 dias antes do início do atual.
+// Aceita preset string OU {since, until}. Retorna {since, until} ou null.
+function previousPeriodRange(atual){
+  let cur=null;
+  if(typeof atual==='string') cur=presetToAbsoluteRange(atual);
+  else if(atual && atual.since && atual.until) cur={since:atual.since, until:atual.until};
+  if(!cur) return null;
+  const parse=(s)=>{const [y,m,d]=s.split('-').map(Number); return new Date(y, m-1, d);};
+  const iso=(dt)=>`${dt.getFullYear()}-${String(dt.getMonth()+1).padStart(2,'0')}-${String(dt.getDate()).padStart(2,'0')}`;
+  const sCur=parse(cur.since), eCur=parse(cur.until);
+  const dias=Math.round((eCur-sCur)/86400000)+1; // +1 pq inclusivo
+  const ePrev=new Date(sCur); ePrev.setDate(ePrev.getDate()-1);
+  const sPrev=new Date(ePrev); sPrev.setDate(sPrev.getDate()-(dias-1));
+  return {since:iso(sPrev), until:iso(ePrev)};
+}
+
+// Token Meta NUNCA sai para o cliente — todas as chamadas vão pelo proxy Supabase.
+// Sempre usa time_range absoluto (mesmo quando o usuário escolhe preset). Evita
+// que o relatório re-importe com datas diferentes no futuro.
 async function callMetaProxy(mode, preset, from, until){
   const params = {fields:'spend,reach,impressions,clicks,ctr,actions,cost_per_action_type,frequency,cpm'};
   if(mode==='custom'&&from&&until){
     params.time_range = JSON.stringify({since:from, until:until});
   } else {
-    params.date_preset = preset;
+    const range = presetToAbsoluteRange(preset);
+    if(range){ params.time_range = JSON.stringify(range); }
+    else     { params.date_preset = preset; } // fallback se preset desconhecido
   }
   const res = await fetch(SURL+'/functions/v1/meta-proxy',{
     method:'POST',
@@ -2215,30 +2936,46 @@ async function callMetaProxy(mode, preset, from, until){
   return json;
 }
 
+// CRÍTICO: a Meta retorna o MESMO evento com múltiplos action_types
+// (omni_purchase, offsite_conversion.fb_pixel_purchase, purchase). Somar todos
+// INFLA o número. Estratégia (igual ao PresentMode.tsx → sumActions):
+//   - Match EXATO por action_type
+//   - Cada grupo (ex. "Compras") tem keys em ordem de preferência
+//   - Usa o PRIMEIRO action_type que existir; NÃO soma os outros do mesmo grupo
+// Isso garante que dashboard (PresentMode) e relatório (este HTML) mostrem
+// EXATAMENTE o mesmo número.
+const CONV_GROUPS=[
+  {label:'Compras',      keys:['omni_purchase','offsite_conversion.fb_pixel_purchase','purchase','offline_conversion.purchase']},
+  {label:'Leads',        keys:['lead','offsite_conversion.fb_pixel_lead','onsite_conversion.lead_grouped']},
+  {label:'Mensagens',    keys:['onsite_conversion.messaging_conversation_started_7d','messaging_conversation_started_7d','onsite_conversion.messaging_first_reply']},
+  {label:'Cadastros',    keys:['complete_registration','omni_complete_registration','offsite_conversion.fb_pixel_complete_registration']},
+  {label:'Inscrições',   keys:['subscribe']},
+  {label:'Contatos',     keys:['contact']},
+  {label:'Agendamentos', keys:['schedule']},
+  {label:'Trials',       keys:['start_trial']},
+];
+
+function sumActionsExact(actions, keys){
+  if(!actions||!actions.length||!keys||!keys.length) return 0;
+  const byType={};
+  for(const a of actions){ if(a&&a.action_type) byType[a.action_type]=parseInt(a.value)||0; }
+  for(const k of keys){ if(byType[k]!==undefined) return byType[k]; }
+  // Fallback: alguns vêm como "ns.X.key" — match por sufixo
+  for(const k of keys){
+    for(const type of Object.keys(byType)){
+      if(type.endsWith('.'+k)) return byType[type];
+    }
+  }
+  return 0;
+}
+
 function parseMetaRow(row){
   const actions=row.actions||[];
-  // Tipos de conversão reconhecidos — ordem importa: mais específico primeiro
-  const CONV_PRIORITY=[
-    {match:'omni_purchase',          label:'Compras'},
-    {match:'offsite_conversion.fb_pixel_purchase', label:'Compras'},
-    {match:'purchase',               label:'Compras'},
-    {match:'offsite_conversion.fb_pixel_lead',     label:'Leads'},
-    {match:'lead',                   label:'Leads'},
-    {match:'complete_registration',  label:'Cadastros'},
-    {match:'omni_complete_registration', label:'Cadastros'},
-    {match:'subscribe',              label:'Inscrições'},
-    {match:'contact',                label:'Contatos'},
-    {match:'schedule',               label:'Agendamentos'},
-    {match:'start_trial',            label:'Trials'},
-  ];
   let resultados=0, resultLabel='Resultados';
-  // Tenta cada grupo de prioridade — usa o primeiro que tiver valor
-  for(const conv of CONV_PRIORITY){
-    const matched=actions.filter(a=>a.action_type===conv.match||a.action_type.includes(conv.match));
-    const total=matched.reduce((s,a)=>s+(parseInt(a.value)||0),0);
-    if(total>0){resultados=total;resultLabel=conv.label;break;}
+  for(const g of CONV_GROUPS){
+    const v=sumActionsExact(actions,g.keys);
+    if(v>0){ resultados=v; resultLabel=g.label; break; }
   }
-  // Sem fallback para "all actions" — deixa 0 se não reconheceu conversão
   const spend=parseFloat(row.spend)||0;
   const cpl=resultados>0?(spend/resultados):0;
   return {
@@ -2279,6 +3016,23 @@ function applyToReport(opt, resultado, semAnt){
 // ── Single import modal ───────────────────────────────────────────────────────
 let _adsImportEnabled=true;
 function openMetaImport(){
+  // Lock: só gestor NGP (ou admin) pode re-importar. Cliente nunca passa daqui.
+  // Espelha isNgp() do backend (_shared/roles.ts).
+  if(!IS_NGP_USER){
+    alert('Apenas o gestor NGP pode importar dados Meta neste relatório.');
+    return;
+  }
+  // Aviso: se o snapshot já está populado (cloudId existe + tem métricas/criativos
+  // preenchidos), confirma antes de sobrescrever. Evita perda acidental.
+  const jaPreenchido = cloudId && (
+    (D.metricas||[]).some(m=>m.resultado||m.semAnt) ||
+    (D.criativos||[]).some(c=>c.nome||c.porqueGanha||c.img)
+  );
+  if(jaPreenchido){
+    if(!confirm('⚠ Este relatório já tem dados preenchidos. Re-importar do Meta vai sobrescrever as métricas e criativos atuais. Continuar?')){
+      return;
+    }
+  }
   document.getElementById('meta-overlay').classList.add('open');
   document.getElementById('meta-ok').className='meta-ok';
   document.getElementById('meta-err').className='meta-err';
@@ -2632,9 +3386,16 @@ function renderAdsControls(){
 function setAdsObj(v){_adsObjective=v;renderAdsControls();}
 function setAdsPeriod(p){_adsPreset=p;renderAdsControls();}
 function setAdsTopN(n){_adsTopN=n;renderAdsControls();}
-async function fetchAdsCampeoes(){
+async function fetchAdsCampeoes(opts){
   if(_adsLoading)return;
   _adsLoading=true; _adsResult=null;
+  // Snapshot dos params no INÍCIO da execução — evita bug onde a global
+  // _adsObjective é reescrita por algum render/setter entre o autoimport
+  // setar e o fetch usar. Se `opts` vier do autoimport (URL params), eles
+  // ganham; senão, usa globals como antes (fluxo manual de modal).
+  const objStr  = (opts && opts.objective != null) ? opts.objective : _adsObjective;
+  const audStr  = (opts && opts.audience  != null) ? opts.audience  : _adsAudience;
+  const presetStr=(opts && opts.preset    != null) ? opts.preset    : _adsPreset;
   const setStatus=(t)=>{const el=document.getElementById('ads-status');if(el)el.textContent=t;};
   const setPreview=(h)=>{const el=document.getElementById('ads-preview');if(el)el.innerHTML=h;};
   const setBtnDisabled=(d)=>{const el=document.getElementById('ads-fill-btn');if(el)el.disabled=d;};
@@ -2643,13 +3404,14 @@ async function fetchAdsCampeoes(){
     // Resolve metadata do objetivo (cobre tanto "OUTCOME_SALES" sozinho como
     // o CSV completo "OUTCOME_SALES,CONVERSIONS,..."). Compara pelo primeiro
     // OUTCOME_* do CSV para achar a entrada certa em AD_OBJECTIVES.
-    const objectivesArr=_adsObjective.split(',').map(s=>s.trim()).filter(Boolean);
+    const objectivesArr=objStr.split(',').map(s=>s.trim()).filter(Boolean);
     const obj=AD_OBJECTIVES.find(o=>{
-      if(!o.val) return _adsObjective==='';
+      if(!o.val) return objStr==='';
       const ov=o.val.split(',').map(s=>s.trim());
       return objectivesArr.some(x=>ov.includes(x));
     }) || AD_OBJECTIVES[AD_OBJECTIVES.length-1];
-    const audienceObj=AD_AUDIENCES.find(a=>a.val===_adsAudience)||AD_AUDIENCES[0];
+    const audienceObj=AD_AUDIENCES.find(a=>a.val===audStr)||AD_AUDIENCES[0];
+    console.log('[fetchAdsCampeoes] resolvido | objStr=%s | obj.label=%s | aud=%s | preset=%s', objStr, obj.label, audStr, presetStr);
 
     // ETAPA 1: lista TODAS as campanhas da conta (rápido, sem métricas).
     // Filtra pelo nome E objective (OR) localmente — escolhe quais buscar
@@ -2658,7 +3420,7 @@ async function fetchAdsCampeoes(){
     const campsRes=await fetch(SURL+'/functions/v1/meta-proxy',{
       method:'POST',
       headers:{'Content-Type':'application/json','apikey':ANON,'Authorization':'Bearer '+_sess},
-      body:JSON.stringify({session_token:_sess,endpoint:'campaigns',params:{fields:'id,name,objective,status',limit:500},account_id:_metaAccount})
+      body:JSON.stringify({session_token:_sess,endpoint:'campaigns',params:{fields:'id,name,objective,status,effective_status',limit:500},account_id:_metaAccount})
     });
     const campsJ=await campsRes.json();
     if(!campsRes.ok||campsJ.error)throw new Error(campsJ.error?.message||campsJ.error||'Falha ao listar campanhas');
@@ -2693,9 +3455,13 @@ async function fetchAdsCampeoes(){
         level:'ad',
         limit:200,
         fields:'ad_id,ad_name,campaign_id,campaign_name,objective,spend,impressions,clicks,ctr,actions,action_values,cost_per_action_type',
-        date_preset:preset,
         filtering:JSON.stringify([{field:'campaign.id',operator:'IN',value:campIdsCasam}]),
       };
+      // Sempre absoluto — mesma razão do callMetaProxy. Fallback last_90d
+      // ainda existe abaixo, mas vira datas absolutas aqui também.
+      const range=presetToAbsoluteRange(preset);
+      if(range) params.time_range=JSON.stringify(range);
+      else      params.date_preset=preset;
       const r=await fetch(SURL+'/functions/v1/meta-proxy',{
         method:'POST',
         headers:{'Content-Type':'application/json','apikey':ANON,'Authorization':'Bearer '+_sess},
@@ -2705,64 +3471,71 @@ async function fetchAdsCampeoes(){
       if(!r.ok||jj.error)throw new Error(jj.error?.message||jj.error||'Falha ao buscar ads');
       return jj.data||[];
     };
-    let rows=await fetchAdsByPeriod(_adsPreset);
-    let periodoUsado=_adsPreset;
+    let rows=await fetchAdsByPeriod(presetStr);
+    let periodoUsado=presetStr;
     // Fallback: se 0 ads no período curto, amplia para last_30d (e depois last_90d)
-    if(!rows.length && _adsPreset!=='last_30d' && _adsPreset!=='last_90d'){
-      console.log('[fetchAdsCampeoes] 0 ads em %s, ampliando para last_30d', _adsPreset);
-      setStatus(`0 ads em "${_adsPreset}" — ampliando para 30 dias…`);
+    if(!rows.length && presetStr!=='last_30d' && presetStr!=='last_90d'){
+      console.log('[fetchAdsCampeoes] 0 ads em %s, ampliando para last_30d', presetStr);
+      setStatus(`0 ads em "${presetStr}" — ampliando para 30 dias…`);
       rows=await fetchAdsByPeriod('last_30d');
       periodoUsado='last_30d';
     }
-    if(!rows.length && _adsPreset!=='last_90d'){
+    if(!rows.length && presetStr!=='last_90d'){
       console.log('[fetchAdsCampeoes] 0 ads em last_30d, ampliando para last_90d');
       setStatus('0 ads em 30 dias — ampliando para 90 dias…');
       rows=await fetchAdsByPeriod('last_90d');
       periodoUsado='last_90d';
     }
     if(!rows.length){
-      setStatus(`Encontradas ${campsCasam.length} campanhas, mas sem ads ativos nos últimos 90 dias.`);
+      // Diagnóstico detalhado: mostra status real das campanhas que casaram +
+      // sugere objetivo alternativo se o nome das campanhas indicar outra
+      // categoria diferente do escolhido (caso AK: nome diz "Vendas/Mensagens"
+      // mas usuário escolheu Vendas e não veio nada).
+      const ativasMeta = campsCasam.filter(c=>c.effective_status==='ACTIVE').length;
+      const pausadas = campsCasam.length - ativasMeta;
+      const nomesCasam = campsCasam.slice(0,3).map(c=>c.name).join(' | ');
+      const sufixo = campsCasam.length>3 ? ` (+${campsCasam.length-3})` : '';
+
+      // Detecta se o nome sugere outra categoria. Heuristica: se TODOS os nomes
+      // contém um token de outra categoria diferente do escolhido, sugere trocar.
+      const TOKENS_ALT={vendas:'Vendas',lead:'Leads',mensag:'Mensagens',msg:'Mensagens',whats:'Mensagens',wpp:'Mensagens',trafego:'Tráfego',engaj:'Engajamento',reconhec:'Reconhec.'};
+      const sugestoes={};
+      for(const c of campsCasam){
+        const n=(c.name||'').toLowerCase();
+        for(const [tk,cat] of Object.entries(TOKENS_ALT)){
+          if(n.includes(tk) && cat!==(obj?.label||'')) sugestoes[cat]=(sugestoes[cat]||0)+1;
+        }
+      }
+      const sugTop=Object.entries(sugestoes).sort((a,b)=>b[1]-a[1])[0];
+      const hintTroca = (sugTop && sugTop[1]>=Math.ceil(campsCasam.length/2))
+        ? ` Os nomes das campanhas sugerem "${sugTop[0]}" — tente esse objetivo.`
+        : '';
+      const hintStatus = ativasMeta===0
+        ? ` Todas as ${pausadas} campanhas estão pausadas/arquivadas na Meta.`
+        : (ativasMeta>0 && pausadas>0)
+          ? ` ${ativasMeta} ativa(s) na Meta, ${pausadas} pausada(s) — mas nenhuma teve delivery.`
+          : ` Campanhas estão ativas na Meta mas sem delivery nesta janela.`;
+
+      setStatus(`Encontradas ${campsCasam.length} camp. com "${obj?.label||'objetivo'}" (${nomesCasam}${sufixo}).${hintStatus}${hintTroca}`);
       _adsLoading=false; return;
     }
-    if(periodoUsado!==_adsPreset){
-      console.log('[fetchAdsCampeoes] usando período %s (fallback de %s)', periodoUsado, _adsPreset);
+    if(periodoUsado!==presetStr){
+      console.log('[fetchAdsCampeoes] usando período %s (fallback de %s)', periodoUsado, presetStr);
     }
     console.log('[fetchAdsCampeoes] %d ads ativos no período retornados', rows.length);
-    // Ordena: tenta pelo action específico do objetivo (desc), senão por CTR desc.
-    // Cada objetivo tem múltiplos action_types possíveis (Pixel x CAPI x onsite).
+    // Ordena: usa sumActionsExact (mesma lógica do PresentMode) — pega o
+    // PRIMEIRO action_type da lista que existir, sem somar. Isso evita dobrar
+    // contagem (omni_purchase + fb_pixel_purchase costuma ser o mesmo evento).
     const actionKey=obj?obj.action:'purchase';
     const isMessaging=actionKey.includes('messaging');
     const isPurchase=actionKey==='purchase';
     const isLead=actionKey==='lead';
     const getResults=r=>{
       const acts=r.actions||[];
-      if(isMessaging){
-        const keys=['onsite_conversion.messaging_conversation_started_7d','messaging_conversation_started_7d','onsite_conversion.messaging_first_reply','messaging_first_reply','onsite_conversion.messaging_block'];
-        let total=0;
-        for(const a of acts){
-          if(keys.some(k=>a.action_type===k||a.action_type.endsWith(k))) total+=parseInt(a.value)||0;
-        }
-        return total;
-      }
-      if(isPurchase){
-        // Soma omni_purchase / fb_pixel_purchase / offline_conversion.purchase / purchase
-        const keys=['omni_purchase','offsite_conversion.fb_pixel_purchase','purchase','offline_conversion.purchase'];
-        let total=0;
-        for(const a of acts){
-          if(keys.some(k=>a.action_type===k)) total+=parseInt(a.value)||0;
-        }
-        return total;
-      }
-      if(isLead){
-        const keys=['lead','offsite_conversion.fb_pixel_lead','onsite_conversion.lead_grouped'];
-        let total=0;
-        for(const a of acts){
-          if(keys.some(k=>a.action_type===k)) total+=parseInt(a.value)||0;
-        }
-        return total;
-      }
-      const a=acts.find(x=>x.action_type===actionKey||x.action_type.endsWith('.'+actionKey));
-      return a?parseInt(a.value)||0:0;
+      if(isMessaging) return sumActionsExact(acts, ['onsite_conversion.messaging_conversation_started_7d','messaging_conversation_started_7d','onsite_conversion.messaging_first_reply','messaging_first_reply','onsite_conversion.messaging_block']);
+      if(isPurchase)  return sumActionsExact(acts, ['omni_purchase','offsite_conversion.fb_pixel_purchase','purchase','offline_conversion.purchase']);
+      if(isLead)      return sumActionsExact(acts, ['lead','offsite_conversion.fb_pixel_lead','onsite_conversion.lead_grouped']);
+      return sumActionsExact(acts, [actionKey]);
     };
     const sorted=rows.slice().sort((a,b)=>getResults(b)-getResults(a)||parseFloat(b.ctr||0)-parseFloat(a.ctr||0));
     const top=sorted.slice(0,_adsTopN);
@@ -2823,6 +3596,7 @@ async function fetchAdsCampeoes(){
         c.tituloAd=creative.title||'';
         c.legenda=creative.body||'';
         c.previewHtml=previewHtml||'';
+        c.videoId=creative.videoId||'';
       }catch(_){}
     }));
     setStatus(`${rows.length} ads encontrados · top ${top.length} selecionados`);
@@ -2849,7 +3623,7 @@ async function fetchAdsCampeoes(){
 async function fetchAdCreative(adId){
   // endpoint precisa ter '/' para o proxy não prefixar com act_<accountId>.
   // Pede thumbnail_url grande, image_url nativa, e textos do object_story_spec.
-  const fields='creative{thumbnail_url.width(600).height(600),image_url,title,body,object_story_spec{link_data{picture,message,name,description,caption,call_to_action},video_data{image_url,message,title,call_to_action},photo_data{image_url,caption}}}';
+  const fields='creative{thumbnail_url.width(600).height(600),image_url,title,body,video_id,object_story_spec{link_data{picture,message,name,description,caption,call_to_action},video_data{image_url,video_id,message,title,call_to_action},photo_data{image_url,caption}}}';
   const res=await fetch(SURL+'/functions/v1/meta-proxy',{
     method:'POST',
     headers:{'Content-Type':'application/json','apikey':ANON,'Authorization':'Bearer '+_sess},
@@ -2872,8 +3646,40 @@ async function fetchAdCreative(adId){
   // Título e legenda: tenta link_data primeiro (formato mais comum)
   const title = link.name || video.title || cr.title || '';
   const body  = link.message || video.message || photo.caption || cr.body || link.description || '';
-  const img = url ? await urlToDataUrl(url) : '';
-  return { img, title, body };
+  // video_id: vem do video_data (object_story_spec) ou direto no creative.
+  // Usado pra Whisper transcrever o áudio sob demanda.
+  const videoId = video.video_id || cr.video_id || '';
+  // Storage persistente: a thumb do Meta expira em ~48h. Subimos pro
+  // Supabase Storage e usamos URL permanente. Fallback pra data URL se falhar.
+  let img = '';
+  if(url){
+    try{
+      const pinned = await pinThumb(url);
+      img = pinned || await urlToDataUrl(url);
+    }catch(_){
+      img = await urlToDataUrl(url);
+    }
+  }
+  return { img, title, body, videoId };
+}
+
+// Sobe a URL temporária da Meta pro Supabase Storage. Retorna URL permanente.
+// Em caso de falha, retorna '' (e o caller usa data URL como fallback).
+async function pinThumb(sourceUrl){
+  if(!_sess) return '';
+  try{
+    const res = await fetch(SURL+'/functions/v1/relatorio-pin-thumb',{
+      method:'POST',
+      headers:{'Content-Type':'application/json','apikey':ANON,'Authorization':'Bearer '+_sess},
+      body: JSON.stringify({ session_token:_sess, source_url:sourceUrl, relatorio_id: cloudId || null })
+    });
+    const j = await res.json().catch(()=>({}));
+    if(!res.ok || j.error) { console.warn('[pinThumb] falhou:', j.error||res.status); return ''; }
+    return j.url || '';
+  }catch(e){
+    console.warn('[pinThumb] erro:', e);
+    return '';
+  }
 }
 async function urlToDataUrl(url){
   // Tenta fetch direto; se CORS bloquear, cai para o meta-proxy.
@@ -2942,6 +3748,7 @@ function fillAdsIntoReport(opts){
       tituloAd:c.tituloAd||'',
       legenda:c.legenda||'',
       previewHtml:c.previewHtml||'',
+      videoId:c.videoId||'',
       fromMeta:true,
     };
   });
@@ -3058,7 +3865,7 @@ function fillAdsIntoReport(opts){
         <div class="comp-col-head" style="color:#5856D6">
           <span style="font-size:15px">🔁</span>
           <span class="comp-col-head-label">Comparação</span>
-          <span class="comp-col-head-sub">(Semana Anterior)</span>
+          <span class="comp-col-head-sub">(Período Anterior)</span>
         </div>
         <div id="comp-periods-B" class="comp-quick-row"></div>
         <div id="comp-custom-B" class="meta-custom-row">

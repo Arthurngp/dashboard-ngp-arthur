@@ -4,7 +4,7 @@
 import { Cliente, DateParam } from '@/types'
 
 export type Screen = 'select' | 'dashboard'
-export type Tab = 'resumo' | 'campanhas' | 'graficos' | 'relatorios' | 'plataformas' | 'notificacoes'
+export type Tab = 'resumo' | 'campanhas' | 'graficos' | 'relatorios' | 'plataformas' | 'notificacoes' | 'copilot'
 
 export interface BudgetAlert {
   clientId: string

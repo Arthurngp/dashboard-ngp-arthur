@@ -21,14 +21,32 @@ export async function listChannels(currentUsuarioId?: string | null): Promise<Te
     .filter((c) => c.type === 'dm')
     .map((c) => c.id)
 
-  const [readsRes, lastMsgRes, prefsRes, dmsRes] = await Promise.all([
+  // DUAS queries de mensagens:
+  // - `lastMsgRes`: sem filtro de autor — alimenta `last_message_at` (preview/ordenação),
+  //   precisa incluir minhas próprias mensagens pra ordenar o canal no topo.
+  // - `unreadMsgRes`: filtrada por `autor_id != eu` — alimenta `unread_count`,
+  //   garante que minhas próprias mensagens NÃO me notifiquem como não-lidas.
+  const lastMsgQuery = supabase
+    .from('team_chat_messages')
+    .select('channel_id,created_at')
+    .in('channel_id', ids)
+    .is('deleted_at', null)
+    .order('created_at', { ascending: false })
+
+  let unreadMsgQuery = supabase
+    .from('team_chat_messages')
+    .select('channel_id,created_at,autor_id')
+    .in('channel_id', ids)
+    .is('deleted_at', null)
+    .order('created_at', { ascending: false })
+  if (currentUsuarioId) {
+    unreadMsgQuery = unreadMsgQuery.neq('autor_id', currentUsuarioId)
+  }
+
+  const [readsRes, lastMsgRes, unreadMsgRes, prefsRes, dmsRes] = await Promise.all([
     supabase.from('team_chat_reads').select('channel_id,last_read_at').in('channel_id', ids),
-    supabase
-      .from('team_chat_messages')
-      .select('channel_id,created_at')
-      .in('channel_id', ids)
-      .is('deleted_at', null)
-      .order('created_at', { ascending: false }),
+    lastMsgQuery,
+    unreadMsgQuery,
     supabase
       .from('team_chat_user_channel_prefs')
       .select('channel_id,is_favorite,sort_order')
@@ -46,12 +64,18 @@ export async function listChannels(currentUsuarioId?: string | null): Promise<Te
     lastReadByChannel.set(r.channel_id, r.last_read_at)
   }
 
+  // last_message_at: usa lastMsgRes (todas as mensagens, inclusive minhas)
   const lastMsgByChannel = new Map<string, string>()
-  const unreadCountByChannel = new Map<string, number>()
   for (const m of lastMsgRes.data ?? []) {
     if (!lastMsgByChannel.has(m.channel_id)) {
       lastMsgByChannel.set(m.channel_id, m.created_at)
     }
+  }
+
+  // unread_count: usa unreadMsgRes (já filtrado, sem minhas mensagens) e respeita
+  // last_read_at do usuário. Garante que ao mandar uma msg eu não me notifique.
+  const unreadCountByChannel = new Map<string, number>()
+  for (const m of unreadMsgRes.data ?? []) {
     const lastRead = lastReadByChannel.get(m.channel_id)
     if (!lastRead || m.created_at > lastRead) {
       unreadCountByChannel.set(

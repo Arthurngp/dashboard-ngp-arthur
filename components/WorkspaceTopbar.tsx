@@ -31,13 +31,19 @@ interface ClientChipData {
 
 interface WorkspaceTopbarProps {
   subtitle: string
-  activeId?: 'pessoas' | 'comercial' | 'comercial-digital' | 'reports' | 'financeiro' | 'trackeamento' | 'gestao-anuncios' | 'tarefas'
+  activeId?: 'pessoas' | 'comercial' | 'comercial-digital' | 'reports' | 'financeiro' | 'trackeamento' | 'gestao-anuncios' | 'tarefas' | 'copilot'
   navItems?: WorkspaceTopbarNavItem[]
   clientChip?: ClientChipData | null
   brandHref?: string
   onProfileClick?: () => void
   onMenuClick?: () => void
   onLogout?: () => void
+}
+
+interface CategoryDef {
+  id: string
+  label: string
+  items: WorkspaceTopbarNavItem[]
 }
 
 function LogoMark() {
@@ -91,9 +97,36 @@ export default function WorkspaceTopbar({
       { id: 'tarefas', label: 'Gestão de Tarefas', active: activeId === 'tarefas', href: '/tarefas' },
       { id: 'financeiro', label: 'Financeiro', active: activeId === 'financeiro', href: '/financeiro/dashboard' },
       { id: 'trackeamento', label: 'NGP Forms', active: activeId === 'trackeamento', href: '/trackeamento' },
+      { id: 'copilot', label: 'NGP Copilot', active: activeId === 'copilot', href: '/copilot' },
       { id: 'gestao-anuncios', label: 'Gestão de anúncios', active: activeId === 'gestao-anuncios', disabled: true },
     ]
   }, [activeId, navItems, router])
+
+  // Agrupa setores por categoria. Se navItems custom foi passado, ignora agrupamento
+  // e renderiza flat (compat com chamadores que sobreescrevem).
+  const categories = useMemo<CategoryDef[]>(() => {
+    if (navItems?.length) return [] // sinal: usa render flat
+    const byId = (id: string) => resolvedNavItems.find((i) => i.id === id)
+    const collect = (...ids: string[]) =>
+      ids.map(byId).filter((i): i is WorkspaceTopbarNavItem => Boolean(i))
+    return [
+      { id: 'gestao', label: 'Gestão', items: collect('pessoas', 'financeiro') },
+      { id: 'copilot', label: 'NGP IA', items: collect('copilot') },
+      { id: 'performance', label: 'Performance', items: collect('reports', 'trackeamento', 'gestao-anuncios', 'tarefas') },
+      { id: 'comercial', label: 'Comercial', items: collect('comercial', 'comercial-digital') },
+    ]
+  }, [resolvedNavItems, navItems])
+
+  const [openCategory, setOpenCategory] = useState<string | null>(null)
+  useEffect(() => {
+    if (!openCategory) return
+    const close = (e: MouseEvent) => {
+      const target = e.target as HTMLElement
+      if (!target.closest(`[data-category-menu]`)) setOpenCategory(null)
+    }
+    document.addEventListener('click', close)
+    return () => document.removeEventListener('click', close)
+  }, [openCategory])
 
   async function doLogout() {
     if (onLogout) {
@@ -134,39 +167,68 @@ export default function WorkspaceTopbar({
         </div>
 
         <nav className={styles.topnav}>
-          {resolvedNavItems.map((item) => (
-            item.href && !item.disabled ? (
-              item.external ? (
-                <a
-                  key={item.id}
-                  href={item.href}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className={`${styles.topnavItem} ${item.active ? styles.topnavItemActive : ''} ${styles.topnavItemExternal}`}
-                >
-                  {item.label}
-                </a>
-              ) : (
-                <Link
-                  key={item.id}
-                  href={item.href}
-                  className={`${styles.topnavItem} ${item.active ? styles.topnavItemActive : ''}`}
-                >
-                  {item.label}
-                </Link>
+          {categories.length > 0 ? (
+            categories.map((cat) => {
+              const hasActive = cat.items.some((it) => it.active)
+              const isOpen = openCategory === cat.id
+              return (
+                <div key={cat.id} className={styles.categoryWrap} data-category-menu>
+                  <button
+                    type="button"
+                    onClick={(e) => { e.stopPropagation(); setOpenCategory(isOpen ? null : cat.id) }}
+                    className={`${styles.topnavItem} ${hasActive ? styles.topnavItemActive : ''} ${styles.categoryBtn} ${isOpen ? styles.categoryBtnOpen : ''}`}
+                  >
+                    {cat.label}
+                    <svg className={styles.categoryCaret} viewBox="0 0 12 12" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
+                      <polyline points="3 4.5 6 7.5 9 4.5" />
+                    </svg>
+                  </button>
+                  {isOpen && (
+                    <div className={styles.categoryMenu}>
+                      {cat.items.map((item) => {
+                        const itemClass = `${styles.categoryMenuItem} ${item.active ? styles.categoryMenuItemActive : ''} ${item.disabled ? styles.categoryMenuItemDisabled : ''}`
+                        if (item.href && !item.disabled) {
+                          return item.external ? (
+                            <a key={item.id} href={item.href} target="_blank" rel="noopener noreferrer" className={itemClass} onClick={() => setOpenCategory(null)}>
+                              {item.label}
+                            </a>
+                          ) : (
+                            <Link key={item.id} href={item.href} className={itemClass} onClick={() => setOpenCategory(null)}>
+                              {item.label}
+                            </Link>
+                          )
+                        }
+                        return (
+                          <button key={item.id} type="button" onClick={() => { item.onClick?.(); setOpenCategory(null) }} disabled={item.disabled} className={itemClass}>
+                            {item.label}
+                            {item.disabled && <span className={styles.categoryMenuItemBadge}>em breve</span>}
+                          </button>
+                        )
+                      })}
+                    </div>
+                  )}
+                </div>
               )
-            ) : (
-              <button
-                key={item.id}
-                type="button"
-                onClick={item.onClick}
-                disabled={item.disabled}
-                className={`${styles.topnavItem} ${item.active ? styles.topnavItemActive : ''} ${item.disabled ? styles.topnavItemDisabled : ''}`}
-              >
-                {item.label}
-              </button>
-            )
-          ))}
+            })
+          ) : (
+            resolvedNavItems.map((item) => (
+              item.href && !item.disabled ? (
+                item.external ? (
+                  <a key={item.id} href={item.href} target="_blank" rel="noopener noreferrer" className={`${styles.topnavItem} ${item.active ? styles.topnavItemActive : ''} ${styles.topnavItemExternal}`}>
+                    {item.label}
+                  </a>
+                ) : (
+                  <Link key={item.id} href={item.href} className={`${styles.topnavItem} ${item.active ? styles.topnavItemActive : ''}`}>
+                    {item.label}
+                  </Link>
+                )
+              ) : (
+                <button key={item.id} type="button" onClick={item.onClick} disabled={item.disabled} className={`${styles.topnavItem} ${item.active ? styles.topnavItemActive : ''} ${item.disabled ? styles.topnavItemDisabled : ''}`}>
+                  {item.label}
+                </button>
+              )
+            ))
+          )}
         </nav>
 
         <div className={styles.topbarRight}>

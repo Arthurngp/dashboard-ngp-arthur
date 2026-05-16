@@ -226,6 +226,29 @@
   text-transform: uppercase;
 }
 
+/* Badge numérico de notificações (não-lidas do chat) — vermelho, destaque */
+.navBadgeCount {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 6px;
+  margin-left: auto;
+  border-radius: 999px;
+  background: #ef4444;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 800;
+  line-height: 1;
+  box-shadow: 0 1px 2px rgba(239, 68, 68, 0.4);
+  animation: chatBadgePulse 2s ease-in-out infinite;
+}
+@keyframes chatBadgePulse {
+  0%, 100% { box-shadow: 0 1px 2px rgba(239, 68, 68, 0.4); }
+  50% { box-shadow: 0 1px 8px rgba(239, 68, 68, 0.7); }
+}
+
 .chevron {
   font-size: 16px;
   color: #94a3b8;

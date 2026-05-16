@@ -10,6 +10,7 @@ import { getAdminNavigation } from '@/lib/admin-navigation'
 import WorkspaceTopbar from './WorkspaceTopbar'
 import styles from './Sidebar.module.css'
 import { TaskCliente, TaskSetor } from '@/types/tasks'
+import { useChatNotifications } from '@/lib/team-chat/notifications-provider'
 
 interface Props {
   activeTab?: string
@@ -30,6 +31,8 @@ interface NavItem {
   href: string
   tab?: string
   badge?: string
+  /** Contador numérico (não-lidas etc). Renderiza em vermelho ao lado do label. */
+  badgeCount?: number
   subItems?: NavItem[]
   action?: {
     icon: React.ReactNode
@@ -569,6 +572,15 @@ function SidebarInner({
   let resolvedSectorNav = setoresOnlyOpen ? getSetoresNavItems() : sectorNav || autoSector?.nav || []
   const resolvedSectorTitle = setoresOnlyOpen ? 'SETORES' : sectorNavTitle || autoSector?.title || 'NAVEGAÇÃO'
 
+  // Injeta badge de mensagens não-lidas no item "Chat" — visível em qualquer rota
+  // sem precisar entrar na /chat. Provider já cuida de zerar quando estamos lá.
+  const { totalUnread: chatUnread } = useChatNotifications()
+  if (chatUnread > 0 && resolvedSectorNav.length > 0) {
+    resolvedSectorNav = resolvedSectorNav.map(item =>
+      item.href === '/chat' ? { ...item, badgeCount: chatUnread } : item
+    )
+  }
+
   // Injetar pastas de clientes se estiver no setor de tarefas (Estilo ClickUp)
   if (pathname.startsWith('/tarefas') && !pathname.startsWith('/tarefas/config') && clients.length > 0) {
     const clientsFolder: NavItem = {
@@ -750,6 +762,11 @@ function SidebarInner({
           )}
           {isGroup && <span className={`${styles.chevron} ${isExpanded ? styles.chevronOpen : ''}`}>›</span>}
           {item.badge && <span className={styles.navBadge}>{item.badge}</span>}
+          {typeof item.badgeCount === 'number' && item.badgeCount > 0 && (
+            <span className={styles.navBadgeCount} aria-label={`${item.badgeCount} não lidas`}>
+              {item.badgeCount > 99 ? '99+' : item.badgeCount}
+            </span>
+          )}
         </button>
         {isGroup && isExpanded && (
           <div className={styles.navGroupChildren}>

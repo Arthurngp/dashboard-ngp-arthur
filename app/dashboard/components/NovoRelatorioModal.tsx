@@ -1,12 +1,14 @@
 'use client'
 
-import { useState } from 'react'
+import { useMemo, useState, useEffect } from 'react'
+import type { Campaign } from '@/types'
 
 interface NovoRelatorioModalProps {
   isOpen: boolean
   onClose: () => void
   onConfirm: (config: NovoRelatorioConfig) => void
   clienteName: string
+  campaigns?: Campaign[]
 }
 
 export interface NovoRelatorioConfig {
@@ -56,6 +58,55 @@ const OBJECTIVES = [
   { label: 'Todos',       value: '' },
 ]
 
+// Mapeia o objective de uma campanha (vem da Meta) para qual categoria do
+// nosso wizard ela pertence. Cada categoria tem seu match exato baseado nos
+// objectives novos (OUTCOME_*) e legados. Retorna '' quando não classifica.
+function categoriaDoObjective(objective: string): string {
+  if (!objective) return ''
+  const o = objective.toUpperCase()
+  if (o === 'OUTCOME_SALES' || o === 'CONVERSIONS' || o === 'PRODUCT_CATALOG_SALES') return 'Vendas'
+  if (o === 'OUTCOME_LEADS' || o === 'LEAD_GENERATION') return 'Leads'
+  if (o === 'MESSAGES') return 'Mensagens'
+  if (o === 'OUTCOME_TRAFFIC' || o === 'LINK_CLICKS') return 'Tráfego'
+  if (o === 'OUTCOME_ENGAGEMENT' || o === 'POST_ENGAGEMENT' || o === 'PAGE_LIKES' || o === 'EVENT_RESPONSES') return 'Engajamento'
+  if (o === 'OUTCOME_AWARENESS' || o === 'BRAND_AWARENESS' || o === 'REACH' || o === 'VIDEO_VIEWS') return 'Reconhec.'
+  return ''
+}
+
+// Tokens no NOME da campanha que indicam categoria real. Útil quando o
+// objective Meta diverge do uso (ex: "NGP - Vendas/Mensagens" tem objective
+// OUTCOME_SALES mas converte via mensagem). normalizamos: lowercase + sem
+// acento + sem pontuação, e procuramos como SUBSTRING.
+const NAME_TOKENS: Record<string, string[]> = {
+  Vendas:       ['vendas', 'venda', 'sales', 'compras', 'ecom', 'ecommerce', 'checkout'],
+  Leads:        ['leads', 'lead', 'cadastro', 'cadastros', 'formulario', 'form'],
+  Mensagens:    ['mensagens', 'mensagem', 'msg', 'whats', 'whatsapp', 'wpp', 'direct', 'dm', 'chat'],
+  Tráfego:      ['trafego', 'traffic', 'site', 'cliques', 'click'],
+  Engajamento:  ['engajamento', 'engagement', 'curtidas', 'engaja'],
+  'Reconhec.':  ['reconhecimento', 'awareness', 'alcance', 'brand', 'institucional', 'marca'],
+}
+
+function normName(s: string): string {
+  return (s || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+}
+
+// Retorna lista de categorias detectadas pelo NOME (pode ser múltiplas).
+// Vazio se nada bater.
+function categoriasDoNome(name: string): string[] {
+  const n = normName(name)
+  if (!n) return []
+  const found: string[] = []
+  for (const [cat, tokens] of Object.entries(NAME_TOKENS)) {
+    if (tokens.some(t => n.includes(t))) found.push(cat)
+  }
+  return found
+}
+
+function fmtBRL(v: number): string {
+  if (v >= 1000) return `R$ ${(v / 1000).toFixed(1)}k`
+  return `R$ ${v.toFixed(0)}`
+}
+
 // Públicos (temperatura) — filtra resultado pelo nome da campanha
 const AUDIENCES = [
   { label: 'Todos', value: '' },
@@ -64,7 +115,7 @@ const AUDIENCES = [
   { label: 'Black', value: 'black' },
 ]
 
-export default function NovoRelatorioModal({ isOpen, onClose, onConfirm, clienteName }: NovoRelatorioModalProps) {
+export default function NovoRelatorioModal({ isOpen, onClose, onConfirm, clienteName, campaigns }: NovoRelatorioModalProps) {
   const [period, setPeriod] = useState('last_7d')
   const [selMetrics, setSelMetrics] = useState<Set<string>>(new Set(METRICS.map(m => m.key)))
   const [objective, setObjective] = useState('OUTCOME_SALES,CONVERSIONS,PRODUCT_CATALOG_SALES')
@@ -72,6 +123,57 @@ export default function NovoRelatorioModal({ isOpen, onClose, onConfirm, cliente
   const [topN, setTopN] = useState(2)
   // Importação de criativos é sempre ON — ficaram só os controles de configuração
   const importCriativos = true
+
+  // Soma spend por categoria de objetivo, com base nas campanhas já carregadas
+  // no dashboard. Permite mostrar "Vendas (R$ 12k)" no pill e ordenar pra
+  // colocar o objetivo dominante primeiro.
+  //
+  // Lógica de classificação (em cascata):
+  //   1) Categorias detectadas pelo NOME (NAME_TOKENS) — fonte mais confiável,
+  //      porque o gestor já nomeia pra refletir o uso real (ex: "Vendas/Mensagens"
+  //      indica que a campanha gera ambos, mesmo que objective Meta seja só SALES).
+  //   2) Se o nome não classificou, usa a categoria do objective Meta.
+  //   3) Se o nome detectou MÚLTIPLAS, divide o spend igualmente entre elas
+  //      (ex: "Vendas/Mensagens" → 50% pra cada).
+  const spendPorCategoria = useMemo(() => {
+    const m: Record<string, number> = {}
+    for (const c of (campaigns || [])) {
+      const spend = c.spend || 0
+      if (spend <= 0) continue
+      const cats = categoriasDoNome(c.name || '')
+      if (cats.length > 0) {
+        const share = spend / cats.length
+        for (const cat of cats) m[cat] = (m[cat] || 0) + share
+      } else {
+        const cat = categoriaDoObjective(c.objective || '')
+        if (cat) m[cat] = (m[cat] || 0) + spend
+      }
+    }
+    return m
+  }, [campaigns])
+
+  // Objetivos ordenados: os com gasto primeiro (maior → menor), depois os sem
+  // gasto na ordem original. "Todos" sempre por último.
+  const objetivosOrdenados = useMemo(() => {
+    const semTodos = OBJECTIVES.filter(o => o.label !== 'Todos')
+    const todos = OBJECTIVES.find(o => o.label === 'Todos')
+    const sorted = [...semTodos].sort((a, b) => {
+      const sa = spendPorCategoria[a.label] || 0
+      const sb = spendPorCategoria[b.label] || 0
+      if (sa !== sb) return sb - sa
+      return 0
+    })
+    return todos ? [...sorted, todos] : sorted
+  }, [spendPorCategoria])
+
+  // Pré-seleciona o objetivo com maior gasto quando o modal abre.
+  // Só roda quando isOpen vira true e há campanhas — não derruba seleção manual.
+  useEffect(() => {
+    if (!isOpen) return
+    const top = objetivosOrdenados.find(o => o.label !== 'Todos' && (spendPorCategoria[o.label] || 0) > 0)
+    if (top) setObjective(top.value)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen])
 
   if (!isOpen) return null
 
@@ -118,8 +220,25 @@ export default function NovoRelatorioModal({ isOpen, onClose, onConfirm, cliente
         </Section>
 
         <Section label="🏆 Criativos campeões">
-          <div style={{ fontSize: 11, color: '#6E6E73', marginBottom: 6 }}>Objetivo da campanha</div>
-          <Pills items={OBJECTIVES.map(o => ({ label: o.label, value: o.value }))} value={objective} onChange={setObjective} />
+          <div style={{ fontSize: 11, color: '#6E6E73', marginBottom: 6 }}>
+            Objetivo da campanha
+            {Object.keys(spendPorCategoria).length > 0 && (
+              <span style={{ color: '#AEAEB2', marginLeft: 6 }}>
+                · auto-detectado pelo gasto da conta
+              </span>
+            )}
+          </div>
+          <Pills
+            items={objetivosOrdenados.map(o => {
+              const spend = spendPorCategoria[o.label] || 0
+              return {
+                label: spend > 0 ? `${o.label} · ${fmtBRL(spend)}` : o.label,
+                value: o.value,
+              }
+            })}
+            value={objective}
+            onChange={setObjective}
+          />
           <div style={{ fontSize: 11, color: '#6E6E73', margin: '10px 0 6px' }}>Público <span style={{ color: '#AEAEB2' }}>(filtra pelo nome)</span></div>
           <Pills items={AUDIENCES.map(a => ({ label: a.label, value: a.value }))} value={audience} onChange={setAudience} />
           <div style={{ fontSize: 11, color: '#6E6E73', margin: '10px 0 6px' }}>Quantidade</div>

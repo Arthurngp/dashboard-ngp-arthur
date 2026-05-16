@@ -29,6 +29,7 @@ import { META_METRICS, DEFAULT_METRICS } from '@/lib/meta-metrics'
 const CampanhasTab = dynamic(() => import('./components/CampanhasTab'), { ssr: false })
 const GraficosTab = dynamic(() => import('./components/GraficosTab'), { ssr: false })
 const NotificacoesTab = dynamic(() => import('./components/NotificacoesTab'), { ssr: false })
+// CopilotTab agora vive em /copilot (setor próprio). A aba aqui só mostra atalho.
 const DiagnosisPanel = dynamic(() => import('./components/DiagnosisPanel'), { ssr: false })
 const MetaAnalysisPanel = dynamic(() => import('@/components/MetaAnalysisPanel'), { ssr: false })
 const Bar = dynamic(() => import('react-chartjs-2').then(m => ({ default: m.Bar })), { ssr: false })
@@ -214,10 +215,10 @@ export default function DashboardPage() {
   const snapshotDisplay = useMemo(() => analyticsSnapshot ? summarizeSnapshotForDisplay(analyticsSnapshot) : null, [analyticsSnapshot])
 
   const activeTabMeta: Record<Tab, string> = {
-    resumo: 'KPIs, diagnóstico e leitura consolidada do período.', plataformas: 'Conexões, contas e visão operacional das redes.', campanhas: 'Aprofundamento em campanhas, conjuntos e anúncios.', graficos: 'Evolução temporal, comparativos e sinais visuais.', relatorios: 'Relatórios gerados e entregáveis do cliente.', notificacoes: 'Alertas de orçamento, saldo e status de conta.',
+    resumo: 'KPIs, diagnóstico e leitura consolidada do período.', plataformas: 'Conexões, contas e visão operacional das redes.', campanhas: 'Aprofundamento em campanhas, conjuntos e anúncios.', graficos: 'Evolução temporal, comparativos e sinais visuais.', relatorios: 'Relatórios gerados e entregáveis do cliente.', notificacoes: 'Alertas de orçamento, saldo e status de conta.', copilot: 'Conversa com o NGP Copilot, memória e aprendizados deste cliente.',
   }
   const activeTabLabel: Record<Tab, string> = {
-    resumo: 'Resumo', plataformas: 'Plataformas', campanhas: 'Campanhas', graficos: 'Gráficos', relatorios: 'Relatórios', notificacoes: 'Notificações',
+    resumo: 'Resumo', plataformas: 'Plataformas', campanhas: 'Campanhas', graficos: 'Gráficos', relatorios: 'Relatórios', notificacoes: 'Notificações', copilot: 'NGP Copilot',
   }
 
   function scrollToSection(id: string) {
@@ -250,6 +251,7 @@ export default function DashboardPage() {
       { id: 'tab-graficos', label: 'Gráficos', icon: shellIcons.charts, active: activeTab === 'graficos', onClick: () => switchTab('graficos') },
       { id: 'tab-relatorios', label: 'Relatórios', icon: shellIcons.reports, active: activeTab === 'relatorios', onClick: () => switchTab('relatorios') },
       { id: 'tab-alerts', label: 'Notificações', icon: shellIcons.alerts, active: activeTab === 'notificacoes', onClick: () => switchTab('notificacoes') },
+      { id: 'tab-copilot', label: 'NGP Copilot', icon: shellIcons.summary, active: activeTab === 'copilot', onClick: () => switchTab('copilot') },
     ]},
     { label: 'Canais', items: [
       { id: 'channel-meta', label: 'Meta Ads', icon: shellIcons.ads, active: true },
@@ -576,6 +578,30 @@ export default function DashboardPage() {
                   <NotificacoesTab alertsLoading={alertsLoading} budgetAlerts={budgetAlerts} alertsDismissed={alertsDismissed} clients={clients} onLoadBudgetAlerts={() => {}} onDismissAlert={dismissAlert} onClearDismissed={clearDismissed} />
                 </Suspense>
               )}
+              {activeTab === 'copilot' && (
+                <div style={{ padding: 60, textAlign: 'center', background: '#fff', borderRadius: 14 }}>
+                  <h2 style={{ fontSize: 22, color: '#111827', margin: '0 0 8px' }}>NGP Copilot agora é setor próprio</h2>
+                  <p style={{ color: '#6b7280', maxWidth: 480, margin: '0 auto 20px' }}>
+                    O Copilot foi movido para um setor dedicado em <code>/copilot</code> pra você ter foco total na conversa,
+                    memória e timeline de cada cliente.
+                  </p>
+                  <button
+                    onClick={() => router.push(viewing?.id ? `/copilot/${viewing.id}` : '/copilot')}
+                    style={{
+                      background: '#2563eb',
+                      color: '#fff',
+                      border: 0,
+                      padding: '12px 24px',
+                      borderRadius: 10,
+                      fontSize: 14,
+                      fontWeight: 600,
+                      cursor: 'pointer',
+                    }}
+                  >
+                    Abrir Copilot{viewing?.name ? ` para ${viewing.name}` : ''} →
+                  </button>
+                </div>
+              )}
             </div>
           </div>
         </div>
@@ -583,7 +609,7 @@ export default function DashboardPage() {
       {modalOpen && <AccountModal data={modalEdit || {}} loading={modalLoading} error={modalError} userRole={sess?.role} onSave={saveClient} onArchive={archiveClient} onDelete={deleteClient} onClose={() => { setModalOpen(false); setModalEdit(null); setModalError('') }} />}
       {metricsModalOpen && <MetricsModal visible={visibleMetrics} onToggle={toggleMetric} onReset={resetMetrics} onClose={() => setMetricsModalOpen(false)} />}
       <AdPreviewModal html={previewHtml} loading={previewLoading} adName={previewAdName} onClose={() => { setPreviewHtml(null); setPreviewLoading(false) }} />
-      <NovoRelatorioModal isOpen={novoRelatorioOpen} clienteName={viewing?.name || ''} onClose={() => setNovoRelatorioOpen(false)} onConfirm={handleNovoRelatorioConfirm} />
+      <NovoRelatorioModal isOpen={novoRelatorioOpen} clienteName={viewing?.name || ''} campaigns={campaigns} onClose={() => setNovoRelatorioOpen(false)} onConfirm={handleNovoRelatorioConfirm} />
       {presentMode && (
         <PresentMode
           clienteName={viewing?.name || ''}

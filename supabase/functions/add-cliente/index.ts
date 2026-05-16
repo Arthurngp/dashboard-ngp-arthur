@@ -1,6 +1,21 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
-import * as bcrypt from "https://deno.land/x/bcrypt@v0.4.1/mod.ts";
 import { handleCors, json } from "../_shared/cors.ts";
+
+const PBKDF2_ITERATIONS = 100_000;
+
+async function hashPasswordPbkdf2(password: string): Promise<string> {
+  const salt = crypto.getRandomValues(new Uint8Array(16));
+  const key = await crypto.subtle.importKey(
+    'raw', new TextEncoder().encode(password), 'PBKDF2', false, ['deriveBits']
+  );
+  const derived = await crypto.subtle.deriveBits(
+    { name: 'PBKDF2', salt, iterations: PBKDF2_ITERATIONS, hash: 'SHA-256' },
+    key, 256
+  );
+  const hashHex = Array.from(new Uint8Array(derived)).map(b => b.toString(16).padStart(2, '0')).join('');
+  const saltHex = Array.from(salt).map(b => b.toString(16).padStart(2, '0')).join('');
+  return `pbkdf2:${saltHex}:${hashHex}`;
+}
 
 const errMsg = (e: unknown): string => {
   if (!e) return 'Erro desconhecido';
@@ -86,8 +101,8 @@ Deno.serve(async (req) => {
       }
     }
 
-    // Hash da senha com bcrypt
-    const hashedPassword = await bcrypt.hash(senha);
+    // Hash da senha com PBKDF2 (mesmo formato usado pelo login)
+    const hashedPassword = await hashPasswordPbkdf2(senha);
 
     const insertData: Record<string, unknown> = {
       nome:          nome.trim(),
