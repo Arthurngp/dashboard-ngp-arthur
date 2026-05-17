@@ -76,6 +76,7 @@ serve(async (req) => {
       email,
       password,
       meta_account_id,
+      google_ads_customer_id,
       ativo,
       analytics_enabled,
       reports_enabled,
@@ -103,6 +104,14 @@ serve(async (req) => {
 
     if (metaAccountClean && !/^\d+$/.test(metaAccountClean)) {
       return json(req, { error: 'Meta Account ID inválido. Use somente números ou act_123456.' }, 400)
+    }
+
+    // Google Ads customer_id: aceita "123-456-7890" ou "1234567890". Armazena sem hífens.
+    const googleAdsClean = google_ads_customer_id
+      ? String(google_ads_customer_id).trim().replace(/-/g, '')
+      : null
+    if (googleAdsClean && !/^\d{10}$/.test(googleAdsClean)) {
+      return json(req, { error: 'Google Ads Customer ID inválido. Use 10 dígitos (ex: 123-456-7890).' }, 400)
     }
 
     if (!id && (!password || String(password).length < 6)) {
@@ -148,13 +157,16 @@ serve(async (req) => {
         }
       }
 
+      // Update parcial: só toca o campo se foi enviado explicitamente no body.
+      // Evita zerar meta_account_id/google_ads_customer_id quando outro campo é editado.
       const updatePayload: Record<string, unknown> = {
         nome: nomeClean,
         username: usernameClean,
         email: emailClean,
-        meta_account_id: metaAccountClean,
         ativo: ativo !== false,
       }
+      if (meta_account_id !== undefined) updatePayload.meta_account_id = metaAccountClean
+      if (google_ads_customer_id !== undefined) updatePayload.google_ads_customer_id = googleAdsClean
 
       if (password) updatePayload.password_hash = await hashPassword(String(password))
 
@@ -201,6 +213,7 @@ serve(async (req) => {
           ativo: ativo !== false,
           auth_user_id: authUserId,
           meta_account_id: metaAccountClean,
+          google_ads_customer_id: googleAdsClean,
           password_hash: passwordHash,
           setor: 'Cliente',
         })
@@ -242,7 +255,7 @@ serve(async (req) => {
 
     const { data: cliente, error: clienteError } = await sb
       .from('usuarios')
-      .select('id, nome, username, email, ativo, meta_account_id')
+      .select('id, nome, username, email, ativo, meta_account_id, google_ads_customer_id')
       .eq('id', clienteId)
       .single()
 

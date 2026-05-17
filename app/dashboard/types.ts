@@ -4,7 +4,7 @@
 import { Cliente, DateParam } from '@/types'
 
 export type Screen = 'select' | 'dashboard'
-export type Tab = 'resumo' | 'campanhas' | 'graficos' | 'relatorios' | 'plataformas' | 'notificacoes' | 'copilot'
+export type Tab = 'resumo-geral' | 'campanhas' | 'graficos' | 'relatorios' | 'plataformas' | 'notificacoes' | 'copilot' | 'meta' | 'google'
 
 export interface BudgetAlert {
   clientId: string
@@ -27,6 +27,7 @@ export interface Viewing {
   name: string
   username: string
   id: string
+  googleAdsCustomerId?: string | null
 }
 
 export interface OverviewMetrics {

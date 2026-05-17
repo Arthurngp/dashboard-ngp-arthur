@@ -6,7 +6,7 @@ Deno.serve(async (req) => {
   if (cors) return cors;
 
   try {
-    const { session_token, id, username, nome, meta_account_id, investimento_autorizado_mensal, foto_base64, foto_mime } = await req.json();
+    const { session_token, id, username, nome, meta_account_id, google_ads_customer_id, investimento_autorizado_mensal, foto_base64, foto_mime } = await req.json();
 
     if (!session_token) {
       return json(req, { error: 'Sessão inválida.' }, 401);
@@ -45,6 +45,17 @@ Deno.serve(async (req) => {
 
     const updateData: Record<string, string | number | null> = { nome: nome.trim() };
     updateData.meta_account_id = meta_account_id ? meta_account_id.trim() : null;
+
+    // Google Ads customer_id: aceita "123-456-7890" ou "1234567890". Armazena sem hífens.
+    if (google_ads_customer_id !== undefined) {
+      const googleAdsClean = google_ads_customer_id
+        ? String(google_ads_customer_id).trim().replace(/-/g, '')
+        : null;
+      if (googleAdsClean && !/^\d{10}$/.test(googleAdsClean)) {
+        return json(req, { error: 'Google Ads Customer ID inválido. Use 10 dígitos (ex: 123-456-7890).' }, 400);
+      }
+      updateData.google_ads_customer_id = googleAdsClean;
+    }
 
     if (investimento_autorizado_mensal === '' || investimento_autorizado_mensal === null || investimento_autorizado_mensal === undefined) {
       updateData.investimento_autorizado_mensal = null;

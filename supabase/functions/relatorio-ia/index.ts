@@ -115,7 +115,14 @@ const SYSTEM_PROMPTS: Record<string, string> = {
     '- "sem_periodo_anterior": cliente NOVO ou sem histórico. NÃO COMPARE. Foque no resultado absoluto desta janela. ' +
     'Ex sem histórico: "Essa é a primeira semana rodando para a AWA. A gente entregou um volume de leads dentro do esperado, com CPL competitivo pro nicho." ' +
     '' +
-    'Exemplos de boa abertura COM histórico: "Essa semana entregamos mais leads que a anterior, mantendo o investimento." ' +
+    'MULTI-PLATAFORMA: o cliente pode ter Meta Ads, Google Ads ou ambos. ' +
+    '- Se vier SÓ `metricas` (Meta): fale só do Meta, sem mencionar Google. ' +
+    '- Se vier SÓ `google_ads`: fale só do Google (busca, palavras-chave, intenção de compra). Não mencione Meta. ' +
+    '- Se vierem AMBOS: faça um resumo unificado — começe pelo resultado total e, se relevante, mencione qual canal puxou mais resultado. ' +
+    'Ex unificado: "Boa semana — entregamos mais leads que a anterior. O Google trouxe a maioria das conversões, enquanto o Meta segurou o custo baixo." ' +
+    'Ex Google-only: "Essa semana rodamos só campanhas de busca. As palavras-chave de alta intenção performaram bem e o custo por clique se manteve estável." ' +
+    '' +
+    'Exemplos de boa abertura COM histórico (Meta): "Essa semana entregamos mais leads que a anterior, mantendo o investimento." ' +
     '"Tivemos uma semana de ajustes — testamos novos públicos e o resultado já apareceu." ' +
     '"Semana mais cara que a anterior, mas com leads mais qualificados." ' +
     '2 a 4 frases. Última frase deve sinalizar o que vem pela frente ("na próxima semana vamos focar em X"). ' +
@@ -124,7 +131,8 @@ const SYSTEM_PROMPTS: Record<string, string> = {
     '- Citar valores monetários totais ou números brutos (R$ 1.831, 38 leads, 85.469 pessoas); ' +
     '- Frases tipo "indicam um desempenho estável", "evidenciam eficiência"; ' +
     '- Sigla técnica sem traduzir (em vez de "CPL", fale "custo por lead" — e só se realmente precisar); ' +
-    '- COMPARAR com período anterior quando historico=sem_periodo_anterior (não inventar comparação que não existe). ' +
+    '- COMPARAR com período anterior quando historico=sem_periodo_anterior (não inventar comparação que não existe); ' +
+    '- Mencionar uma plataforma se ela NÃO veio no payload. ' +
     'NUNCA invente dado. Retorne JSON {texto: string}.',
   criativo:
     'Você está escrevendo uma OBSERVAÇÃO da agência NGP pro cliente, embaixo do anúncio. ' +
@@ -161,6 +169,11 @@ const SYSTEM_PROMPTS: Record<string, string> = {
     'Tom: WhatsApp da agência NGP pro cliente. Conversa profissional, mas humana. ' +
     'A tabela JÁ mostra os números — NÃO repita. Sua função é traduzir pro IMPACTO no negócio do cliente. ' +
     '' +
+    'CONTEXTO MULTI-PLATAFORMA: ' +
+    '- A comparação atual/anterior é SEMPRE sobre Meta Ads. NUNCA tente comparar Google com período anterior (não temos esse dado). ' +
+    '- Se vier `google_ads` no payload, ele é apenas CONTEXTO atual (sem histórico). Use SÓ pra mencionar uma vez no "neutro" que o canal Google também rodou, ex: "Em paralelo, o Google também trouxe conversões essa semana." ' +
+    '- Se NÃO vier `google_ads`, NÃO mencione Google. ' +
+    '' +
     'Exemplos do tom que quero: ' +
     '"melhorou": ["A gente entregou mais leads sem mexer no investimento.", "O CPL caiu — pagando menos por cada contato.", "Os anúncios alcançaram mais gente que na semana passada."] ' +
     '"piorou": ["A frequência subiu — o público começou a ver muito o mesmo anúncio, vamos trocar a peça.", "O custo de impactar mil pessoas ficou mais caro, hora de rever segmentação."] ' +
@@ -172,7 +185,8 @@ const SYSTEM_PROMPTS: Record<string, string> = {
     '- Começar com "CTR", "CPL", "ROAS", "CPM", "%"; ' +
     '- Símbolos ✓ ⚠ — no início da frase (já vem do client); ' +
     '- Frases formais tipo "atingindo", "totalizando", "no período"; ' +
-    '- Mais de 14 palavras por bullet. ' +
+    '- Mais de 14 palavras por bullet; ' +
+    '- Inventar variação Google ("o Google melhorou", "o Google caiu") quando não há histórico Google. ' +
     '' +
     'Cada bullet começa com VERBO ("Conseguimos…", "Pagamos…", "Alcançamos…") ou com o IMPACTO ("O CPL caiu", "A frequência subiu"). ' +
     'Use "a gente", "rodamos", "essa semana", "o público". Linguagem de quem está conversando, não relatando. ' +
@@ -226,13 +240,35 @@ function buildUserPrompt(mode: string, payload: Record<string, unknown>): string
   } else {
     const historico = typeof payload.historico === 'string' ? payload.historico : ''
     if (historico) lines.push(`Historico: ${historico}`)
-    lines.push('', 'Metricas atuais:')
-    lines.push(JSON.stringify(metricas, null, 2))
+
+    const hasMeta = metricas && Object.keys(metricas as Record<string, unknown>).length > 0
+    const googleAds = payload.google_ads && typeof payload.google_ads === 'object' ? payload.google_ads as Record<string, unknown> : null
+    const hasGoogle = !!(googleAds && googleAds.summary)
+
+    if (hasMeta) {
+      lines.push('', 'Metricas Meta Ads (atuais):')
+      lines.push(JSON.stringify(metricas, null, 2))
+    }
+    if (hasGoogle && googleAds) {
+      lines.push('', 'Metricas Google Ads (atuais):')
+      lines.push(JSON.stringify(googleAds.summary, null, 2))
+      if (Array.isArray(googleAds.topCampaigns) && googleAds.topCampaigns.length) {
+        lines.push('', 'Top campanhas Google (por gasto):')
+        lines.push(JSON.stringify((googleAds.topCampaigns as unknown[]).slice(0, 5), null, 2))
+      }
+      if (Array.isArray(googleAds.topKeywords) && googleAds.topKeywords.length) {
+        lines.push('', 'Top palavras-chave Google (por gasto):')
+        lines.push(JSON.stringify((googleAds.topKeywords as unknown[]).slice(0, 5), null, 2))
+      }
+    }
+    if (!hasMeta && !hasGoogle && mode === 'resumo') {
+      lines.push('', 'AVISO: payload sem metricas Meta nem Google. Nao invente; informe que dados nao chegaram.')
+    }
     if (mode === 'comparativo' || mode === 'resumo') {
       if (metricasAnt && Object.keys(metricasAnt as Record<string, unknown>).length) {
-        lines.push('', 'Metricas periodo anterior:')
+        lines.push('', 'Metricas Meta periodo anterior:')
         lines.push(JSON.stringify(metricasAnt, null, 2))
-      } else if (mode === 'resumo') {
+      } else if (mode === 'resumo' && hasMeta) {
         lines.push('', 'IMPORTANTE: NAO ha dados do periodo anterior (cliente novo ou primeira janela). NAO COMPARE.')
       }
     }

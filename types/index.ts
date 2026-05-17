@@ -15,6 +15,7 @@ export interface Cliente {
   username: string
   nome: string
   meta_account_id?: string
+  google_ads_customer_id?: string | null
   foto_url?: string
   investimento_autorizado_mensal?: number | string | null
   archived_at?: string | null

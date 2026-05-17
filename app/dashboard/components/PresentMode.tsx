@@ -16,6 +16,7 @@ interface Props {
   onChangeSelectedCampIds: (next: Set<string> | ((prev: Set<string>) => Set<string>)) => void
   onApplyPeriod: (dp: DateParam, label: string, cmpDp?: DateParam, cmpLabel?: string) => void
   onClose: () => void
+  onSwitchToGoogle?: () => void
 }
 
 interface Bucket { label: string; value: number }
@@ -501,6 +502,15 @@ export default function PresentMode(p: Props) {
           // Resetar overrides locais quando troca global (faz sentido voltarem pra "Auto")
           setTipoIdade(null); setTipoCriativos(null); setTipoTop(null)
         }} />
+
+        {/* Toggle Meta/Google — só aparece se cliente tem Google Ads vinculado */}
+        {p.onSwitchToGoogle && (
+          <div style={{ display: 'flex', background: 'rgba(255,255,255,.08)', border: '1.5px solid rgba(255,255,255,.16)', borderRadius: 10, overflow: 'hidden' }}>
+            <button style={{ padding: 'clamp(7px, .7vw, 12px) clamp(10px, 1vw, 18px)', background: '#7dd3fc', border: 'none', color: '#0a2540', fontSize: 'clamp(10px, .8vw, 14px)', fontWeight: 700, cursor: 'default', fontFamily: 'inherit' }}>Meta Ads</button>
+            <button onClick={p.onSwitchToGoogle} style={{ padding: 'clamp(7px, .7vw, 12px) clamp(10px, 1vw, 18px)', background: 'transparent', border: 'none', color: '#94a3b8', fontSize: 'clamp(10px, .8vw, 14px)', fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit' }}>Google Ads</button>
+          </div>
+        )}
+
         <div>
           <PeriodFilter onApply={p.onApplyPeriod} />
         </div>

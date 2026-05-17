@@ -43,7 +43,7 @@ serve(async (req) => {
     // Busca todos os clientes
     const { data: clientes } = await sb
       .from('usuarios')
-      .select('id, username, nome, meta_account_id, foto_url, investimento_autorizado_mensal')
+      .select('id, username, nome, meta_account_id, google_ads_customer_id, foto_url, investimento_autorizado_mensal')
       .eq('role', 'cliente')
       .is('archived_at', null)
 

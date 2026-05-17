@@ -125,7 +125,9 @@ function ChatShell({ usuarioId, isAdmin }: { usuarioId: string; isAdmin: boolean
     try {
       await toggleFavorite(channelId)
       refetchChannels()
-    } catch {}
+    } catch (e) {
+      console.error('[chat] toggleFavorite falhou:', e)
+    }
   }
 
   const handleReorder = async (newOrderIds: string[]) => {
@@ -133,7 +135,9 @@ function ChatShell({ usuarioId, isAdmin }: { usuarioId: string; isAdmin: boolean
       const orders = newOrderIds.map((_, i) => i)
       await setSortOrders(newOrderIds, orders)
       refetchChannels()
-    } catch {}
+    } catch (e) {
+      console.error('[chat] setSortOrders falhou:', e)
+    }
   }
   const searchParams = useSearchParams()
   const initialParamApplied = useRef(false)

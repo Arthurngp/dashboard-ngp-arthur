@@ -2,9 +2,23 @@ import { SURL } from './constants'
 import { getSession } from './auth'
 import { efHeaders } from './api'
 
+export type GoogleAdsQuery =
+  | 'summary'
+  | 'campaigns'
+  | 'search_terms'
+  | 'keywords'
+  | 'devices'
+  | 'locations'
+  | 'hourly'
+  | 'demographics'
+  | 'top_ads'
+  | 'daily'
+  | 'list_mcc_accounts'
+  | 'health_check'
+
 export async function googleAdsCall(
   customerId?: string | null,
-  query: 'summary' | 'campaigns' = 'campaigns',
+  query: GoogleAdsQuery = 'campaigns',
   dateRange: string = 'LAST_30_DAYS'
 ) {
   const sess = getSession()

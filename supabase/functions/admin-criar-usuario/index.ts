@@ -34,6 +34,7 @@ serve(async (req) => {
       password,
       role,
       meta_account_id,
+      google_ads_customer_id,
       foto_url,
       cargo,
       funcao,
@@ -58,6 +59,14 @@ serve(async (req) => {
     const usernameClean = username.toLowerCase().trim()
     const emailClean    = email.toLowerCase().trim()
     const passwordHash = await hashPassword(password)
+
+    // Google Ads customer_id: aceita "123-456-7890" ou "1234567890". Armazena sem hífens.
+    const googleAdsClean = google_ads_customer_id
+      ? String(google_ads_customer_id).trim().replace(/-/g, '')
+      : null
+    if (googleAdsClean && !/^\d{10}$/.test(googleAdsClean)) {
+      return json(req, { error: 'Google Ads Customer ID inválido. Use 10 dígitos (ex: 123-456-7890).' }, 400)
+    }
 
     // Verifica duplicidade de username
     const { data: existingUsername } = await sb
@@ -98,6 +107,7 @@ serve(async (req) => {
         ativo: true,
         auth_user_id: authData.user.id,
         meta_account_id: meta_account_id || null,
+        google_ads_customer_id: googleAdsClean,
         foto_url: foto_url?.trim() || null,
         cargo: cargo?.trim() || null,
         funcao: funcao?.trim() || null,

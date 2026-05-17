@@ -12,6 +12,10 @@ fix_icons.js
 .mcp.json
 supabase/.temp/
 
+# Perfis OpenClaude (podem conter chaves API) — versionar só o template
+.openclaude-profile.json
+.openclaude-profile.*.json
+
 # Histórico financeiro com dados sensíveis (CSVs do Controlle, SQLs de import)
 historico-total-controlle-financeiro/
 

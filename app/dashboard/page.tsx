@@ -16,11 +16,14 @@ import AdPreviewModal from './components/AdPreviewModal'
 import NovoRelatorioModal, { NovoRelatorioConfig } from './components/NovoRelatorioModal'
 import RelatoriosListView from './components/RelatoriosListView'
 import PresentMode from './components/PresentMode'
+import PresentModeGoogle from './components/PresentModeGoogle'
 import KpiSection from './components/KpiSection'
 import CustomSelect from '@/components/CustomSelect'
 import { shellIcons } from './components/ShellIcons'
 import OverviewTab from './components/OverviewTab'
 import AccountSelector from './components/AccountSelector'
+import GoogleAdsCard from './components/GoogleAdsCard'
+import ResumoGeralTab from './components/ResumoGeralTab'
 import { Tab, WorkspaceNavSection } from './types'
 import { getPeriodBudgetFactor, fmtDate } from './dashboard-utils'
 import { useDashboard } from './hooks/useDashboard'
@@ -78,6 +81,7 @@ export default function DashboardPage() {
   const campFilterRef = useRef<HTMLDivElement>(null)
   const [novoRelatorioOpen, setNovoRelatorioOpen] = useState(false)
   const [presentMode, setPresentMode] = useState(false)
+  const [presentPlatform, setPresentPlatform] = useState<'meta' | 'google'>('meta')
   // overview pode mostrar a tabela de KPIs ou a lista global de relatórios
   const [overviewView, setOverviewView] = useState<'overview' | 'relatorios'>('overview')
   const [allRelatorios, setAllRelatorios] = useState<any[]>([])
@@ -108,13 +112,21 @@ export default function DashboardPage() {
   async function deleteAllRelatorio(id: string) {
     if (!confirm('Apagar este relatório?')) return
     try {
-      await fetch(`${SURL}/functions/v1/delete-relatorio`, {
+      const res = await fetch(`${SURL}/functions/v1/delete-relatorio`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'apikey': ANON, 'Authorization': `Bearer ${sess?.session || ANON}` },
         body: JSON.stringify({ session_token: sess?.session, id }),
       })
+      if (!res.ok) {
+        const j = await res.json().catch(() => ({}))
+        alert('Erro ao apagar relatório: ' + (j?.error || `HTTP ${res.status}`))
+        return
+      }
       setAllRelatorios(prev => prev.filter(r => r.id !== id))
-    } catch {}
+    } catch (e) {
+      console.error('[deleteAllRelatorio]', e)
+      alert('Erro de rede ao apagar relatório. Tente novamente.')
+    }
   }
 
   function openNovoRelatorio() {
@@ -137,6 +149,11 @@ export default function DashboardPage() {
     // Passa o meta_account_id no URL para o relatório usar nas chamadas Meta
     // mesmo quando o sessionStorage da nova aba estiver vazio
     if (viewing.account) qs.set('account', viewing.account)
+    // Google Ads customer_id (sem traços) — relatório usa pra chamar a edge.
+    if (viewing.googleAdsCustomerId) qs.set('gid', String(viewing.googleAdsCustomerId).replace(/-/g, ''))
+    // Plataforma escolhida no modal: meta | google | both. Default 'meta'
+    // pra não quebrar relatórios antigos abertos via outros fluxos.
+    qs.set('platform', config.platform || 'meta')
     if (config.period) qs.set('period', config.period)
     if (config.metrics.length) qs.set('metrics', config.metrics.join(','))
     if (config.importCriativos) {
@@ -215,10 +232,10 @@ export default function DashboardPage() {
   const snapshotDisplay = useMemo(() => analyticsSnapshot ? summarizeSnapshotForDisplay(analyticsSnapshot) : null, [analyticsSnapshot])
 
   const activeTabMeta: Record<Tab, string> = {
-    resumo: 'KPIs, diagnóstico e leitura consolidada do período.', plataformas: 'Conexões, contas e visão operacional das redes.', campanhas: 'Aprofundamento em campanhas, conjuntos e anúncios.', graficos: 'Evolução temporal, comparativos e sinais visuais.', relatorios: 'Relatórios gerados e entregáveis do cliente.', notificacoes: 'Alertas de orçamento, saldo e status de conta.', copilot: 'Conversa com o NGP Copilot, memória e aprendizados deste cliente.',
+    'resumo-geral': 'Visão unificada Meta + Google Ads com layout limpo.', plataformas: 'Conexões, contas e visão operacional das redes.', campanhas: 'Aprofundamento em campanhas, conjuntos e anúncios.', graficos: 'Evolução temporal, comparativos e sinais visuais.', relatorios: 'Relatórios gerados e entregáveis do cliente.', notificacoes: 'Alertas de orçamento, saldo e status de conta.', copilot: 'Conversa com o NGP Copilot, memória e aprendizados deste cliente.', meta: 'Dados isolados da plataforma Meta Ads.', google: 'Dados isolados da plataforma Google Ads.',
   }
   const activeTabLabel: Record<Tab, string> = {
-    resumo: 'Resumo', plataformas: 'Plataformas', campanhas: 'Campanhas', graficos: 'Gráficos', relatorios: 'Relatórios', notificacoes: 'Notificações', copilot: 'NGP Copilot',
+    'resumo-geral': 'Resumo', plataformas: 'Plataformas', campanhas: 'Campanhas', graficos: 'Gráficos', relatorios: 'Relatórios', notificacoes: 'Notificações', copilot: 'NGP Copilot', meta: 'Meta Ads', google: 'Google Ads',
   }
 
   function scrollToSection(id: string) {
@@ -245,7 +262,7 @@ export default function DashboardPage() {
 
   const dashboardSidebarSections: WorkspaceNavSection[] = [
     { label: 'Navegação', items: [
-      { id: 'tab-resumo', label: 'Resumo', icon: shellIcons.summary, active: activeTab === 'resumo', onClick: () => switchTab('resumo') },
+      { id: 'tab-resumo-geral', label: 'Resumo', icon: shellIcons.summary, active: activeTab === 'resumo-geral', onClick: () => switchTab('resumo-geral') },
       { id: 'tab-plataformas', label: 'Plataformas', icon: shellIcons.platforms, active: activeTab === 'plataformas', onClick: () => switchTab('plataformas') },
       { id: 'tab-campanhas', label: 'Campanhas', icon: shellIcons.campaigns, active: activeTab === 'campanhas', onClick: () => switchTab('campanhas') },
       { id: 'tab-graficos', label: 'Gráficos', icon: shellIcons.charts, active: activeTab === 'graficos', onClick: () => switchTab('graficos') },
@@ -254,8 +271,8 @@ export default function DashboardPage() {
       { id: 'tab-copilot', label: 'NGP Copilot', icon: shellIcons.summary, active: activeTab === 'copilot', onClick: () => switchTab('copilot') },
     ]},
     { label: 'Canais', items: [
-      { id: 'channel-meta', label: 'Meta Ads', icon: shellIcons.ads, active: true },
-      { id: 'channel-google', label: 'Google Ads', icon: shellIcons.commerce, badge: 'depois', disabled: true },
+      { id: 'channel-meta', label: 'Meta Ads', icon: shellIcons.ads, active: activeTab === 'meta', onClick: () => switchTab('meta') },
+      { id: 'channel-google', label: 'Google Ads', icon: shellIcons.commerce, active: activeTab === 'google', onClick: () => switchTab('google') },
     ]},
   ]
 
@@ -451,89 +468,32 @@ export default function DashboardPage() {
             </div>
 
             <div className={styles.tabContent}>
-              {activeTab === 'resumo' && <>
-                {loading && <div className={styles.loadingBar}><div className={styles.spinner} /> Carregando...</div>}
-                {error && <div className={styles.errorBox}>⚠️ {error}</div>}
-
-                {campaigns.length > 0 && (
-                  <div ref={campFilterRef} style={{ position: 'relative', marginBottom: 14 }}>
-                    <button onClick={() => setCampFilterOpen(p => !p)} className={styles.campFilterBtn} style={{ background: selectedCampIds.size > 0 ? 'var(--report-primary-soft)' : '#fff', border: selectedCampIds.size > 0 ? '1.5px solid var(--report-primary)' : '1.5px solid #E5E5EA', color: selectedCampIds.size > 0 ? 'var(--report-primary)' : '#6E6E73' }}>
-                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width={14} height={14}><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg>
-                      {selectedCampIds.size === 0 ? 'Todas as campanhas' : selectedCampIds.size === 1 ? campaigns.find(c => selectedCampIds.has(c.id))?.name?.slice(0, 32) + '…' : `${selectedCampIds.size} selecionadas`}
-                    </button>
-                    {campFilterOpen && (
-                      <div className={styles.campFilterDropdown}>
-                        <div className={styles.campFilterHeader}><span>Filtrar métricas</span></div>
-                        <div className={styles.campFilterList}>
-                          {campaigns.map(c => {
-                            const checked = selectedCampIds.has(c.id)
-                            return (
-                              <div key={c.id} className={styles.campFilterItem} onClick={() => { setSelectedCampIds(prev => { const next = new Set(prev); if (next.has(c.id)) next.delete(c.id); else next.add(c.id); return next }) }}>
-                                <div className={styles.checkbox}>{checked && '✓'}</div>
-                                <div className={styles.campFilterItemInfo}><div>{c.name}</div><span>R$ {fmt(c.spend)}</span></div>
-                              </div>
-                            )
-                          })}
-                        </div>
-                        <div className={styles.campFilterFooter}><button onClick={() => setCampFilterOpen(false)}>Aplicar</button></div>
-                      </div>
-                    )}
-                  </div>
-                )}
-
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
-                  <span style={{ fontSize: 13, fontWeight: 600, color: '#6E6E73' }}>Resumo · {periodLabel}</span>
-                  <button onClick={() => setMetricsModalOpen(true)} className={styles.customizeBtn}>Personalizar métricas</button>
-                </div>
-
-                {(() => {
-                  const sectionsMap: Record<string, any[]> = {}
-                  visibleMetrics.forEach(metricId => {
-                    const mDef = META_METRICS.find(m => m.id === metricId)
-                    if (!mDef) return
-                    const currRaw = tParsed[metricId] || 0
-                    const prevRaw = cmpPeriodParam ? (pParsed[metricId] || 0) : undefined
-                    sectionsMap[mDef.section] = sectionsMap[mDef.section] || []
-                    sectionsMap[mDef.section].push({ id: mDef.id, label: mDef.label, currRaw, prevRaw, lowerIsBetter: mDef.lowerIsBetter, format: mDef.format })
-                  })
-                  return (
-                    <div className={styles.kpiSections}>
-                      {Object.keys(sectionsMap).map(sec => (
-                        <KpiSection key={sec} title={sec} cmpLabel={cmpLabel} items={sectionsMap[sec].map(item => ({
-                          ...item,
-                          value: item.format === 'currency' ? `R$ ${fmt(item.currRaw)}` : item.format === 'percent' ? `${item.currRaw.toFixed(2)}%` : item.format === 'ratio' ? `${item.currRaw.toFixed(2)}x` : fmtN(item.currRaw),
-                          prev: item.prevRaw !== undefined ? (item.format === 'currency' ? `R$ ${fmt(item.prevRaw)}` : item.format === 'percent' ? `${item.prevRaw.toFixed(2)}%` : item.format === 'ratio' ? `${item.prevRaw.toFixed(2)}x` : fmtN(item.prevRaw)) : undefined
-                        }))} />
-                      ))}
-                    </div>
-                  )
-                })()}
-
-                <Suspense fallback={null}>
-                  <DiagnosisPanel analyticsSnapshot={analyticsSnapshot} snapshotDisplay={snapshotDisplay} loadedAds={loadedAds} bestAd={bestAd} worstAd={worstAd} />
-                </Suspense>
-                <Suspense fallback={null}>
-                  <MetaAnalysisPanel campaigns={metricsBase} prevCampaigns={selectedCampIds.size > 0 ? prevCampaigns.filter(c => selectedCampIds.has(c.id)) : prevCampaigns} periodLabel={periodLabel} comparisonLabel={cmpLabel} title="Análise Meta Ads" />
-                </Suspense>
-
-                {campaigns.length > 0 && (
-                  <div className={styles.chartsRow}>
-                    <div className={styles.chartCard}>
-                      <div className={styles.chartHead}><span>Top campanhas</span>
-                        <div className={styles.chartBtns}>{(['spend','impressions','clicks'] as const).map(m => (<button key={m} className={`${styles.chartBtn} ${chartMetric === m ? styles.chartBtnActive : ''}`} onClick={() => setChartMetric(m)}>{m === 'spend' ? 'Gasto' : 'Imp'}</button>))}</div>
-                      </div>
-                      <Bar data={chartData} options={{ responsive: true, indexAxis: 'y' as const, plugins: { legend: { display: false } } }} />
-                    </div>
-                    <div className={styles.chartCard} style={{ maxWidth: 300 }}><div className={styles.chartHead}><span>Gasto</span></div><Doughnut data={donutData} /></div>
-                  </div>
-                )}
-              </>}
+              {(activeTab === 'resumo-geral' || activeTab === 'meta' || activeTab === 'google') && (
+                <ResumoGeralTab
+                  metaParsed={tParsed}
+                  prevMetaParsed={pParsed}
+                  cmpLabel={cmpLabel}
+                  cmpPeriodActive={!!cmpPeriodParam}
+                  visibleMetrics={visibleMetrics}
+                  googleAdsCustomerId={viewing?.googleAdsCustomerId}
+                  datePreset={period.date_preset || 'last_30d'}
+                  periodLabel={periodLabel}
+                  onPersonalize={() => setMetricsModalOpen(true)}
+                  platform={activeTab === 'meta' ? 'meta' : activeTab === 'google' ? 'google' : 'all'}
+                />
+              )}
 
               {activeTab === 'plataformas' && <>
                 <div className={styles.sectionCard}>
                   <div className={styles.platHead}><span className={styles.platTitle}>Meta Ads</span>{viewing?.account && <span className={styles.platId}>{viewing.account}</span>}</div>
                   <div className={styles.kpiRow}>{[ { label: 'Investido', value: `R$ ${fmt(tSpend)}` }, { label: 'Imp', value: fmtI(tImp) }, { label: 'Cliques', value: fmtN(tClk) }, { label: 'CTR', value: `${avgCtr.toFixed(2)}%` }, { label: 'Conversas', value: fmtN(tConv) }, { label: 'ROAS', value: `${totRoas.toFixed(2)}x` } ].map(k => (<div key={k.label} className={styles.kpiMini}><div className={styles.kpiMiniLabel}>{k.label}</div><div className={styles.kpiMiniValue}>{k.value}</div></div>))}</div>
                 </div>
+
+                <GoogleAdsCard
+                  customerId={viewing?.googleAdsCustomerId}
+                  datePreset={period.date_preset || 'last_30d'}
+                  customerName={viewing?.name}
+                />
               </>}
 
               {activeTab === 'campanhas' && (
@@ -609,8 +569,8 @@ export default function DashboardPage() {
       {modalOpen && <AccountModal data={modalEdit || {}} loading={modalLoading} error={modalError} userRole={sess?.role} onSave={saveClient} onArchive={archiveClient} onDelete={deleteClient} onClose={() => { setModalOpen(false); setModalEdit(null); setModalError('') }} />}
       {metricsModalOpen && <MetricsModal visible={visibleMetrics} onToggle={toggleMetric} onReset={resetMetrics} onClose={() => setMetricsModalOpen(false)} />}
       <AdPreviewModal html={previewHtml} loading={previewLoading} adName={previewAdName} onClose={() => { setPreviewHtml(null); setPreviewLoading(false) }} />
-      <NovoRelatorioModal isOpen={novoRelatorioOpen} clienteName={viewing?.name || ''} campaigns={campaigns} onClose={() => setNovoRelatorioOpen(false)} onConfirm={handleNovoRelatorioConfirm} />
-      {presentMode && (
+      <NovoRelatorioModal isOpen={novoRelatorioOpen} clienteName={viewing?.name || ''} campaigns={campaigns} hasGoogleAds={!!viewing?.googleAdsCustomerId} onClose={() => setNovoRelatorioOpen(false)} onConfirm={handleNovoRelatorioConfirm} />
+      {presentMode && presentPlatform === 'meta' && (
         <PresentMode
           clienteName={viewing?.name || ''}
           metaAccount={viewing?.account || ''}
@@ -621,6 +581,18 @@ export default function DashboardPage() {
           selectedCampIds={selectedCampIds}
           onChangeSelectedCampIds={setSelectedCampIds}
           onApplyPeriod={onPeriodApply}
+          onClose={() => setPresentMode(false)}
+          {...(viewing?.googleAdsCustomerId ? { onSwitchToGoogle: () => setPresentPlatform('google') } : {})}
+        />
+      )}
+      {presentMode && presentPlatform === 'google' && viewing?.googleAdsCustomerId && (
+        <PresentModeGoogle
+          clienteName={viewing?.name || ''}
+          googleAdsCustomerId={viewing.googleAdsCustomerId}
+          periodLabel={periodLabel}
+          datePreset={period.date_preset || 'last_30d'}
+          onApplyPeriod={(dp, label) => onPeriodApply(dp, label)}
+          onSwitchToMeta={() => setPresentPlatform('meta')}
           onClose={() => setPresentMode(false)}
         />
       )}

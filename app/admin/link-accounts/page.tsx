@@ -12,7 +12,7 @@ import styles from './link-accounts.module.css'
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 interface MetaAccount { id: string; name: string; account_status: number; currency: string }
-interface Cliente { id: string; username: string; nome: string; meta_account_id: string | null; foto_url: string | null }
+interface Cliente { id: string; username: string; nome: string; meta_account_id: string | null; google_ads_customer_id: string | null; foto_url: string | null }
 interface Usuario { id: string; nome: string; username: string; role: 'admin' | 'ngp' | 'cliente'; ativo: boolean; created_at: string; foto_url?: string }
 
 const ROLE_LABEL: Record<string, string> = { admin: 'Admin', ngp: 'NGP', cliente: 'Cliente' }
@@ -212,7 +212,10 @@ export default function LinkAccountsPage() {
                           <div className={styles.clienteNome}>{cliente.nome}</div>
                           <div className={styles.clienteUser}>@{cliente.username}</div>
                           {cliente.meta_account_id && (
-                            <div className={styles.linked}>✓ Vinculado: {cliente.meta_account_id}</div>
+                            <div className={styles.linked}>✓ Meta: {cliente.meta_account_id}</div>
+                          )}
+                          {cliente.google_ads_customer_id && (
+                            <div className={styles.linked}>✓ Google Ads: {cliente.google_ads_customer_id}</div>
                           )}
                         </div>
                       </div>

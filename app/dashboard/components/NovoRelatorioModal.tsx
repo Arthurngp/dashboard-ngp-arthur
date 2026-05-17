@@ -9,7 +9,10 @@ interface NovoRelatorioModalProps {
   onConfirm: (config: NovoRelatorioConfig) => void
   clienteName: string
   campaigns?: Campaign[]
+  hasGoogleAds?: boolean
 }
+
+export type RelatorioPlatform = 'meta' | 'google' | 'both'
 
 export interface NovoRelatorioConfig {
   period: string
@@ -18,6 +21,7 @@ export interface NovoRelatorioConfig {
   objective: string
   audience: string
   topN: number
+  platform: RelatorioPlatform
 }
 
 const PERIODS = [
@@ -34,16 +38,20 @@ const PERIODS = [
   { label: 'Ano ant.',   value: 'last_year' },
 ]
 
-const METRICS = [
-  { key: 'spend',       label: 'Investimento' },
-  { key: 'results',     label: 'Leads / Resultados' },
-  { key: 'cpl',         label: 'CPL / CPA' },
-  { key: 'reach',       label: 'Alcance' },
-  { key: 'impressions', label: 'Impressões' },
-  { key: 'clicks',      label: 'Cliques' },
-  { key: 'ctr',         label: 'CTR' },
-  { key: 'frequency',   label: 'Frequência' },
-  { key: 'cpm',         label: 'CPM' },
+// Cada métrica indica em quais plataformas existe. UI filtra com base na
+// plataforma escolhida: 'both' mostra todas (mas marca tag Meta-only),
+// 'meta' mostra todas, 'google' mostra só as compatíveis com Google Ads.
+type MetricPlat = 'meta' | 'google' | 'both'
+const METRICS: { key: string; label: string; plat: MetricPlat }[] = [
+  { key: 'spend',       label: 'Investimento',         plat: 'both' },
+  { key: 'results',     label: 'Leads / Resultados',   plat: 'both' },
+  { key: 'cpl',         label: 'CPL / CPA',            plat: 'both' },
+  { key: 'reach',       label: 'Alcance',              plat: 'meta' },
+  { key: 'impressions', label: 'Impressões',           plat: 'both' },
+  { key: 'clicks',      label: 'Cliques',              plat: 'both' },
+  { key: 'ctr',         label: 'CTR',                  plat: 'both' },
+  { key: 'frequency',   label: 'Frequência',           plat: 'meta' },
+  { key: 'cpm',         label: 'CPM',                  plat: 'both' },
 ]
 
 // Inclui objetivos legados (CONVERSIONS, LEAD_GENERATION, etc) para casar
@@ -115,14 +123,35 @@ const AUDIENCES = [
   { label: 'Black', value: 'black' },
 ]
 
-export default function NovoRelatorioModal({ isOpen, onClose, onConfirm, clienteName, campaigns }: NovoRelatorioModalProps) {
+export default function NovoRelatorioModal({ isOpen, onClose, onConfirm, clienteName, campaigns, hasGoogleAds }: NovoRelatorioModalProps) {
   const [period, setPeriod] = useState('last_7d')
+  const [platform, setPlatform] = useState<RelatorioPlatform>(hasGoogleAds ? 'both' : 'meta')
   const [selMetrics, setSelMetrics] = useState<Set<string>>(new Set(METRICS.map(m => m.key)))
   const [objective, setObjective] = useState('OUTCOME_SALES,CONVERSIONS,PRODUCT_CATALOG_SALES')
   const [audience, setAudience] = useState('')
   const [topN, setTopN] = useState(2)
   // Importação de criativos é sempre ON — ficaram só os controles de configuração
   const importCriativos = true
+
+  // Quando muda a plataforma, reajusta as métricas selecionadas pra manter só
+  // as compatíveis (evita marcar Frequência num relatório só Google).
+  useEffect(() => {
+    setSelMetrics(prev => {
+      const next = new Set<string>()
+      METRICS.forEach(m => {
+        if (platform === 'google' && m.plat === 'meta') return
+        if (prev.has(m.key)) next.add(m.key)
+      })
+      // Se ficou vazio, recompõe com defaults compatíveis
+      if (next.size === 0) {
+        METRICS.forEach(m => {
+          if (platform === 'google' && m.plat === 'meta') return
+          next.add(m.key)
+        })
+      }
+      return next
+    })
+  }, [platform])
 
   // Soma spend por categoria de objetivo, com base nas campanhas já carregadas
   // no dashboard. Permite mostrar "Vendas (R$ 12k)" no pill e ordenar pra
@@ -193,8 +222,23 @@ export default function NovoRelatorioModal({ isOpen, onClose, onConfirm, cliente
       objective,
       audience,
       topN,
+      platform,
     })
   }
+
+  // Pills de plataforma. "Ambos" só aparece quando há Google vinculado;
+  // sem Google, mantém só Meta para evitar UI quebrada.
+  const platformItems: { label: string; value: RelatorioPlatform }[] = hasGoogleAds
+    ? [
+        { label: 'Meta + Google', value: 'both' },
+        { label: 'Só Meta',       value: 'meta' },
+        { label: 'Só Google',     value: 'google' },
+      ]
+    : [
+        { label: 'Só Meta',       value: 'meta' },
+      ]
+
+  const visibleMetrics = METRICS.filter(m => !(platform === 'google' && m.plat === 'meta'))
 
   return (
     <div onClick={onClose} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.55)', zIndex: 500, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16, fontFamily: 'Sora,sans-serif' }}>
@@ -204,50 +248,80 @@ export default function NovoRelatorioModal({ isOpen, onClose, onConfirm, cliente
           <button onClick={onClose} style={{ background: 'none', border: 'none', fontSize: 22, cursor: 'pointer', color: '#AEAEB2' }}>×</button>
         </div>
 
+        <Section label="Plataforma">
+          <Pills
+            items={platformItems.map(p => ({ label: p.label, value: p.value }))}
+            value={platform}
+            onChange={(v) => setPlatform(v as RelatorioPlatform)}
+          />
+          {!hasGoogleAds && (
+            <div style={{ fontSize: 11, color: '#AEAEB2', marginTop: 6 }}>
+              Cliente sem Google Ads vinculado · vincule em Plataformas para liberar.
+            </div>
+          )}
+        </Section>
+
         <Section label="Período">
           <Pills items={PERIODS.map(p => ({ label: p.label, value: p.value }))} value={period} onChange={setPeriod} />
         </Section>
 
         <Section label="Métricas a importar">
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 6 }}>
-            {METRICS.map(m => (
+            {visibleMetrics.map(m => (
               <label key={m.key} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: '#3A3A3C', cursor: 'pointer', padding: '6px 8px', borderRadius: 6, background: selMetrics.has(m.key) ? '#EFF6FF' : '#FAFAFA' }}>
                 <input type="checkbox" checked={selMetrics.has(m.key)} onChange={() => toggleMetric(m.key)} />
-                {m.label}
+                <span>{m.label}</span>
+                {m.plat === 'meta' && platform === 'both' && (
+                  <span style={{ fontSize: 9, padding: '1px 4px', background: '#DBEAFE', color: '#1E40AF', borderRadius: 3, fontWeight: 700 }}>Meta</span>
+                )}
               </label>
             ))}
           </div>
         </Section>
 
         <Section label="🏆 Criativos campeões">
-          <div style={{ fontSize: 11, color: '#6E6E73', marginBottom: 6 }}>
-            Objetivo da campanha
-            {Object.keys(spendPorCategoria).length > 0 && (
-              <span style={{ color: '#AEAEB2', marginLeft: 6 }}>
-                · auto-detectado pelo gasto da conta
-              </span>
-            )}
-          </div>
-          <Pills
-            items={objetivosOrdenados.map(o => {
-              const spend = spendPorCategoria[o.label] || 0
-              return {
-                label: spend > 0 ? `${o.label} · ${fmtBRL(spend)}` : o.label,
-                value: o.value,
-              }
-            })}
-            value={objective}
-            onChange={setObjective}
-          />
-          <div style={{ fontSize: 11, color: '#6E6E73', margin: '10px 0 6px' }}>Público <span style={{ color: '#AEAEB2' }}>(filtra pelo nome)</span></div>
-          <Pills items={AUDIENCES.map(a => ({ label: a.label, value: a.value }))} value={audience} onChange={setAudience} />
-          <div style={{ fontSize: 11, color: '#6E6E73', margin: '10px 0 6px' }}>Quantidade</div>
-          <Pills items={[2, 3, 4].map(n => ({ label: `Top ${n}`, value: String(n) }))} value={String(topN)} onChange={v => setTopN(Number(v))} />
+          {platform === 'google' ? (
+            <div style={{ fontSize: 11, color: '#6E6E73', padding: '8px 10px', background: '#FFF7ED', border: '1px solid #FED7AA', borderRadius: 6, lineHeight: 1.5 }}>
+              Em relatório Google-only não importamos criativos individuais — o relatório mostra top campanhas, top palavras-chave e dispositivos na seção Google Ads.
+              Se quiser destacar criativos manualmente, edite no relatório depois.
+            </div>
+          ) : (
+            <>
+              <div style={{ fontSize: 11, color: '#6E6E73', marginBottom: 6 }}>
+                Objetivo da campanha
+                {Object.keys(spendPorCategoria).length > 0 && (
+                  <span style={{ color: '#AEAEB2', marginLeft: 6 }}>
+                    · auto-detectado pelo gasto da conta
+                  </span>
+                )}
+              </div>
+              <Pills
+                items={objetivosOrdenados.map(o => {
+                  const spend = spendPorCategoria[o.label] || 0
+                  return {
+                    label: spend > 0 ? `${o.label} · ${fmtBRL(spend)}` : o.label,
+                    value: o.value,
+                  }
+                })}
+                value={objective}
+                onChange={setObjective}
+              />
+              <div style={{ fontSize: 11, color: '#6E6E73', margin: '10px 0 6px' }}>Público <span style={{ color: '#AEAEB2' }}>(filtra pelo nome)</span></div>
+              <Pills items={AUDIENCES.map(a => ({ label: a.label, value: a.value }))} value={audience} onChange={setAudience} />
+              <div style={{ fontSize: 11, color: '#6E6E73', margin: '10px 0 6px' }}>Quantidade</div>
+              <Pills items={[2, 3, 4].map(n => ({ label: `Top ${n}`, value: String(n) }))} value={String(topN)} onChange={v => setTopN(Number(v))} />
+            </>
+          )}
         </Section>
 
         <div style={{ display: 'flex', gap: 8, marginTop: 18 }}>
           <button onClick={handleConfirm} style={{ flex: 1, padding: 12, background: '#1877F2', color: '#fff', border: 'none', borderRadius: 8, fontSize: 14, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit' }}>✓ Criar e preencher</button>
-          <button onClick={() => onConfirm({ period, metrics: [], importCriativos: false, objective: '', audience: '', topN: 0 })} style={{ flex: '0 0 auto', padding: '12px 16px', background: '#fff', color: '#6E6E73', border: '1.5px solid #E5E5EA', borderRadius: 8, fontSize: 13, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}>Pular</button>
+          <button
+            onClick={() => onConfirm({ period, metrics: [], importCriativos: false, objective: '', audience: '', topN: 0, platform })}
+            title="Cria sem importar nada das plataformas — para preencher 100% manual."
+            style={{ flex: '0 0 auto', padding: '12px 16px', background: '#fff', color: '#6E6E73', border: '1.5px solid #E5E5EA', borderRadius: 8, fontSize: 13, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}>
+            Criar em branco
+          </button>
         </div>
       </div>
     </div>

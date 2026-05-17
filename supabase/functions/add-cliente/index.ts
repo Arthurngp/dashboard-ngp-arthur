@@ -30,7 +30,7 @@ Deno.serve(async (req) => {
   if (cors) return cors;
 
   try {
-    const { session_token, nome, username, meta_account_id, senha, foto_base64, foto_mime } = await req.json();
+    const { session_token, nome, username, meta_account_id, google_ads_customer_id, senha, foto_base64, foto_mime } = await req.json();
 
     if (!session_token) {
       return json(req, { error: 'Sessão inválida.' }, 401);
@@ -112,6 +112,16 @@ Deno.serve(async (req) => {
       password_hash: hashedPassword,
     };
     if (meta_account_id) insertData.meta_account_id = meta_account_id.trim();
+
+    // Google Ads customer_id: aceita "123-456-7890" ou "1234567890". Armazena sem hífens.
+    if (google_ads_customer_id) {
+      const googleAdsClean = String(google_ads_customer_id).trim().replace(/-/g, '');
+      if (!/^\d{10}$/.test(googleAdsClean)) {
+        return json(req, { error: 'Google Ads Customer ID inválido. Use 10 dígitos (ex: 123-456-7890).' }, 400);
+      }
+      insertData.google_ads_customer_id = googleAdsClean;
+    }
+
     if (fotoUrl) insertData.foto_url = fotoUrl;
 
     const { error } = await sb.from('usuarios').insert(insertData);

@@ -1,3 +1,26 @@
+<!--
+  ⚠ ARQUITETURA — leia antes de mexer.
+
+  Este HTML tem ~4400 linhas (487 CSS + 3800 JS + 100 HTML). É monolítico por
+  histórico: o relatório é servido como página estática pra abrir em nova aba,
+  e a estratégia foi inline tudo pra não ter request adicional / dependência.
+
+  Blocos lógicos principais (ver comentários "// ── XX ─" pra navegar):
+    1. AUTH / DEFAULTS / D state (linhas ~510-720)
+    2. AUTOSAVE + saveToCloud (~777-985)
+    3. Render do form + preview (~1000-2175)
+    4. Auto-import (Meta+Google) + 3 ondas IA (~2350-3000)
+    5. IA helpers (callIA, gerarResumo/Comparativo/PorqueGanha) (~3015-3300)
+    6. Importação Meta UI (modal, slots de comparação) (~3307-3820)
+
+  Pontos de dor conhecidos:
+    - Bloco IA poderia virar módulo separado (escopo médio)
+    - D é global e tudo muta direto — falta camada de updates controlados
+    - render() é all-or-nothing (innerHTML reset) — perde foco em re-renders
+
+  Para mudanças NESTE arquivo: prefira edição cirúrgica em blocos isolados.
+  Para refatoração: planeje sessão dedicada — extrair IA primeiro (menor risco).
+-->
 <!DOCTYPE html>
 <html lang="pt-BR">
 <head>
@@ -503,6 +526,9 @@ html.view-only [onclick^="main_"] { pointer-events: none !important; opacity: .4
   <button id="btn-copy-link" class="btn btn-ghost" onclick="copyCloudLink()" style="font-size:11px;padding:5px 14px;">Copiar link</button>
 </div>
 <div id="app"></div>
+<!-- Módulo IA extraído. Define window.NGP_IA. Carregado ANTES do script
+     principal pra estar disponível quando init() for chamado. -->
+<script src="/relatorio-ia.js"></script>
 <script>
 function uid(){return Math.random().toString(36).slice(2,8)}
 
@@ -569,18 +595,35 @@ const defaultCampanha=()=>({
 
 const defaultAnexo=()=>({img:'',comment:''});
 
+// Seção 'google' fica oculta por default; só é inserida quando o wizard
+// indicou platform=google|both (vide autoimport). Relatórios Meta-only
+// não veem a seção, mas podem restaurá-la em "Seções ocultas".
 const defaultSecOrder=()=>['resumo','numeros','criativos','acoes','passos','anexos'];
 const defaultSecTitles=()=>({
   resumo:'Resumo da Semana',
   numeros:'Números da Semana',
   criativos:'Criativos Campeões',
+  google:'Google Ads',
   acoes:'O que Fizemos',
   passos:'Próximos Passos',
   anexos:'Anexos / Prints Adicionais',
 });
+// Estrutura vazia da seção Google. Preenchida pelo autoimport.
+const defaultGoogleAds=()=>({
+  summary:null,        // {spend, impressions, clicks, ctr, avg_cpc, conversions, cpa}
+  topCampaigns:[],     // [{name, type, spend, impressions, clicks, conversions, ctr, cpa}]
+  topKeywords:[],      // [{keyword, match_type, spend, clicks, conversions, ctr, quality_score}]
+  topDevices:[],       // [{device, spend, clicks, conversions}]
+  customerId:null,
+  importedAt:null,
+});
 let D={
   cliente:'',gestor:'',periodo:'',
-  linkReportei:'',resumo:'',
+  // resumo: texto livre do gestor (humano). Source of truth do PDF final.
+  // aiResumo / aiComparativo: rastreio do que a IA escreveu, pra futuras
+  // features (limpar só IA, regenerar, mostrar autoria). Hoje não exibimos
+  // separadamente — preview concatena tudo via getResumoFinal().
+  linkReportei:'',resumo:'',aiResumo:'',aiComparativo:'',
   showMeta:true,
   metricas:defaultMetricas(),extraCols:[],
   criativos:[defaultCriativo(),defaultCriativo()],
@@ -588,10 +631,16 @@ let D={
   passos:['',''],
   anexos:[defaultAnexo(),defaultAnexo(),defaultAnexo(),defaultAnexo()],
   segEnabled:false,campanhas:[],
+  googleAds:defaultGoogleAds(),
   secTitles:defaultSecTitles(),
   secOrder:defaultSecOrder(),
   customSections:{},
+  schemaVersion: 1,
 };
+// Versão atual do schema do D. Quando mudar estrutura, incrementa aqui e
+// adiciona um case em migrateData(). Relatórios antigos carregam e são
+// migrados in-place no loadData.
+const SCHEMA_VERSION = 1;
 let view='form',savedTimer=null;
 const SK='ngp_rel_v4';
 const SURL='https://uqukfjtwsuffeunikiwz.supabase.co';
@@ -668,12 +717,59 @@ const _urlAccount  = _relUrlParams.get('account') || '';
 const _metaAccount = _urlAccount ||
                      sessionStorage.getItem('ngp_viewing_account')   ||
                      sessionStorage.getItem('adsboard_meta_account') || null;
+// Plataforma do relatório — 'meta' (default), 'google' ou 'both'.
+// Recebida do wizard em page.tsx via querystring. Decide quais blocos
+// importar e o copy mostrado ao usuário durante o autoimport.
+const _relPlatform = (_relUrlParams.get('platform') || 'meta').toLowerCase();
+const _googleCustomerId = (_relUrlParams.get('gid') || '').replace(/\D/g, '') || null;
+const _useMeta   = _relPlatform === 'meta' || _relPlatform === 'both';
+const _useGoogle = _relPlatform === 'google' || _relPlatform === 'both';
+console.log('[relatorio] platform=%s | useMeta=%s | useGoogle=%s | gid=%s',
+  _relPlatform, _useMeta, _useGoogle, _googleCustomerId || 'AUSENTE');
+if(document.documentElement){
+  document.documentElement.setAttribute('data-rel-platform', _relPlatform);
+}
 let cloudId=null;
+
+// Migrations entre versões de schema. Idempotente: rodar duas vezes não estraga.
+// Padrão: cada case faz mudanças necessárias e seta D.schemaVersion = N.
+function migrateData(){
+  if(!D) return;
+  const from = Number(D.schemaVersion || 0);
+  if(from >= SCHEMA_VERSION) return;
+  console.log('[migrate] de v%d para v%d', from, SCHEMA_VERSION);
+  // Exemplo de futura migration:
+  // if(from < 2){ /* renomear campo X, etc */ D.schemaVersion = 2; }
+  // Sem mudanças estruturais até v1 — só carimba versão pra próxima.
+  D.schemaVersion = SCHEMA_VERSION;
+}
+
+// Migração assíncrona de imagens em data URI → Storage. Em relatórios antigos
+// que ainda têm base64 em D, faz upload em background e substitui pela URL.
+// Não bloqueia render. Rate: 1 imagem por vez pra não saturar a edge function.
+async function _migrateImagesToStorage(){
+  if(!D || !_sess || IS_VIEW_ONLY) return;
+  const targets = [];
+  (D.criativos||[]).forEach((c,i)=>{ if(c && c.img && c.img.startsWith('data:image/')) targets.push({type:'criativo', idx:i, img:c.img}); });
+  (D.anexos||[]).forEach((a,i)=>{ if(a && a.img && a.img.startsWith('data:image/')) targets.push({type:'anexo', idx:i, img:a.img}); });
+  (D.campanhas||[]).forEach((c,i)=>{ if(c && c.criativo && c.criativo.img && c.criativo.img.startsWith('data:image/')) targets.push({type:'campCriativo', idx:i, img:c.criativo.img}); });
+  if(!targets.length) return;
+  console.log('[migrate-imgs] %d imagens em data URI, subindo pro Storage…', targets.length);
+  for(const t of targets){
+    const url = await _uploadImageToStorage(t.img);
+    if(url){
+      _setImgInD(t.type, t.idx, url);
+      saveData();
+    }
+  }
+  render();
+}
 
 function loadData(){
   try{
     const r=localStorage.getItem(SK);if(!r)return;
     D=JSON.parse(r);
+    migrateData();
     if(D.showMeta===undefined)D.showMeta=true;
     if(D.anexos&&typeof D.anexos[0]==='string')D.anexos=D.anexos.map(a=>({img:a,comment:''}));
     if(D.campanhas)D.campanhas.forEach(c=>{
@@ -687,6 +783,7 @@ function loadData(){
     else D.secTitles={...defaultSecTitles(),...D.secTitles};
     if(!D.secOrder)D.secOrder=defaultSecOrder();
     if(!D.customSections)D.customSections={};
+    if(!D.googleAds)D.googleAds=defaultGoogleAds();
   }catch(_){}
 }
 function updSecTitle(key,val){
@@ -862,7 +959,7 @@ function showCloudLink(){
   url.searchParams.set('id',cloudId);
   // Remove params do wizard de criação — eles só servem pro autoimport inicial.
   // Se ficarem no link compartilhado, quem abre re-importa por cima do snapshot.
-  ['novo','autoimport','period','metrics','objective','audience','topN','importCriativos','account','cid','username','cliente']
+  ['novo','autoimport','period','metrics','objective','audience','topN','importCriativos','account','cid','username','cliente','platform','gid']
     .forEach(k=>url.searchParams.delete(k));
   inp.value=url.toString();
   bar.style.display='flex';
@@ -901,6 +998,9 @@ async function loadFromCloud(id){
       if(c.platform==='youtube'&&!c.youtubeData)c.youtubeData=defaultPlatData();
       if(c.platform==='tiktok'&&!c.tiktokData)c.tiktokData=defaultPlatData();
     });
+    // Aplica migrations no payload da nuvem também. Relatório salvo há meses
+    // pode estar em versão antiga.
+    migrateData();
   }catch(e){
     alert('Relatório não encontrado. Você será redirecionado para criar um novo.');
     window.location.replace('/relatorio?novo=1');
@@ -1009,8 +1109,16 @@ function renderPlatForm(pd, ci, plat){
       inv:'Investimento R$', invph:'R$ 0,00', ctr:'CTR', ctrph:'0%'
     }
   }[plat];
+  // Botão de import via Google Ads API. Aparece em google e youtube (porque
+  // YouTube Ads é gerenciado pelo Google Ads). Tiktok não tem integração
+  // pública estável, então fica manual.
+  const showImportBtn = (plat === 'google' || plat === 'youtube');
+  const importBtn = showImportBtn ? `<button class="no-print"
+    onclick="importPlatFromGoogleAds(${ci},'${plat}')"
+    style="margin-left:auto;background:linear-gradient(135deg,#6D28D9,#9333EA);color:#fff;border:none;font-size:10px;font-weight:700;padding:5px 10px;border-radius:5px;cursor:pointer;display:flex;align-items:center;gap:4px;line-height:1"
+    title="Busca dados reais da conta Google Ads vinculada e roda IA pra preencher tudo">⚡ Importar + IA</button>` : '';
   return`<div class="pcard pcard-${plat}">
-    <div class="pcard-hdr ${plat}">${platSVG(plat,14)} ${cfg.lbl1}</div>
+    <div class="pcard-hdr ${plat}" style="display:flex;align-items:center;gap:8px">${platSVG(plat,14)} <span>${cfg.lbl1}</span>${importBtn}</div>
     <div class="pmrow c1">
       <div class="pmfield pmfield-${plat}">
         <span class="pmfield-lbl ${plat}">${cfg.inv}</span>
@@ -1319,7 +1427,7 @@ function renderSegmentos(){
 let _dragSrcIdx=null;
 function secLabelBuiltIn(key){
   const t=D.secTitles||defaultSecTitles();
-  return{resumo:t.resumo,numeros:t.numeros,criativos:t.criativos,acoes:t.acoes,passos:t.passos,anexos:t.anexos}[key]||key;
+  return{resumo:t.resumo,numeros:t.numeros,criativos:t.criativos,google:t.google,acoes:t.acoes,passos:t.passos,anexos:t.anexos}[key]||key;
 }
 function secLabel(key){
   if(key.startsWith('custom_'))return D.customSections?.[key]?.title||'Seção personalizada';
@@ -1364,7 +1472,7 @@ function _renderSecOrderItems(){
   // Footer: add section + restore hidden built-ins
   const footer=document.getElementById('sec-order-footer');
   if(!footer)return;
-  const builtIn=['resumo','numeros','criativos','acoes','passos','anexos'];
+  const builtIn=['resumo','numeros','criativos','google','acoes','passos','anexos'];
   const hidden=builtIn.filter(k=>!order.includes(k));
   const btnStyle='display:flex;align-items:center;gap:8px;background:#2C2C2E;border:1px solid rgba(255,255,255,.07);color:#C7C7CC;font-size:12px;font-weight:600;padding:8px 12px;border-radius:6px;cursor:pointer;width:100%;text-align:left;font-family:inherit;transition:background .12s';
   const restoreStyle='display:flex;align-items:center;gap:8px;background:rgba(204,20,20,.1);border:1px solid rgba(204,20,20,.25);color:#FF6B6B;font-size:12px;font-weight:600;padding:8px 12px;border-radius:6px;cursor:pointer;width:100%;text-align:left;font-family:inherit;transition:background .12s';
@@ -1520,6 +1628,100 @@ function renderSecCriativos(n){
     <div class="criativos-grid">${D.criativos.map((c,ci)=>renderCriativoCard(c,ci)).join('')}</div>
     ${D.criativos.length<4?`<div style="margin-top:12px"><button class="btn-add" onclick="addCriativo()">+ Adicionar criativo</button></div>`:''}
   </div>`;}
+// ─── Google Ads (form view) ─────────────────────────────────────────────
+// Renderiza só se houve autoimport (summary preenchido). Sem botões editáveis:
+// os dados vêm direto da API e ficam imutáveis no relatório salvo.
+function renderSecGoogle(n){
+  const g=D.googleAds||defaultGoogleAds();
+  const has=!!g.summary;
+  // Não renderiza nada se não há dados (relatório Meta-only que herdou a seção
+  // do default antigo). Mantém o card só quando há summary ou customerId
+  // (= relatório foi configurado pra Google, mesmo que import tenha falhado).
+  if(!has && !g.customerId) return '';
+  const fmtBRL=(v)=>'R$ '+(Number(v)||0).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2});
+  const fmtN=(v)=>Math.round(Number(v)||0).toLocaleString('pt-BR');
+  const fmtPct=(v)=>((Number(v)||0)*100).toFixed(2)+'%';
+  return`
+  <div class="card">
+    <div class="sec-head">
+      <div class="sec-num">${n}</div>
+      <input class="sec-title-input" value="${esc(D.secTitles?.google||'Google Ads')}" oninput="updSecTitle('google',this.value)" title="Clique para editar o título"/>
+      <span class="sec-sub" style="margin-left:auto">${has?`${g.topCampaigns.length} camp. · ${g.topKeywords.length} keywords`:'sem dados'}</span>
+    </div>
+    ${!has?`<div class="empty-text" style="padding:20px;text-align:center;color:#AEAEB2">Nenhum dado importado. Crie o relatório com plataforma Google ou Meta+Google.</div>`:`
+      <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:16px">
+        ${[
+          ['Investido', fmtBRL(g.summary.spend)],
+          ['Impressões', fmtN(g.summary.impressions)],
+          ['Cliques', fmtN(g.summary.clicks)],
+          ['CTR', fmtPct(g.summary.ctr)],
+          ['CPC médio', fmtBRL(g.summary.avg_cpc)],
+          ['Conversões', fmtN(g.summary.conversions)],
+          ['CPA', g.summary.conversions>0?fmtBRL(g.summary.cpa):'—'],
+          ['ID conta', g.customerId||'—'],
+        ].map(([l,v])=>`
+          <div style="background:#FFFBEB;border:1px solid #FDE68A;border-radius:8px;padding:10px">
+            <div style="font-size:10px;font-weight:700;color:#92400E;text-transform:uppercase;letter-spacing:.05em">${esc(l)}</div>
+            <div style="font-size:15px;font-weight:800;color:#111;margin-top:4px">${esc(String(v))}</div>
+          </div>`).join('')}
+      </div>
+      ${g.topCampaigns.length>0?`
+        <div style="margin-top:10px"><div style="font-size:11px;font-weight:700;color:#6E6E73;text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px">Top campanhas</div>
+          <table style="width:100%;border-collapse:collapse;font-size:12px">
+            <thead><tr style="background:#FFFBEB;color:#92400E">
+              <th style="padding:6px 8px;text-align:left">Nome</th>
+              <th style="padding:6px 8px;text-align:left">Tipo</th>
+              <th style="padding:6px 8px;text-align:right">Gasto</th>
+              <th style="padding:6px 8px;text-align:right">Cliques</th>
+              <th style="padding:6px 8px;text-align:right">Conv.</th>
+              <th style="padding:6px 8px;text-align:right">CTR</th>
+            </tr></thead>
+            <tbody>${g.topCampaigns.map(c=>`
+              <tr style="border-top:1px solid #F2F2F7">
+                <td style="padding:6px 8px">${esc(c.name||'—')}</td>
+                <td style="padding:6px 8px;color:#6E6E73">${esc(c.type||c.advertising_channel_type||'—')}</td>
+                <td style="padding:6px 8px;text-align:right">${fmtBRL(c.spend)}</td>
+                <td style="padding:6px 8px;text-align:right">${fmtN(c.clicks)}</td>
+                <td style="padding:6px 8px;text-align:right">${fmtN(c.conversions)}</td>
+                <td style="padding:6px 8px;text-align:right">${fmtPct((c.impressions||0)>0?(c.clicks||0)/(c.impressions||1):0)}</td>
+              </tr>`).join('')}
+            </tbody>
+          </table>
+        </div>`:''}
+      ${g.topKeywords.length>0?`
+        <div style="margin-top:14px"><div style="font-size:11px;font-weight:700;color:#6E6E73;text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px">Top keywords</div>
+          <table style="width:100%;border-collapse:collapse;font-size:12px">
+            <thead><tr style="background:#FFFBEB;color:#92400E">
+              <th style="padding:6px 8px;text-align:left">Palavra-chave</th>
+              <th style="padding:6px 8px;text-align:left">Match</th>
+              <th style="padding:6px 8px;text-align:right">Gasto</th>
+              <th style="padding:6px 8px;text-align:right">Cliques</th>
+              <th style="padding:6px 8px;text-align:right">Conv.</th>
+              <th style="padding:6px 8px;text-align:right">QS</th>
+            </tr></thead>
+            <tbody>${g.topKeywords.map(k=>`
+              <tr style="border-top:1px solid #F2F2F7">
+                <td style="padding:6px 8px">${esc(k.keyword||k.text||'—')}</td>
+                <td style="padding:6px 8px;color:#6E6E73">${esc(k.match_type||'—')}</td>
+                <td style="padding:6px 8px;text-align:right">${fmtBRL(k.spend)}</td>
+                <td style="padding:6px 8px;text-align:right">${fmtN(k.clicks)}</td>
+                <td style="padding:6px 8px;text-align:right">${fmtN(k.conversions)}</td>
+                <td style="padding:6px 8px;text-align:right">${k.quality_score||'—'}</td>
+              </tr>`).join('')}
+            </tbody>
+          </table>
+        </div>`:''}
+      ${g.topDevices.length>0?`
+        <div style="margin-top:14px"><div style="font-size:11px;font-weight:700;color:#6E6E73;text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px">Por dispositivo</div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap">${g.topDevices.map(d=>`
+            <div style="background:#fff;border:1px solid #E5E5EA;border-radius:8px;padding:8px 12px">
+              <div style="font-size:10px;color:#6E6E73;text-transform:uppercase">${esc(d.device||'—')}</div>
+              <div style="font-size:13px;font-weight:700">${fmtBRL(d.spend)} · ${fmtN(d.clicks)} cliques</div>
+            </div>`).join('')}</div>
+        </div>`:''}
+    `}
+  </div>`;
+}
 function renderSecAcoes(n){return`
   <div class="card">
     <div class="sec-head"><div class="sec-num">${n}</div><input class="sec-title-input" value="${esc(D.secTitles?.acoes||'O que Fizemos')}" oninput="updSecTitle('acoes',this.value)" title="Clique para editar o título"/><span class="sec-sub" style="margin-left:auto">ação · motivador</span></div>
@@ -1592,6 +1794,7 @@ function renderOrderedSections(metaBtn){
       case 'resumo':    return renderSecResumo(n);
       case 'numeros':   return renderSecNumeros(n,metaBtn)+renderSegmentos();
       case 'criativos': return renderSecCriativos(n);
+      case 'google':    return renderSecGoogle(n);
       case 'acoes':     return renderSecAcoes(n);
       case 'passos':    return renderSecPassos(n);
       case 'anexos':    return renderSecAnexos();
@@ -1883,6 +2086,44 @@ function renderPreview(){
                   </div>`).join('')}
                 </div>
               </div>`;
+              case 'google': {
+                const g=d.googleAds; if(!g||(!g.summary && !g.customerId))return'';
+                if(!g.summary) return '';
+                const fBRL=(v)=>'R$ '+(Number(v)||0).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2});
+                const fN=(v)=>Math.round(Number(v)||0).toLocaleString('pt-BR');
+                const fPct=(v)=>((Number(v)||0)*100).toFixed(2)+'%';
+                return`<div class="ps" style="margin-top:24px">
+                  <div class="ps-head ps-head-accent"><div class="ps-num">${n}</div><div class="ps-title">${esc(d.secTitles?.google||'Google Ads')}</div></div>
+                  <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:14px">
+                    ${[
+                      ['Investido', fBRL(g.summary.spend)],
+                      ['Impressões', fN(g.summary.impressions)],
+                      ['Cliques', fN(g.summary.clicks)],
+                      ['CTR', fPct(g.summary.ctr)],
+                      ['CPC médio', fBRL(g.summary.avg_cpc)],
+                      ['Conversões', fN(g.summary.conversions)],
+                      ['CPA', g.summary.conversions>0?fBRL(g.summary.cpa):'—'],
+                      ['Conta', g.customerId||'—'],
+                    ].map(([l,v])=>`
+                      <div style="background:#FFFBEB;border:1px solid #FDE68A;border-radius:6px;padding:8px">
+                        <div style="font-size:9px;font-weight:700;color:#92400E;text-transform:uppercase">${esc(l)}</div>
+                        <div style="font-size:13px;font-weight:700;color:#111;margin-top:3px">${esc(String(v))}</div>
+                      </div>`).join('')}
+                  </div>
+                  ${g.topCampaigns.length>0?`
+                    <div style="font-size:11px;font-weight:700;color:#6E6E73;text-transform:uppercase;margin:10px 0 6px">Top campanhas</div>
+                    <table style="width:100%;border-collapse:collapse;font-size:11px">
+                      <thead><tr style="background:#FFFBEB;color:#92400E"><th style="padding:5px 7px;text-align:left">Nome</th><th style="padding:5px 7px;text-align:left">Tipo</th><th style="padding:5px 7px;text-align:right">Gasto</th><th style="padding:5px 7px;text-align:right">Cliques</th><th style="padding:5px 7px;text-align:right">Conv.</th></tr></thead>
+                      <tbody>${g.topCampaigns.map(c=>`<tr style="border-top:1px solid #F2F2F7"><td style="padding:5px 7px">${esc(c.name||'—')}</td><td style="padding:5px 7px;color:#6E6E73">${esc(c.type||c.advertising_channel_type||'—')}</td><td style="padding:5px 7px;text-align:right">${fBRL(c.spend)}</td><td style="padding:5px 7px;text-align:right">${fN(c.clicks)}</td><td style="padding:5px 7px;text-align:right">${fN(c.conversions)}</td></tr>`).join('')}</tbody>
+                    </table>`:''}
+                  ${g.topKeywords.length>0?`
+                    <div style="font-size:11px;font-weight:700;color:#6E6E73;text-transform:uppercase;margin:12px 0 6px">Top keywords</div>
+                    <table style="width:100%;border-collapse:collapse;font-size:11px">
+                      <thead><tr style="background:#FFFBEB;color:#92400E"><th style="padding:5px 7px;text-align:left">Palavra-chave</th><th style="padding:5px 7px;text-align:left">Match</th><th style="padding:5px 7px;text-align:right">Gasto</th><th style="padding:5px 7px;text-align:right">Cliques</th><th style="padding:5px 7px;text-align:right">Conv.</th></tr></thead>
+                      <tbody>${g.topKeywords.map(k=>`<tr style="border-top:1px solid #F2F2F7"><td style="padding:5px 7px">${esc(k.keyword||k.text||'—')}</td><td style="padding:5px 7px;color:#6E6E73">${esc(k.match_type||'—')}</td><td style="padding:5px 7px;text-align:right">${fBRL(k.spend)}</td><td style="padding:5px 7px;text-align:right">${fN(k.clicks)}</td><td style="padding:5px 7px;text-align:right">${fN(k.conversions)}</td></tr>`).join('')}</tbody>
+                    </table>`:''}
+                </div>`;
+              }
               case 'acoes': return`<div class="ps">
                 <div class="ps-head ps-head-accent"><div class="ps-num">${n}</div><div class="ps-title">${esc(d.secTitles?.acoes||'O que Fizemos')}</div></div>
                 ${acoesFilled.length===0?'<div class="empty-text">Nenhuma ação informada.</div>':`<div class="p-acoes-grid">
@@ -1959,6 +2200,13 @@ function getTipoRelatorio(periodo){
 function render(){
   document.getElementById('app').innerHTML=view==='form'?renderForm():renderPreview();
   D.campanhas.forEach((_,ci)=>regCampFns(ci));
+  // Reposiciona overlay da IA se ainda ativo (textarea pode ter mudado de pos).
+  // Usa repositionLock() que NÃO religa o lock caso esteja inativo — só
+  // reposiciona se já estava ativo. Sem isso, qualquer render() com lock
+  // ativo podia perpetuar o estado mesmo após setIAWritingLock(false).
+  if(window.NGP_IA && window.NGP_IA.repositionLock){
+    requestAnimationFrame(()=>window.NGP_IA.repositionLock());
+  }
 }
 function showPreview(){view='preview';render()}
 function showForm(){view='form';render()}
@@ -2056,6 +2304,184 @@ function updPlatField(ci,plat,field,sub,val){
   pd[field][sub]=val;saveData();
 }
 function updPlatText(ci,plat,val){getPD(ci,plat).texto=val;saveData()}
+
+// ── Import Google Ads → Campanha Segmentada (Google/YouTube) ─────────────────
+// Quando o gestor clica "⚡ Importar + IA" no header do pcard:
+//  1. Resolve customer_id (do querystring gid, ou D.googleAds.customerId)
+//  2. Busca campaigns + keywords via edge `google-ads-campaigns`
+//  3. Em YouTube, filtra `advertising_channel_type=VIDEO` (server-side)
+//  4. Soma totais (investimento, impressões, cliques, conversões) → preenche KPIs
+//  5. Top 5 keywords vão pro campo de texto (Palavras-chave vencedoras)
+//  6. Chama IA pra gerar análise — escreve no extras[] como métrica "Análise IA"
+// Falha silenciosa: erros viram alert visível pro gestor (não é autoimport).
+async function importPlatFromGoogleAds(ci, plat){
+  if(plat !== 'google' && plat !== 'youtube'){
+    alert('Importação automática só disponível para Google Ads e YouTube Ads.');
+    return;
+  }
+  // Resolve customer_id em cascata:
+  //  1. ?gid= no URL (relatório novo do dashboard)
+  //  2. D.googleAds.customerId (já importado antes neste relatório)
+  //  3. Lookup na tabela clientes pelo _clienteId (relatório antigo, antes
+  //     da feature). Salva em D pra próximas vezes não precisarem.
+  const urlParams = new URLSearchParams(window.location.search);
+  let gid = (urlParams.get('gid') || (D.googleAds && D.googleAds.customerId) || '').replace(/\D/g,'');
+  if(!gid && _clienteId && _sess){
+    try{
+      const lookupRes = await fetch(
+        SURL + '/rest/v1/clientes?id=eq.' + encodeURIComponent(_clienteId) + '&select=google_ads_customer_id',
+        { headers: { 'apikey': ANON, 'Authorization': 'Bearer ' + _sess } }
+      );
+      if(lookupRes.ok){
+        const arr = await lookupRes.json().catch(()=>[]);
+        const fromDb = (arr && arr[0] && arr[0].google_ads_customer_id) || '';
+        if(fromDb){
+          gid = String(fromDb).replace(/\D/g,'');
+          console.log('[importPlatFromGoogleAds] customer_id resolvido via lookup:', gid);
+        }
+      }
+    }catch(lookupErr){
+      console.warn('[importPlatFromGoogleAds] lookup falhou:', lookupErr);
+    }
+  }
+  if(!gid){
+    alert('Este relatório não tem Google Ads vinculado. Vincule um Customer ID Google Ads no cadastro do cliente (Dashboard > Cliente > Editar > Google Ads ID), ou crie novo relatório do dashboard com "Meta + Google" / "Só Google".');
+    return;
+  }
+  if(!_sess){
+    alert('Faça login para importar dados.');
+    return;
+  }
+  // Botão visual: pega o que disparou o clique (event.target). Sem isso seria
+  // achar querySelector pelo onclick — frágil. event.target funciona porque
+  // onclick fica anexado ao botão e dispara síncrono.
+  const btn = (typeof event !== 'undefined' && event && event.currentTarget) || null;
+  const oldHTML = btn ? btn.innerHTML : '';
+  const setLoading = (txt) => { if(btn){ btn.innerHTML = txt; btn.disabled = true; } };
+  const clearLoading = () => { if(btn){ btn.innerHTML = oldHTML; btn.disabled = false; } };
+
+  try{
+    setLoading('⟳ Buscando dados…');
+    const dateRange = (urlParams.get('period') || 'last_7d');
+    // Em YouTube, queremos só campanhas VIDEO. A edge function ainda não
+    // filtra — passamos no body e o cliente filtra após receber. Migração
+    // futura: server-side filter pra economizar payload.
+    const _gFetch = (action) => fetch(SURL+'/functions/v1/google-ads-campaigns', {
+      method: 'POST',
+      headers: { 'Content-Type':'application/json', 'Authorization':'Bearer '+_sess },
+      body: JSON.stringify({ action, customer_id: gid, date_range: dateRange }),
+    }).then(r => r.ok ? r.json() : Promise.reject(new Error('HTTP '+r.status)));
+
+    const [campsRes, kwsRes] = await Promise.allSettled([
+      _gFetch('campaigns'),
+      _gFetch('keywords'),
+    ]);
+
+    let camps = (campsRes.status === 'fulfilled' && campsRes.value.campaigns) || [];
+    const kws  = (kwsRes.status   === 'fulfilled' && kwsRes.value.keywords)    || [];
+
+    // Filtra YouTube (channel type VIDEO)
+    if(plat === 'youtube'){
+      camps = camps.filter(c => {
+        const t = String(c.type || c.advertising_channel_type || '').toUpperCase();
+        return t === 'VIDEO' || t === 'YOUTUBE';
+      });
+    }
+
+    if(!camps.length){
+      alert(plat === 'youtube'
+        ? 'Nenhuma campanha de vídeo encontrada no Google Ads desse cliente no período.'
+        : 'Nenhuma campanha do Google Ads encontrada no período.');
+      return;
+    }
+
+    // Agrega KPIs
+    const totalSpend  = camps.reduce((s,c)=>s+(c.spend||0),0);
+    const totalImpr   = camps.reduce((s,c)=>s+(c.impressions||0),0);
+    const totalClks   = camps.reduce((s,c)=>s+(c.clicks||0),0);
+    const totalConv   = camps.reduce((s,c)=>s+(c.conversions||0),0);
+    const ctr = totalImpr > 0 ? (totalClks / totalImpr) * 100 : 0;
+    const cpc = totalClks > 0 ? totalSpend / totalClks : 0;
+
+    const fmtBRL = (v) => 'R$ ' + v.toLocaleString('pt-BR', {minimumFractionDigits:2, maximumFractionDigits:2});
+
+    // Preenche os 4 KPIs no D.campanhas[ci][platData]
+    const pd = getPD(ci, plat);
+    pd.investimento = { valor: fmtBRL(totalSpend),       meta: pd.investimento?.meta || '' };
+    pd.impressoes   = { valor: totalImpr.toLocaleString('pt-BR'), meta: pd.impressoes?.meta || '' };
+    pd.ctr          = { valor: ctr.toFixed(2) + '%',     meta: pd.ctr?.meta || '' };
+    pd.resultado    = { valor: totalConv + ' conversões', meta: pd.resultado?.meta || '' };
+    pd.extra1       = { valor: fmtBRL(cpc),              meta: pd.extra1?.meta || '' };
+
+    // Top 5 keywords no campo texto. YouTube não tem keywords (mostra top criativos pelo nome).
+    if(plat === 'google' && kws.length){
+      const top5 = [...kws].sort((a,b)=>(b.spend||0)-(a.spend||0)).slice(0,5);
+      const linhas = top5.map(k => {
+        const txt = k.keyword || k.text || '—';
+        const mt = k.match_type ? ` [${k.match_type}]` : '';
+        const cliques = k.clicks ? ` · ${k.clicks} cliques` : '';
+        return `• ${txt}${mt}${cliques}`;
+      });
+      pd.texto = linhas.join('\n');
+    } else if(plat === 'youtube'){
+      // Pra YouTube: lista top 5 campanhas vídeo por gasto (proxy de conteúdo vencedor)
+      const top5 = [...camps].sort((a,b)=>(b.spend||0)-(a.spend||0)).slice(0,5);
+      pd.texto = top5.map(c => `• ${c.name || '—'} (${fmtBRL(c.spend||0)})`).join('\n');
+    }
+    saveData(); render();
+
+    // Persistir customer_id pra próximos imports não dependerem do querystring
+    if(!D.googleAds) D.googleAds = defaultGoogleAds();
+    D.googleAds.customerId = gid;
+    saveData();
+
+    // Roda IA pra gerar texto curto explicando a performance. Não é bloqueante:
+    // se IA falhar, KPIs já estão preenchidos.
+    setLoading('⟳ Analisando com IA…');
+    try{
+      const platLabel = plat === 'youtube' ? 'YouTube Ads (vídeo)' : 'Google Ads';
+      const result = await callIA('resumo', {
+        cliente: D.cliente || '',
+        periodo: D.periodo || '',
+        metricas: {
+          [`${platLabel} · Investimento`]: { resultado: fmtBRL(totalSpend) },
+          [`${platLabel} · Impressões`]:   { resultado: String(totalImpr) },
+          [`${platLabel} · Cliques`]:      { resultado: String(totalClks) },
+          [`${platLabel} · CTR`]:          { resultado: ctr.toFixed(2)+'%' },
+          [`${platLabel} · CPC médio`]:    { resultado: fmtBRL(cpc) },
+          [`${platLabel} · Conversões`]:   { resultado: String(totalConv) },
+        },
+        metricas_anterior: {},
+        historico: 'sem_periodo_anterior',
+      }, {silent:true});
+      if(result && result.texto){
+        // Adiciona a análise IA como uma "métrica extra" no formato que o
+        // form de campanha suporta. Vira uma linha extra abaixo das demais.
+        if(!pd.extras) pd.extras = [];
+        // Substitui análise IA anterior em vez de duplicar
+        const idxExisting = pd.extras.findIndex(x => x && x.label === '✨ Análise IA');
+        if(idxExisting >= 0){
+          pd.extras[idxExisting] = { id: pd.extras[idxExisting].id, label: '✨ Análise IA', valor: result.texto, meta: '' };
+        } else {
+          pd.extras.push({ id: uid(), label: '✨ Análise IA', valor: result.texto, meta: '' });
+        }
+        saveData(); render();
+      }
+    }catch(iaErr){
+      console.warn('[importPlatFromGoogleAds] IA falhou (mas KPIs foram importados):', iaErr);
+    }
+
+    alert(plat === 'youtube'
+      ? `✓ ${camps.length} campanhas de vídeo importadas + análise IA gerada.`
+      : `✓ ${camps.length} campanhas + ${kws.length} keywords importadas + análise IA gerada.`);
+  }catch(e){
+    console.error('[importPlatFromGoogleAds]', e);
+    alert('Erro ao importar do Google Ads: ' + (e && e.message ? e.message : 'tente novamente.'));
+  } finally {
+    clearLoading();
+  }
+}
+
 function addPlatExtra(ci,plat){
   const pd=getPD(ci,plat);if(!pd.extras)pd.extras=[];
   pd.extras.push({id:uid(),label:'Nova Métrica',valor:'',meta:''});saveData();render();
@@ -2125,19 +2551,83 @@ function addPasso(){D.passos.push('');saveData();render()}
 function updAnexoComment(i,v){D.anexos[i].comment=v;saveData()}
 function addAnexo(){D.anexos.push(defaultAnexo());saveData();render()}
 
-// imgs
+// Upload de imagem do gestor → Supabase Storage → URL pública em D.
+// Por que: salvar base64 em D inflava o JSON (até 30MB) e quebrava save em
+// rede móvel + IA não conseguia ler base64 em vision (P1 #6 + P2 #14).
+// Fluxo:
+//   1. Lê arquivo como data URI (compatibilidade visual imediata)
+//   2. Mostra preview temporário (data URI direto enquanto sobe)
+//   3. POST pra relatorio-pin-thumb com source_url=data:... → URL pública
+//   4. Substitui em D pela URL e re-renderiza
+// Fallback: se upload falhar, deixa o data URI mesmo (degraded mode).
+async function _uploadImageToStorage(dataUri){
+  if(!_sess) return null;
+  try{
+    const res = await fetch(SURL+'/functions/v1/relatorio-pin-thumb', {
+      method: 'POST',
+      headers: { 'Content-Type':'application/json','apikey':ANON,'Authorization':'Bearer '+_sess },
+      body: JSON.stringify({ session_token: _sess, source_url: dataUri, relatorio_id: cloudId || undefined }),
+    });
+    const j = await res.json().catch(()=>({}));
+    if(!res.ok || !j.url){
+      console.warn('[upload-imagem] falhou:', j.error || res.status);
+      return null;
+    }
+    return String(j.url);
+  }catch(e){
+    console.warn('[upload-imagem] erro de rede:', e&&e.message);
+    return null;
+  }
+}
+
+function _setImgInD(type, idx, value){
+  if(type==='criativo') D.criativos[idx].img = value;
+  else if(type==='campCriativo'){
+    if(!D.campanhas[idx].criativo) D.campanhas[idx].criativo = defaultMiniCriativo();
+    D.campanhas[idx].criativo.img = value;
+  }
+  else if(type==='anexo') D.anexos[idx].img = value;
+}
+
 function handleImg(type,idx){
   const inp=document.createElement('input');inp.type='file';inp.accept='image/*';
   inp.onchange=e=>{
     const f=e.target.files[0];if(!f)return;
     const r=new FileReader();
-    r.onload=ev=>{
-      if(type==='criativo')D.criativos[idx].img=ev.target.result;
-      else if(type==='campCriativo'){if(!D.campanhas[idx].criativo)D.campanhas[idx].criativo=defaultMiniCriativo();D.campanhas[idx].criativo.img=ev.target.result;}
-      else if(type==='anexo')D.anexos[idx].img=ev.target.result;
-      saveData();render();
-    };r.readAsDataURL(f);
-  };inp.click();
+    r.onload=async (ev)=>{
+      const dataUri = ev.target.result;
+      // Preview otimista: mostra a imagem na hora (data URI), enquanto sobe.
+      _setImgInD(type, idx, dataUri);
+      saveData(); render();
+      // Upload pro Storage. Se sucesso, substitui pela URL e re-salva.
+      const url = await _uploadImageToStorage(dataUri);
+      if(url){
+        _setImgInD(type, idx, url);
+        saveData(); render();
+      }
+      // Se url=null, mantém data URI (degradado: localStorage maior + IA sem visão).
+    };
+    r.readAsDataURL(f);
+  };
+  inp.click();
+}
+
+// Inicializa o módulo IA externo ANTES do IIFE de bootstrap. Necessário porque
+// o autoimport (dentro do IIFE) chama callIA imediatamente. snapshotMetricasAtuais
+// e snapshotMetricasAnterior são function declarations (hoisted) então estão
+// disponíveis aqui mesmo declaradas mais abaixo no arquivo.
+// ⚠ getD precisa ser função pra acompanhar reatribuições de D (loadFromCloud/
+// loadData fazem `D = ...`).
+if(window.NGP_IA && typeof window.NGP_IA.init === 'function'){
+  window.NGP_IA.init({
+    getD: () => D,
+    sess: _sess, SURL, ANON,
+    saveData, render,
+    snapshotMetricasAtuais, snapshotMetricasAnterior,
+    getCloudId: () => cloudId,
+  });
+} else {
+  console.error('[relatorio] NGP_IA não carregou — botões IA vão falhar.');
 }
 
 (async()=>{
@@ -2146,29 +2636,39 @@ function handleImg(type,idx){
   const isNovo=params.get('novo')==='1';
   if(id){await loadFromCloud(id);}
   else if(!isNovo){loadData();}
-  // Fallback pra relatórios antigos: se gestor vazio E user é NGP, popula com nome do login.
-  // Não sobrescreve se já tinha nome (relatório feito por outro gestor da equipe).
-  if(IS_NGP_USER && !D.gestor){
-    const _gestorNome = sessionStorage.getItem('adsboard_user')
-                     || sessionStorage.getItem('ngp_viewing_name')
-                     || '';
-    if(_gestorNome){ D.gestor = _gestorNome; saveData(); }
-  }
-  else{
+
+  // Helper: lê nome do gestor logado das fontes disponíveis (sem fallback ''>'').
+  const _readGestorLogado = () =>
+       sessionStorage.getItem('adsboard_user')
+    || sessionStorage.getItem('ngp_viewing_name')
+    || '';
+
+  if(isNovo && !id){
+    // === RELATÓRIO NOVO ===
+    // Limpa snapshot antigo do localStorage (evita herdar dados de outro cliente).
+    // Pré-preenche cliente e gestor a partir do querystring/sessão.
     localStorage.removeItem(SK);
-    // Pré-preenche cliente com nome vindo do dashboard
     const clienteParam=params.get('cliente');
     if(clienteParam){D.cliente=clienteParam;}
-    // Pré-preenche gestor com nome do usuário NGP logado.
-    // Source: sessionStorage.adsboard_user (definido no login). Bridge usa ngp_viewing_name.
-    const _gestorNome = sessionStorage.getItem('adsboard_user')
-                     || sessionStorage.getItem('ngp_viewing_name')
-                     || '';
+    const _gestorNome = _readGestorLogado();
     if(_gestorNome){ D.gestor = _gestorNome; }
     // Período é aplicado no setTimeout (evita TDZ — _metaPreset declarado após este IIFE)
+  } else if(IS_NGP_USER && !D.gestor){
+    // === RELATÓRIO EXISTENTE, gestor vazio ===
+    // Fallback pra relatórios antigos sem gestor. Não sobrescreve se já tinha
+    // nome (relatório feito por outro gestor da equipe).
+    const _gestorNome = _readGestorLogado();
+    if(_gestorNome){ D.gestor = _gestorNome; saveData(); }
   }
+  // else: relatório existente com gestor preenchido — não toca em nada.
+
   render();
   if(cloudId)showCloudLink();
+  // Migra imagens em data URI pra Storage em background. Não bloqueia.
+  // Roda só se tem sessão e não é view-only.
+  if(_sess && !IS_VIEW_ONLY){
+    _migrateImagesToStorage().catch(e=>console.warn('[migrate-imgs]', e));
+  }
   // Auto-importa métricas Meta + criativos campeões a partir dos params
   // configurados no wizard do Dashboard. Sem UI de modal — preenche direto.
   // CRÍTICO: NUNCA roda se já tem ?id= (relatório existente sendo aberto)
@@ -2192,15 +2692,33 @@ function handleImg(type,idx){
     const hideAutoStatus=(delay)=>{const bar=document.getElementById('autoimport-bar');if(bar)setTimeout(()=>bar.remove(),delay||3000);};
     if(!_sess){
       console.warn('[autoimport] sem sessão — não é possível importar');
-      showAutoStatus('⚠ Faça login para importar dados do Meta');hideAutoStatus();
+      showAutoStatus('⚠ Faça login para importar dados');hideAutoStatus();
       return;
     }
-    if(!_metaAccount){
-      console.warn('[autoimport] sem _metaAccount — passe ?account=... no URL');
+    // Validação por plataforma escolhida no wizard.
+    // - Meta-only: precisa de _metaAccount
+    // - Google-only: precisa de _googleCustomerId
+    // - Ambos: precisa de pelo menos um (segue o que tiver)
+    if(_useMeta && !_useGoogle && !_metaAccount){
+      console.warn('[autoimport] platform=meta mas sem _metaAccount');
       showAutoStatus('⚠ Conta Meta não configurada para este cliente');hideAutoStatus();
       return;
     }
-    showAutoStatus('⟳ Importando dados do Meta…');
+    if(_useGoogle && !_useMeta && !_googleCustomerId){
+      console.warn('[autoimport] platform=google mas sem _googleCustomerId');
+      showAutoStatus('⚠ Google Ads não vinculado para este cliente');hideAutoStatus();
+      return;
+    }
+    if(_useMeta && _useGoogle && !_metaAccount && !_googleCustomerId){
+      console.warn('[autoimport] platform=both sem nenhuma conta vinculada');
+      showAutoStatus('⚠ Nenhuma plataforma vinculada para este cliente');hideAutoStatus();
+      return;
+    }
+    showAutoStatus(
+      _useMeta && _useGoogle ? '⟳ Importando dados Meta + Google Ads…'
+      : _useGoogle ? '⟳ Importando dados Google Ads…'
+      : '⟳ Importando dados do Meta…'
+    );
     const _autoperiod=params.get('period');
     const _autometrics=params.get('metrics');
     const _autoobjective=params.get('objective');
@@ -2239,6 +2757,8 @@ function handleImg(type,idx){
         if(status.metricas==='pending') parts.push('⟳ métricas');
         else if(status.metricas==='ok') parts.push(`✓ ${status.countM} métricas`);
         else if(status.metricas==='err') parts.push('⚠ métricas');
+        else if(status.metricas==='skip') parts.push('— Meta pulado');
+        if(status.googleCount) parts.push(`✓ ${status.googleCount} camp. Google`);
         if(status.criativos==='pending') parts.push('⟳ criativos');
         else if(status.criativos==='ok') parts.push(`✓ ${status.countC} criativos`);
         else if(status.criativos==='empty') parts.push('— sem criativos');
@@ -2246,6 +2766,7 @@ function handleImg(type,idx){
         if(status.ia==='pending') parts.push(status.iaTotal>0?`⟳ IA ${status.iaDone}/${status.iaTotal}`:'⟳ IA…');
         else if(status.ia==='ok') parts.push('✓ análise IA');
         else if(status.ia==='partial') parts.push('✓ IA (parcial)');
+        else if(status.ia==='skipped') parts.push('— IA não reescreveu (campos já preenchidos)');
         else if(status.ia==='skip_no_historico') parts.push('— sem comparativo (cliente novo)');
         else if(status.ia==='skip_no_metricas') parts.push('— IA pulada (sem métricas)');
         else if(status.ia==='err') parts.push('⚠ IA');
@@ -2259,12 +2780,15 @@ function handleImg(type,idx){
           const partsFinal = [];
           if(status.metricas==='ok')      partsFinal.push(`✓ ${status.countM} métricas`);
           else if(status.metricas==='err')partsFinal.push('⚠ métricas falharam');
+          else if(status.metricas==='skip')partsFinal.push('— Meta pulado (relatório Google)');
+          if(status.googleCount)            partsFinal.push(`✓ ${status.googleCount} campanhas Google`);
           if(status.criativos==='ok')       partsFinal.push(`✓ ${status.countC} criativos`);
           else if(status.criativos==='empty') partsFinal.push(`⚠ ${status.criativosMsg||'nenhum criativo'}`);
           else if(status.criativos==='err')   partsFinal.push(`⚠ erro nos criativos: ${status.criativosMsg||''}`);
           else if(status.criativos==='skip')  partsFinal.push('— sem criativos solicitados');
           if(status.ia==='ok')                partsFinal.push('✓ análise IA');
           else if(status.ia==='partial')       partsFinal.push('✓ IA parcial');
+          else if(status.ia==='skipped')       partsFinal.push('— IA não reescreveu (campos já tinham texto)');
           else if(status.ia==='skip_no_historico') partsFinal.push('— cliente novo (sem comparativo)');
           else if(status.ia==='skip_no_metricas')  partsFinal.push('— IA pulada (métricas falharam)');
           else if(status.ia==='err')           partsFinal.push('⚠ IA falhou');
@@ -2281,6 +2805,8 @@ function handleImg(type,idx){
       // condition no proxy Meta. Métricas primeiro, criativos depois.
       // Em paralelo, busca período anterior pra popular semAnt + viabilizar IA comparativa.
       let _metaDataAnterior=null;
+      // Pula bloco Meta quando o wizard escolheu só Google.
+      if(_useMeta && _metaAccount){
       try{
         // Atual + anterior em paralelo (sem dependência entre si)
         const prevRange = previousPeriodRange(
@@ -2292,9 +2818,25 @@ function handleImg(type,idx){
           fetchMetaInsights(),
           prevRange ? callMetaProxy('custom', null, prevRange.since, prevRange.until) : Promise.resolve(null),
         ]);
+        // Diagnóstico do período anterior. Antes era silencioso: se a edge
+        // respondia 200 mas sem data[], _metaDataAnterior virava null e a IA
+        // dizia "cliente novo, sem histórico" pra clientes que TÊM histórico.
         if(_b.status==='fulfilled' && _b.value){
-          const row = _b.value.data && _b.value.data[0];
-          if(row) _metaDataAnterior = parseMetaRow(row);
+          const v = _b.value;
+          const row = v && v.data && v.data[0];
+          if(row){
+            _metaDataAnterior = parseMetaRow(row);
+          } else {
+            // Resposta 200 mas formato inesperado. Loga shape pra debugar
+            // sem barulhar usuário.
+            console.warn('[autoimport] periodo anterior veio sem data[]. shape=%o', v);
+          }
+        } else if(_b.status==='rejected'){
+          // Erro de rede ou da edge. Não bloqueia o resto (semHistorico=true e segue).
+          console.warn('[autoimport] periodo anterior rejeitado:', _b.reason);
+        } else if(!prevRange){
+          // Período não permite "anterior" (ex: this_year sem dado disponível).
+          console.log('[autoimport] periodo anterior não disponível pra este preset');
         }
         status.semHistorico = !_metaDataAnterior;
         if(_metaData){
@@ -2312,9 +2854,77 @@ function handleImg(type,idx){
         console.error('[autoimport métricas]',e);
         status.metricas='err';
       }
+      } else {
+        console.log('[autoimport] Meta pulado (platform=%s, account=%s)', _relPlatform, _metaAccount||'AUSENTE');
+        status.metricas='skip';
+      }
       updateStatus();
 
-      if(_autoimportCriativos){
+      // ── Google Ads ──
+      // Busca campaigns + keywords + devices em paralelo, calcula summary
+      // e persiste em D.googleAds. A seção "google" do secOrder renderiza.
+      if(_useGoogle && _googleCustomerId){
+        // Garante que a seção google aparece no secOrder (oculta por default).
+        // Insere logo após 'criativos' pra manter ordem narrativa.
+        if(!D.secOrder)D.secOrder=defaultSecOrder();
+        if(!D.secOrder.includes('google')){
+          const idxC=D.secOrder.indexOf('criativos');
+          if(idxC>=0) D.secOrder.splice(idxC+1,0,'google');
+          else D.secOrder.push('google');
+          saveData();
+        }
+        try{
+          showAutoStatus('⟳ Importando dados Google Ads…');
+          const _gdateRange = _autoperiod || 'last_7d';
+          const _gFetch = (action) => fetch(SURL+'/functions/v1/google-ads-campaigns', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${_sess}` },
+            body: JSON.stringify({ action, customer_id: _googleCustomerId, date_range: _gdateRange }),
+          }).then(r => r.ok ? r.json() : Promise.reject(new Error('HTTP '+r.status)));
+
+          const [_gCampsRes, _gKwsRes, _gDevsRes] = await Promise.allSettled([
+            _gFetch('campaigns'),
+            _gFetch('keywords'),
+            _gFetch('devices'),
+          ]);
+
+          const _gcamps = (_gCampsRes.status==='fulfilled' && _gCampsRes.value.campaigns) || [];
+          const _gkws   = (_gKwsRes.status==='fulfilled'   && _gKwsRes.value.keywords)    || [];
+          const _gdevs  = (_gDevsRes.status==='fulfilled'  && _gDevsRes.value.devices)    || [];
+
+          console.log('[autoimport Google] camps=%d | kws=%d | devs=%d', _gcamps.length, _gkws.length, _gdevs.length);
+
+          if(_gcamps.length){
+            const totalSpend = _gcamps.reduce((s,c)=>s+(c.spend||0),0);
+            const totalImpr  = _gcamps.reduce((s,c)=>s+(c.impressions||0),0);
+            const totalClks  = _gcamps.reduce((s,c)=>s+(c.clicks||0),0);
+            const totalConv  = _gcamps.reduce((s,c)=>s+(c.conversions||0),0);
+            D.googleAds = {
+              summary: {
+                spend: totalSpend,
+                impressions: totalImpr,
+                clicks: totalClks,
+                conversions: totalConv,
+                ctr: totalImpr > 0 ? totalClks / totalImpr : 0,
+                avg_cpc: totalClks > 0 ? totalSpend / totalClks : 0,
+                cpa: totalConv > 0 ? totalSpend / totalConv : 0,
+              },
+              topCampaigns: [..._gcamps].sort((a,b)=>(b.spend||0)-(a.spend||0)).slice(0, 8),
+              topKeywords:  [..._gkws].sort((a,b)=>(b.spend||0)-(a.spend||0)).slice(0, 10),
+              topDevices:   _gdevs,
+              customerId:   _googleCustomerId,
+              importedAt:   new Date().toISOString(),
+            };
+            status.googleCount = _gcamps.length;
+            saveData(); render();
+          }
+        }catch(e){
+          console.error('[autoimport Google]',e);
+        }
+      }
+      updateStatus();
+
+      if(_autoimportCriativos && _useMeta){
         _aguardandoCriativos=true; render();
         console.log('[autoimport criativos] _adsObjective=%s | _adsAudience=%s | _adsPreset=%s | _adsTopN=%d | _metaAccount=%s',
           _adsObjective, _adsAudience, _adsPreset, _adsTopN, _metaAccount);
@@ -2362,8 +2972,11 @@ function handleImg(type,idx){
       // P0-3: Se métricas falharam, NÃO roda IA (payload vazio = alucinação).
       // P0-novo: resumo e comparativo escrevem no MESMO campo (D.resumo).
       //         Serializar: resumo PRIMEIRO, depois comparativo anexa.
-      if(status.metricas !== 'ok'){
-        console.warn('[autoimport IA] pulada: métricas não importaram');
+      // Roda IA se Meta OK OU Google importado. Só pula se nenhum dos dois deu certo.
+      const _hasGoogleForIA = !!(D.googleAds && D.googleAds.summary);
+      const _hasMetaForIA   = status.metricas === 'ok';
+      if(!_hasMetaForIA && !_hasGoogleForIA){
+        console.warn('[autoimport IA] pulada: sem métricas Meta nem Google');
         status.ia='skip_no_metricas';
       } else {
       try{
@@ -2373,43 +2986,75 @@ function handleImg(type,idx){
 
         // Total de tarefas pra status: resumo + (comparativo?) + N criativos importados
         const criativosImportados = (D.criativos||[]).filter(c=>c && c.fromMeta).length;
-        status.iaTotal = 1 + (status.semHistorico ? 0 : 1) + criativosImportados;
+        // resumo (1) + comparativo (só se tem Meta + histórico) + criativos
+        status.iaTotal = 1 + ((!status.semHistorico && _hasMetaForIA) ? 1 : 0) + criativosImportados;
         status.iaDone = 0;
         updateStatus();
 
-        let okCount=0, errCount=0;
-        const bump=(ok)=>{ if(ok) okCount++; else errCount++; status.iaDone++; updateStatus(); };
+        // Contadores honestos: 'ok' = IA escreveu de fato; 'skip' = gestor já
+        // digitou ou campo já preenchido; 'err' = IA falhou. Status final só
+        // diz "✓ análise IA" quando houve pelo menos 1 ok real.
+        let okCount=0, errCount=0, skipCount=0;
+        const bump=(outcome)=>{
+          if(outcome==='ok') okCount++;
+          else if(outcome==='skip') skipCount++;
+          else errCount++;
+          status.iaDone++; updateStatus();
+        };
 
-        // ─── ONDA 1: Resumo + criativos em paralelo ───
+        // ─── ONDA 1: Resumo + criativos com THROTTLE ───
         // Resumo escreve em D.resumo; criativos em D.criativos[i].porqueGanha.
-        // SEM conflito de campo. Roda paralelo seguro.
-        const onda1 = [];
+        // SEM conflito de campo, mas LIMITAMOS a 2 chamadas simultâneas pra
+        // evitar burst que estoura rate limit (50 resumo, 200 criativo, 50
+        // comparativo) e satura a OpenAI (P1 #8 do review). 5 chamadas em <1s
+        // já causou 429 em testes.
+        // Trava a textarea do resumo enquanto IA está escrevendo (P1 #5).
+        setIAWritingLock(true, '✨ IA escrevendo o resumo… aguarde para editar');
+        const ONDA1_CONCURRENCY = 2;
+        const onda1Factories = [];
 
         // Tarefa: resumo
-        onda1.push((async()=>{
+        onda1Factories.push(()=>(async()=>{
           try{
+            // Payload multi-plataforma. Em relatórios Meta-only o google_ads
+            // fica null e a IA ignora. Em Google-only as métricas Meta ficam
+            // vazias e a IA fala só do Google.
+            const _hasGoogleIA = !!(D.googleAds && D.googleAds.summary);
             const r = await callIA('resumo',{
               cliente: D.cliente||'',
               periodo: D.periodo||'',
-              metricas: snapshotMetricasAtuais(),
-              metricas_anterior: snapshotMetricasAnterior(),
+              metricas: status.metricas==='ok' ? snapshotMetricasAtuais() : {},
+              metricas_anterior: status.metricas==='ok' ? snapshotMetricasAnterior() : {},
               historico: status.semHistorico ? 'sem_periodo_anterior' : 'com_periodo_anterior',
-            });
+              google_ads: _hasGoogleIA ? {
+                summary: D.googleAds.summary,
+                topCampaigns: (D.googleAds.topCampaigns||[]).slice(0, 5).map(c=>({
+                  name: c.name, type: c.type||c.advertising_channel_type, spend: c.spend, clicks: c.clicks, conversions: c.conversions,
+                })),
+                topKeywords: (D.googleAds.topKeywords||[]).slice(0, 5).map(k=>({
+                  keyword: k.keyword||k.text, match_type: k.match_type, spend: k.spend, clicks: k.clicks, conversions: k.conversions,
+                })),
+              } : null,
+            }, {silent:true});
             if(r && r.texto){
               const atual = (D.resumo||'').trim();
+              // Sempre registra o que a IA gerou em D.aiResumo (rastreio).
+              D.aiResumo = r.texto;
               if(atual === '' || atual === t0_resumo){
+                // Espelha no D.resumo (campo editável humano) quando vazio.
                 D.resumo = r.texto;
                 saveData(); render();
-                bump(true); return 'ok_resumo';
+                bump('ok'); return 'ok_resumo';
               } else {
-                console.log('[autoimport IA] resumo: gestor já digitou, pulando');
-                bump(true); return 'skipped_user_typed';
+                console.log('[autoimport IA] resumo: gestor já digitou, mantendo só em D.aiResumo');
+                saveData(); // grava aiResumo mesmo sem espelhar
+                bump('skip'); return 'skipped_user_typed';
               }
             }
-            bump(false); return null;
+            bump('err'); return null;
           }catch(e){
             console.error('[autoimport IA resumo]', e);
-            bump(false); return null;
+            bump('err'); return null;
           }
         })());
 
@@ -2417,8 +3062,9 @@ function handleImg(type,idx){
         for(let ci=0; ci<(D.criativos||[]).length; ci++){
           const c = D.criativos[ci];
           if(!c || !c.fromMeta) continue;
+          // wrap em factory: só instancia a promise quando o runner liberar slot
           const ciFix = ci;
-          onda1.push((async()=>{
+          onda1Factories.push(()=>(async()=>{
             try{
               const transcricao = c.videoId ? await transcreverVideoCriativo(c.videoId) : '';
               const outros = (D.criativos||[])
@@ -2451,42 +3097,75 @@ function handleImg(type,idx){
                 imagem_principal: imgPrincipal,
                 imagens_comparativas: imgsComp,
                 transcricao_principal: transcricao,
-              });
+              }, {silent:true});
               if(r && r.porqueGanha && D.criativos[ciFix]){
                 const atual = (D.criativos[ciFix].porqueGanha||'').trim();
                 if(atual === '' || atual === t0_porque[ciFix]){
                   D.criativos[ciFix].porqueGanha = r.porqueGanha;
                   saveData(); render();
-                  bump(true); return 'ok';
+                  bump('ok'); return 'ok';
                 } else {
                   console.log(`[autoimport IA] criativo ${ciFix+1}: gestor já digitou, pulando`);
-                  bump(true); return 'skipped_user_typed';
+                  bump('skip'); return 'skipped_user_typed';
                 }
               }
-              bump(false); return null;
+              bump('err'); return null;
             }catch(e){
               console.error(`[autoimport IA criativo-${ciFix+1}]`, e);
-              bump(false); return null;
+              bump('err'); return null;
             }
           })());
         }
 
-        // Espera onda 1 completar antes de lançar comparativo (que escreve em D.resumo)
-        await Promise.allSettled(onda1);
+        // Runner com concorrência limitada: roda ONDA1_CONCURRENCY factories
+        // simultâneas. Cada vez que uma termina, puxa a próxima da fila.
+        // Evita burst de 5+ chamadas simultâneas à edge IA.
+        await (async function runOnda1(){
+          let i = 0;
+          const active = new Set();
+          const launchNext = () => {
+            if(i >= onda1Factories.length) return null;
+            const factory = onda1Factories[i++];
+            const p = factory().finally(()=>{ active.delete(p); });
+            active.add(p);
+            return p;
+          };
+          // Preenche slots iniciais
+          while(active.size < ONDA1_CONCURRENCY && i < onda1Factories.length){
+            launchNext();
+          }
+          // Conforme termina, lança próxima
+          while(active.size > 0){
+            await Promise.race(active);
+            while(active.size < ONDA1_CONCURRENCY && i < onda1Factories.length){
+              launchNext();
+            }
+          }
+        })();
 
         // ─── ONDA 2: Comparativo ───
-        // Só se houver período anterior. Anexa ao D.resumo (já com o texto do resumo).
-        // Re-captura snapshot do D.resumo APÓS onda 1 — o "estado pós-IA" é
-        // referência pra detectar se gestor digitou após a onda 1.
-        if(!status.semHistorico){
+        // Só roda em relatórios Meta ou Meta+Google (precisa snapshot Meta anterior).
+        // Em Google-only ainda não temos comparativo Google — fica como roadmap.
+        if(!status.semHistorico && _hasMetaForIA){
           const t1_resumo = (D.resumo||'').trim();
+          // Em relatórios Meta+Google, manda também o atual Google como CONTEXTO
+          // (sem comparar — não temos histórico Google). A IA usa pra mencionar
+          // o canal sem inventar variação. Em Meta-only, fica null.
+          const _googleContextoComp = _hasGoogleForIA ? {
+            summary: D.googleAds.summary,
+            topCampaigns: (D.googleAds.topCampaigns||[]).slice(0, 3).map(c=>({
+              name: c.name, type: c.type||c.advertising_channel_type, spend: c.spend, conversions: c.conversions,
+            })),
+            obs: 'sem_historico_google_disponivel',
+          } : null;
           try{
             const r = await callIA('comparativo',{
               cliente: D.cliente||'',
               periodo: D.periodo||'',
               metricas: snapshotMetricasAtuais(),
               metricas_anterior: snapshotMetricasAnterior(),
-            });
+              google_ads: _googleContextoComp,
+            }, {silent:true});
             if(r){
               const blocos=[];
               if(r.melhorou?.length) blocos.push(r.melhorou.map(b=>`✓ ${b}`).join(' | '));
@@ -2494,35 +3173,46 @@ function handleImg(type,idx){
               if(r.neutro?.length)   blocos.push(r.neutro.map(b=>`— ${b}`).join(' | '));
               const compTxt = blocos.join('\n');
               if(compTxt){
+                // Sempre grava em aiComparativo (rastreio).
+                D.aiComparativo = compTxt;
                 const atual = (D.resumo||'').trim();
                 // Anexa SE: campo continua igual ao que a onda 1 deixou (gestor não tocou)
                 if(atual === t1_resumo){
                   D.resumo = (D.resumo ? D.resumo + '\n' + compTxt : compTxt);
                   saveData(); render();
-                  bump(true);
+                  bump('ok');
                 } else {
-                  console.log('[autoimport IA] comparativo: gestor já digitou após resumo, pulando');
-                  bump(true); // não é erro — só skip
+                  console.log('[autoimport IA] comparativo: gestor já digitou após resumo, mantendo só em D.aiComparativo');
+                  saveData();
+                  bump('skip');
                 }
               } else {
-                bump(false);
+                bump('err');
               }
             } else {
-              bump(false);
+              bump('err');
             }
           }catch(e){
             console.error('[autoimport IA comparativo]', e);
-            bump(false);
+            bump('err');
           }
         }
 
-        // Status final
-        if(errCount===0) status.ia='ok';
-        else if(okCount===0) status.ia='err';
+        // Status final HONESTO:
+        // - 'ok'       = pelo menos 1 escrita real, sem erros
+        // - 'err'      = 0 escritas reais e houve erro
+        // - 'skipped'  = 0 escritas reais, mas tudo foi pulado (campos já preenchidos)
+        // - 'partial'  = mix de ok + err
+        if(okCount > 0 && errCount === 0) status.ia='ok';
+        else if(okCount === 0 && errCount === 0 && skipCount > 0) status.ia='skipped';
+        else if(okCount === 0) status.ia='err';
         else status.ia='partial';
       }catch(e){
         console.error('[autoimport IA]', e);
         status.ia='err';
+      } finally {
+        // Libera a textarea independente de sucesso/falha.
+        setIAWritingLock(false);
       }
       }
       updateStatus();
@@ -2562,198 +3252,40 @@ function voltarDashboard(){
 // vê esses botões (CSS view-only esconde). Status: botão muda pra "⟳ Gerando…"
 // durante a chamada; em caso de erro, alert; sucesso, preenche o campo e
 // dispara saveData() pra autosalvar.
-async function callIA(mode, payload){
-  if(!_sess) { alert('Faça login para usar IA.'); return null; }
-  try{
-    const res = await fetch(SURL+'/functions/v1/relatorio-ia',{
-      method:'POST',
-      headers:{'Content-Type':'application/json','apikey':ANON,'Authorization':'Bearer '+_sess},
-      body: JSON.stringify({ session_token:_sess, mode, ...payload })
-    });
-    const j = await res.json().catch(()=>({}));
-    if(!res.ok || j.error){
-      alert('Erro da IA: '+(j.error||res.status));
-      return null;
-    }
-    return j.result;
-  }catch(e){
-    alert('Falha na IA: '+(e&&e.message?e.message:'tente novamente.'));
-    return null;
-  }
-}
-
-// Coleta métricas atuais do D em formato compacto pra IA
+//
+// ⚠ callIA, setIAWritingLock, transcreverVideoCriativo, gerarResumoIA,
+//    gerarPorqueGanhaIA e gerarComparativoIA foram EXTRAÍDAS pra
+//    /public/relatorio-ia.js (carregado via <script src=>). Aqui mantemos
+//    APENAS os helpers que precisam de acesso direto ao D (snapshot*).
+// Coleta métricas atuais do D em formato compacto pra IA.
+// IMPORTANTE: descarta linhas sem resultado preenchido — passar valores vazios
+// pra IA gera resumos genéricos ("entregamos resultados consistentes") porque
+// ela tenta racionalizar uma tabela vazia em vez de admitir que não tem dado.
 function snapshotMetricasAtuais(){
   const out = {};
   (D.metricas||[]).forEach(m=>{
     if(!m.nome) return;
-    out[m.nome] = { resultado: m.resultado||'', meta: m.meta||'', semAnt: m.semAnt||'', variacao: m.vsPercent||'' };
+    const r = String(m.resultado||'').trim();
+    if(!r) return; // ⚠ sem resultado = não envia
+    out[m.nome] = { resultado: r };
+    const meta = String(m.meta||'').trim();
+    const sem  = String(m.semAnt||'').trim();
+    const v    = String(m.vsPercent||'').trim();
+    if(meta) out[m.nome].meta = meta;
+    if(sem)  out[m.nome].semAnt = sem;
+    if(v)    out[m.nome].variacao = v;
   });
   return out;
 }
 function snapshotMetricasAnterior(){
   const out = {};
   (D.metricas||[]).forEach(m=>{
-    if(!m.nome || !m.semAnt) return;
-    out[m.nome] = { resultado: m.semAnt };
+    if(!m.nome) return;
+    const sem = String(m.semAnt||'').trim();
+    if(!sem) return;
+    out[m.nome] = { resultado: sem };
   });
   return out;
-}
-
-async function gerarResumoIA(){
-  const btn = document.getElementById('btn-ia-resumo');
-  const ta = document.getElementById('resumo-textarea');
-  if(!ta) return;
-  // Confirma antes de sobrescrever texto já digitado.
-  if(D.resumo && D.resumo.trim()){
-    if(!confirm('Sobrescrever o resumo atual com a versão gerada pela IA?')) return;
-  }
-  const oldHTML = btn ? btn.innerHTML : '';
-  if(btn){ btn.innerHTML='⟳ Gerando…'; btn.disabled=true; }
-  const result = await callIA('resumo', {
-    cliente: D.cliente||'',
-    periodo: D.periodo||'',
-    metricas: snapshotMetricasAtuais(),
-    metricas_anterior: snapshotMetricasAnterior(),
-  });
-  if(btn){ btn.innerHTML=oldHTML; btn.disabled=false; }
-  if(result && result.texto){
-    D.resumo = result.texto;
-    ta.value = result.texto;
-    saveData();
-  }
-}
-
-async function transcreverVideoCriativo(videoId){
-  if(!videoId || !_sess) return '';
-  try{
-    const res = await fetch(SURL+'/functions/v1/relatorio-transcrever-video',{
-      method:'POST',
-      headers:{'Content-Type':'application/json','apikey':ANON,'Authorization':'Bearer '+_sess},
-      body: JSON.stringify({ session_token:_sess, video_id: videoId })
-    });
-    const j = await res.json().catch(()=>({}));
-    if(!res.ok){
-      // 413 (vídeo grande) e 404 (vídeo deletado) são esperados — não bloqueiam IA
-      console.warn('[transcrever] não disponível:', j.error||res.status);
-      return '';
-    }
-    return (j && j.texto) ? String(j.texto) : '';
-  }catch(e){
-    console.warn('[transcrever] falhou, segue sem transcrição:', e);
-    return '';
-  }
-}
-
-async function gerarPorqueGanhaIA(ci){
-  const c = (D.criativos||[])[ci];
-  if(!c) return;
-  if(c.porqueGanha && c.porqueGanha.trim()){
-    if(!confirm('Sobrescrever a justificativa atual com a versão da IA?')) return;
-  }
-  const ta = document.getElementById('porque-ganha-'+ci);
-  // Procura o botão IA do card pra mostrar loading durante transcrição+IA
-  const card = ta ? ta.closest('.criativo-card') : null;
-  const btn = card ? card.querySelector('button[onclick^="gerarPorqueGanhaIA"]') : null;
-  const oldHTML = btn ? btn.innerHTML : '';
-  const setLoading=(txt)=>{ if(btn){ btn.innerHTML=txt; btn.disabled=true; } };
-  const clearLoading=()=>{ if(btn){ btn.innerHTML=oldHTML; btn.disabled=false; } };
-
-  // 1) Transcrição do vídeo principal (se for vídeo). Bloqueante — IA usa o texto.
-  let transcricao = '';
-  if(c.videoId){
-    setLoading('⟳ Transcrevendo áudio…');
-    transcricao = await transcreverVideoCriativo(c.videoId);
-  }
-
-  setLoading('⟳ Analisando…');
-
-  // Monta payload com imagem principal + criativos comparativos pra IA
-  // poder analisar visualmente E contrastar com os outros.
-  // IMPORTANTE: cada comparativo carrega a POSICAO no ranking pra IA saber
-  // que está comparando contra quem está acima ou abaixo. Sem isso a IA trata
-  // todos como vencedores e gera texto idêntico pro 1º e pro 2º.
-  const criativosArr = D.criativos||[];
-  const outros = criativosArr
-    .map((x,idx)=>({x,idx}))
-    .filter(o=>o.idx!==ci && o.x && (o.x.img||o.x.nome))
-    .map(o=>({
-      posicao: o.idx+1,
-      nome: o.x.nome||'',
-      metricas: (o.x.chips||[]).reduce((acc,ch)=>{ if(ch.label) acc[ch.label]=ch.val||''; return acc; },{}),
-      tituloAd: o.x.tituloAd||'',
-      legenda: o.x.legenda||'',
-    }));
-  const imgsComp = criativosArr
-    .map((x,idx)=>({x,idx}))
-    .filter(o=>o.idx!==ci && o.x && o.x.img && /^https?:\/\//i.test(o.x.img))
-    .map(o=>o.x.img)
-    .slice(0,3); // limita a 3 pra não estourar tokens
-  // Imagem principal: só envia se for URL pública (data URLs base64 não rolam em vision via responses API)
-  const imgPrincipal = (c.img && /^https?:\/\//i.test(c.img)) ? c.img : '';
-
-  const result = await callIA('criativo', {
-    cliente: D.cliente||'',
-    periodo: D.periodo||'',
-    posicao: ci+1,
-    total_criativos: criativosArr.length,
-    criativo: {
-      nome: c.nome||'',
-      metricas: (c.chips||[]).reduce((acc,ch)=>{ if(ch.label) acc[ch.label]=ch.val||''; return acc; },{}),
-      tituloAd: c.tituloAd||'',
-      legenda: c.legenda||'',
-    },
-    criativos_comparativos: outros,
-    imagem_principal: imgPrincipal,
-    imagens_comparativas: imgsComp,
-    transcricao_principal: transcricao,
-  });
-  clearLoading();
-  if(result && result.porqueGanha){
-    D.criativos[ci].porqueGanha = result.porqueGanha;
-    if(ta) ta.value = result.porqueGanha;
-    saveData();
-  }
-}
-
-async function gerarComparativoIA(){
-  // Idempotência: se já tem comparativo (bullets ✓/⚠/—) ou resumo, confirma.
-  // Detecta presença de bullets típicos pra não pedir confirm em campo vazio.
-  const txt = (D.resumo||'').trim();
-  const temBullets = /[✓⚠—]\s/.test(txt);
-  if(temBullets){
-    if(!confirm('Já existe uma análise comparativa no resumo. Adicionar mais uma versão da IA?')) return;
-  } else if(txt){
-    if(!confirm('O resumo já tem texto. Anexar a análise comparativa abaixo?')) return;
-  }
-  // Tem que haver dado anterior pra fazer sentido
-  if(!Object.keys(snapshotMetricasAnterior()).length){
-    alert('Não há dados do período anterior nas métricas. Preencha a coluna "Semana anterior" primeiro.');
-    return;
-  }
-  const result = await callIA('comparativo', {
-    cliente: D.cliente||'',
-    periodo: D.periodo||'',
-    metricas: snapshotMetricasAtuais(),
-    metricas_anterior: snapshotMetricasAnterior(),
-  });
-  if(!result) return;
-  // Formata como texto pra colar no resumo (junto com o que já tinha)
-  const partes = [];
-  if(result.melhorou && result.melhorou.length){
-    partes.push(result.melhorou.map(b=>'✓ '+b).join(' | '));
-  }
-  if(result.piorou && result.piorou.length){
-    partes.push(result.piorou.map(b=>'⚠ '+b).join(' | '));
-  }
-  if(result.neutro && result.neutro.length){
-    partes.push(result.neutro.map(b=>'— '+b).join(' | '));
-  }
-  const novoTexto = (D.resumo ? D.resumo + '\n\n' : '') + partes.join('\n');
-  D.resumo = novoTexto;
-  const ta = document.getElementById('resumo-textarea');
-  if(ta) ta.value = novoTexto;
-  saveData();
 }
 
 // ── META IMPORT ───────────────────────────────────────────────────────────────

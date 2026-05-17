@@ -44,9 +44,12 @@ Deno.serve(async (req) => {
     if (!source_url || typeof source_url !== 'string') {
       return json(req, { error: 'source_url obrigatório.' }, 400)
     }
-    // Só http(s). Bloqueia data:, file:, javascript:, etc.
-    if (!/^https?:\/\//i.test(source_url)) {
-      return json(req, { error: 'URL inválida.' }, 400)
+    // Aceita http(s) (Meta thumbs, etc) OU data:image/...;base64,... (upload local
+    // do gestor). Bloqueia file:, javascript:, etc.
+    const isDataUri = /^data:image\/(jpeg|jpg|png|webp|gif);base64,/i.test(source_url)
+    const isHttp = /^https?:\/\//i.test(source_url)
+    if (!isDataUri && !isHttp) {
+      return json(req, { error: 'URL inválida. Use http(s) ou data:image/...;base64,...' }, 400)
     }
 
     const SURL = Deno.env.get('SUPABASE_URL')!
@@ -63,27 +66,39 @@ Deno.serve(async (req) => {
 
     if (!sessao) return json(req, { error: 'Sessão expirada.' }, 401)
 
-    // Baixa a imagem com timeout
-    const ctrl = new AbortController()
-    const timer = setTimeout(() => ctrl.abort(), FETCH_TIMEOUT_MS)
-    let res: Response
-    try {
-      res = await fetch(source_url, { signal: ctrl.signal })
-    } finally {
-      clearTimeout(timer)
+    // Carrega bytes da imagem — http(s) faz fetch; data: decodifica base64.
+    let contentType: string
+    let buf: Uint8Array
+    if (isDataUri) {
+      const match = source_url.match(/^data:(image\/[a-z]+);base64,(.+)$/i)
+      if (!match) return json(req, { error: 'data URI malformada.' }, 400)
+      contentType = match[1].toLowerCase()
+      // Deno tem atob global
+      const bin = atob(match[2])
+      const tmp = new Uint8Array(bin.length)
+      for (let i = 0; i < bin.length; i++) tmp[i] = bin.charCodeAt(i)
+      buf = tmp
+    } else {
+      const ctrl = new AbortController()
+      const timer = setTimeout(() => ctrl.abort(), FETCH_TIMEOUT_MS)
+      let res: Response
+      try {
+        res = await fetch(source_url, { signal: ctrl.signal })
+      } finally {
+        clearTimeout(timer)
+      }
+      if (!res.ok) {
+        return json(req, { error: `Falha ao baixar imagem: HTTP ${res.status}` }, 502)
+      }
+      contentType = res.headers.get('content-type') || 'image/jpeg'
+      if (!contentType.startsWith('image/')) {
+        return json(req, { error: `Content-Type inesperado: ${contentType}` }, 400)
+      }
+      buf = new Uint8Array(await res.arrayBuffer())
     }
-
-    if (!res.ok) {
-      return json(req, { error: `Falha ao baixar imagem: HTTP ${res.status}` }, 502)
-    }
-    const contentType = res.headers.get('content-type') || 'image/jpeg'
-    if (!contentType.startsWith('image/')) {
-      return json(req, { error: `Content-Type inesperado: ${contentType}` }, 400)
-    }
-    const buf = new Uint8Array(await res.arrayBuffer())
     if (buf.byteLength === 0) return json(req, { error: 'Imagem vazia.' }, 400)
     if (buf.byteLength > MAX_BYTES) {
-      return json(req, { error: `Imagem maior que ${MAX_BYTES} bytes.` }, 400)
+      return json(req, { error: `Imagem maior que ${MAX_BYTES} bytes (${buf.byteLength}).` }, 400)
     }
 
     // Path determinístico — mesma URL produz mesmo arquivo

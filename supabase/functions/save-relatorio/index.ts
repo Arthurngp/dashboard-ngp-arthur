@@ -9,12 +9,31 @@ const errMsg = (e: unknown): string => {
   return String(obj.message || obj.details || obj.hint || obj.code || JSON.stringify(e))
 }
 
+// Limite de payload: relatórios podem ter base64 de imagens nos campos antigos.
+// Hoje subimos pro Storage e guardamos URL — payload caiu pra <500KB típicos.
+// 5MB cobre relatórios extensos sem permitir flood/DoS.
+const MAX_PAYLOAD_BYTES = 5 * 1024 * 1024
+
 Deno.serve(async (req) => {
   const cors = handleCors(req)
   if (cors) return cors
 
   try {
-    const { session_token, cloudId, dados, titulo, periodo, cliente_username, cliente_id: cliente_id_in, data_inicio, data_fim } = await req.json()
+    // Lê texto pra checar tamanho antes do parse JSON.
+    const raw = await req.text()
+    if (raw.length > MAX_PAYLOAD_BYTES) {
+      return json(req, { error: `Relatório muito grande (${raw.length} bytes, máx ${MAX_PAYLOAD_BYTES}). Reduza anexos/imagens.` }, 413)
+    }
+    let parsed: Record<string, unknown>
+    try {
+      parsed = JSON.parse(raw)
+    } catch {
+      return json(req, { error: 'JSON inválido.' }, 400)
+    }
+    const { session_token, cloudId, dados, titulo, periodo, cliente_username, cliente_id: cliente_id_in, data_inicio, data_fim } = parsed as {
+      session_token?: string; cloudId?: string; dados?: unknown; titulo?: string; periodo?: string;
+      cliente_username?: string; cliente_id?: string; data_inicio?: string; data_fim?: string;
+    }
 
     if (!session_token) {
       return json(req, { error: 'Sessão inválida.' }, 401)

@@ -43,7 +43,7 @@ export function useDashboard() {
 
   // ── Screens & tabs ──────────────────────────────────────────────────────
   const [screen, setScreen]       = useState<Screen>('select')
-  const [activeTab, setActiveTab] = useState<Tab>('resumo')
+  const [activeTab, setActiveTab] = useState<Tab>('resumo-geral')
 
   // ── Account selector ────────────────────────────────────────────────────
   const [clients, setClients]     = useState<Cliente[]>([])
@@ -497,8 +497,9 @@ export function useDashboard() {
     const vName = sessionStorage.getItem('ngp_viewing_name')
     const vUser = sessionStorage.getItem('ngp_viewing_username')
     const vId   = sessionStorage.getItem('ngp_viewing_id')
+    const vGoogle = sessionStorage.getItem('ngp_viewing_google_ads')
     if (vAcc && vName && vUser) {
-      setViewing({ account: vAcc, name: vName, username: vUser, id: vId || '' })
+      setViewing({ account: vAcc, name: vName, username: vUser, id: vId || '', googleAdsCustomerId: vGoogle || null })
       setScreen('dashboard')
     }
     loadClients()
@@ -547,13 +548,24 @@ export function useDashboard() {
 
   // ─── Actions ─────────────────────────────────────────────────────────────
   const selectAccount = (c: Cliente) => {
-    const acc = { account: c.meta_account_id || '', name: c.nome, username: c.username, id: c.id }
+    const acc = {
+      account: c.meta_account_id || '',
+      name: c.nome,
+      username: c.username,
+      id: c.id,
+      googleAdsCustomerId: c.google_ads_customer_id || null,
+    }
     setViewing(acc)
     setScreen('dashboard')
     sessionStorage.setItem('ngp_viewing_account', acc.account)
     sessionStorage.setItem('ngp_viewing_name', acc.name)
     sessionStorage.setItem('ngp_viewing_username', acc.username)
     sessionStorage.setItem('ngp_viewing_id', acc.id)
+    if (acc.googleAdsCustomerId) {
+      sessionStorage.setItem('ngp_viewing_google_ads', acc.googleAdsCustomerId)
+    } else {
+      sessionStorage.removeItem('ngp_viewing_google_ads')
+    }
   }
 
   function toggleMetric(id: string) {
