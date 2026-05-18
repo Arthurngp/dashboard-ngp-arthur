@@ -3701,7 +3701,7 @@ async function fetchMetaInsights(){
   }
 }
 
-function fillMetaIntoReport(){
+async function fillMetaIntoReport(){
   if(!_metaData)return;
   META_METRIC_OPTS.forEach(m=>{
     if(!_metaSelKeys.has(m.key))return;
@@ -3711,8 +3711,90 @@ function fillMetaIntoReport(){
   const r=rangeFromMeta(_metaMode,_metaPreset,_metaFrom,_metaUntil);
   if(r) D.periodo=r;
   saveData();render();
+
+  // ── ALSO: importa Google Ads se o cliente tem customer_id vinculado ─────
+  // Antes, o botão "Importar dados Meta" só trazia Meta — quem queria Google
+  // tinha que ir em Campanhas Segmentadas e clicar Importar+IA em cada uma.
+  // Agora o fluxo é unificado: 1 clique traz Meta E Google.
+  await _importGoogleAlsoIntoReport();
+
   document.getElementById('meta-ok').className='meta-ok show';
   setTimeout(closeMetaImport,1500);
+}
+
+// Busca Google Ads e popula D.googleAds (mesmo schema usado pelo autoimport).
+// Resolve customer_id em cascata: ?gid → D.googleAds.customerId → lookup tabela clientes.
+// Falha silenciosa: se não houver Google vinculado, nada acontece (não é erro).
+async function _importGoogleAlsoIntoReport(){
+  if(!_sess) return;
+  const urlParams = new URLSearchParams(window.location.search);
+  let gid = (urlParams.get('gid') || (D.googleAds && D.googleAds.customerId) || '').replace(/\D/g,'');
+  if(!gid && _clienteId){
+    try{
+      const lookupRes = await fetch(
+        SURL + '/rest/v1/clientes?id=eq.' + encodeURIComponent(_clienteId) + '&select=google_ads_customer_id',
+        { headers: { 'apikey': ANON, 'Authorization': 'Bearer ' + _sess } }
+      );
+      if(lookupRes.ok){
+        const arr = await lookupRes.json().catch(()=>[]);
+        const fromDb = (arr && arr[0] && arr[0].google_ads_customer_id) || '';
+        if(fromDb) gid = String(fromDb).replace(/\D/g,'');
+      }
+    }catch(e){ console.warn('[fillMeta+Google] lookup falhou:', e); }
+  }
+  if(!gid){
+    console.log('[fillMeta+Google] cliente sem Google Ads vinculado — pulando');
+    return;
+  }
+  // Busca campaigns + keywords + devices em paralelo (mesmo padrão do autoimport).
+  const dateRange = _metaMode==='custom' ? 'last_30d' : _metaPreset || 'last_7d';
+  const _gFetch = (action) => fetch(SURL+'/functions/v1/google-ads-campaigns', {
+    method: 'POST',
+    headers: { 'Content-Type':'application/json', 'Authorization':'Bearer '+_sess },
+    body: JSON.stringify({ action, customer_id: gid, date_range: dateRange }),
+  }).then(r => r.ok ? r.json() : Promise.reject(new Error('HTTP '+r.status)));
+  try{
+    const [campsRes, kwsRes, devsRes] = await Promise.allSettled([
+      _gFetch('campaigns'),
+      _gFetch('keywords'),
+      _gFetch('devices'),
+    ]);
+    const _gcamps = (campsRes.status==='fulfilled' && campsRes.value.campaigns) || [];
+    const _gkws   = (kwsRes.status==='fulfilled'   && kwsRes.value.keywords)    || [];
+    const _gdevs  = (devsRes.status==='fulfilled'  && devsRes.value.devices)    || [];
+    if(!_gcamps.length){
+      console.log('[fillMeta+Google] nenhuma campanha Google no período');
+      return;
+    }
+    const totalSpend  = _gcamps.reduce((s,c)=>s+(c.spend||0),0);
+    const totalImpr   = _gcamps.reduce((s,c)=>s+(c.impressions||0),0);
+    const totalClks   = _gcamps.reduce((s,c)=>s+(c.clicks||0),0);
+    const totalConv   = _gcamps.reduce((s,c)=>s+(c.conversions||0),0);
+    D.googleAds = {
+      summary: {
+        spend: totalSpend, impressions: totalImpr, clicks: totalClks, conversions: totalConv,
+        ctr: totalImpr>0 ? totalClks/totalImpr : 0,
+        avg_cpc: totalClks>0 ? totalSpend/totalClks : 0,
+        cpa: totalConv>0 ? totalSpend/totalConv : 0,
+      },
+      topCampaigns: [..._gcamps].sort((a,b)=>(b.spend||0)-(a.spend||0)).slice(0,8),
+      topKeywords:  [..._gkws].sort((a,b)=>(b.spend||0)-(a.spend||0)).slice(0,10),
+      topDevices:   _gdevs,
+      customerId:   gid,
+      importedAt:   new Date().toISOString(),
+    };
+    // Garante que a seção 'google' aparece no secOrder (oculta por default).
+    if(!D.secOrder) D.secOrder = defaultSecOrder();
+    if(!D.secOrder.includes('google')){
+      const idxC = D.secOrder.indexOf('criativos');
+      if(idxC>=0) D.secOrder.splice(idxC+1, 0, 'google');
+      else D.secOrder.push('google');
+    }
+    saveData(); render();
+    console.log('[fillMeta+Google] importado:', _gcamps.length, 'camps,', _gkws.length, 'keywords');
+  }catch(e){
+    console.warn('[fillMeta+Google] erro Google (Meta foi OK):', e);
+  }
 }
 
 // ── META + COMPARAÇÃO ─────────────────────────────────────────────────────────
