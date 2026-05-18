@@ -135,10 +135,17 @@
     if (!on) { _lockLabel = ''; return; }
     const ta = document.getElementById('resumo-textarea');
     if (!ta) return;
+    // FIX: usar position:absolute com coordenadas RELATIVAS AO DOCUMENTO
+    // (não viewport). Antes era position:fixed + rect.left/top que são
+    // coordenadas de viewport — overlay ficava parado enquanto a página
+    // rolava. Absolute + (scrollX/Y + rect) faz o overlay acompanhar o
+    // scroll naturalmente como qualquer elemento normal.
     const rect = ta.getBoundingClientRect();
+    const docLeft = rect.left + window.scrollX;
+    const docTop  = rect.top  + window.scrollY;
     const ov = document.createElement('div');
     ov.id = 'ia-write-overlay';
-    ov.style.cssText = `position:fixed;left:${rect.left}px;top:${rect.top}px;width:${rect.width}px;height:${rect.height}px;background:rgba(124,58,237,0.06);backdrop-filter:blur(1px);-webkit-backdrop-filter:blur(1px);border:1.5px dashed #9333EA;border-radius:8px;z-index:400;pointer-events:auto;display:flex;align-items:center;justify-content:center;color:#6D28D9;font-weight:700;font-size:12px;font-family:Sora,sans-serif;cursor:pointer;text-align:center;padding:8px`;
+    ov.style.cssText = `position:absolute;left:${docLeft}px;top:${docTop}px;width:${rect.width}px;height:${rect.height}px;background:rgba(124,58,237,0.06);backdrop-filter:blur(1px);-webkit-backdrop-filter:blur(1px);border:1.5px dashed #9333EA;border-radius:8px;z-index:400;pointer-events:auto;display:flex;align-items:center;justify-content:center;color:#6D28D9;font-weight:700;font-size:12px;font-family:Sora,sans-serif;cursor:pointer;text-align:center;padding:8px`;
     ov.title = 'Clique para liberar a edição';
     ov.textContent = _lockLabel || '✨ IA escrevendo o resumo… você poderá editar quando terminar';
     // Escape hatch: clicar no overlay libera. Útil quando IA trava e usuário

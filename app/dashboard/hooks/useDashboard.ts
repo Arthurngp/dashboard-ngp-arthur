@@ -3,6 +3,7 @@ import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { useRouter } from 'next/navigation'
 import { getSession } from '@/lib/auth'
 import { metaCall } from '@/lib/meta'
+import { metaCallCached, invalidateMetaCache } from '@/lib/meta-cached'
 import { fetchWithRetry } from '@/lib/fetch-utils'
 import { parseIns, fmt, fmtN, fmtI } from '@/lib/utils'
 import { clearSession } from '@/lib/auth'
@@ -56,6 +57,10 @@ export function useDashboard() {
   const [overviewAutoRefresh, setOverviewAutoRefresh] = useState(false)
   const [overviewLastUpdated, setOverviewLastUpdated] = useState('')
   const overviewRequestRef = useRef(0)
+  // overviewBypassRef: quando gestor clica "↻ Atualizar", seta pra true antes
+  // de loadOverviewData(). loadClientOverview lê esse ref pra forçar bypass
+  // do cache. Reseta pra false no finally.
+  const overviewBypassRef = useRef(false)
   const lastSnapshotSaveRef = useRef('')
 
   const [visibleOverviewCols, setVisibleOverviewCols] = useState<string[]>(() => {
@@ -214,28 +219,34 @@ export function useDashboard() {
 
       try {
         const fieldsToFetch = getRequiredApiFields(visibleMetrics).join(',')
+        // metaCallCached: cache de 30min em memória + localStorage.
+        // Quando gestor abre dashboard → 5 gestores diferentes navegando o mesmo
+        // dia = 1 só request real ao Meta, 4 cache hits. Bypass via refresh manual
+        // (botão "↻ Atualizar"). bypass={overviewBypass} controla isso.
         const [currentData, previousData] = await Promise.all([
-          metaCall('insights', {
+          metaCallCached('insights', {
             level: 'account',
             fields: fieldsToFetch,
             limit: '1',
             ...dp,
-          }, client.meta_account_id),
+          }, client.meta_account_id, { bypass: overviewBypassRef.current }),
           cmpDp
-            ? metaCall('insights', {
+            ? metaCallCached('insights', {
                 level: 'account',
                 fields: fieldsToFetch,
                 limit: '1',
                 ...cmpDp,
-              }, client.meta_account_id)
+              }, client.meta_account_id, { bypass: overviewBypassRef.current })
             : Promise.resolve(null),
         ])
 
         return {
           client,
-          current: normalizeOverviewMetrics(currentData?.data?.[0] as Record<string, unknown> | undefined),
-          previous: previousData?.data?.[0]
-            ? normalizeOverviewMetrics(previousData.data[0] as Record<string, unknown>)
+          // Type assertion: metaCallCached retorna unknown porque o cache não
+          // preserva tipo. Estrutura é mesma de metaCall.
+          current: normalizeOverviewMetrics((currentData as { data?: Record<string, unknown>[] })?.data?.[0]),
+          previous: (previousData as { data?: Record<string, unknown>[] })?.data?.[0]
+            ? normalizeOverviewMetrics((previousData as { data: Record<string, unknown>[] }).data[0])
             : null,
           status: 'ok',
         }
@@ -251,14 +262,14 @@ export function useDashboard() {
     }
 
     try {
-      const chunkSize = 4
-      for (let index = 0; index < orderedClients.length; index += chunkSize) {
-        const batch = orderedClients.slice(index, index + chunkSize)
-        const batchResults = await Promise.all(batch.map(loadClientOverview))
-        rows.push(...batchResults)
-        if (overviewRequestRef.current !== requestId) return
-        setOverviewRows([...rows])
-      }
+      // PARALELISMO TOTAL: antes era chunkSize=4 (5 rodadas serializadas em 20 clientes).
+      // Agora dispara todos de uma vez. Como ~80% vem do cache, sobrecarga real ao
+      // Meta API é baixíssima. Meta API aguenta dezenas de requests paralelos por
+      // app — não tem rate limit a esse nível por accountId distinto.
+      const allResults = await Promise.all(orderedClients.map(loadClientOverview))
+      if (overviewRequestRef.current !== requestId) return
+      rows.push(...allResults)
+      setOverviewRows([...rows])
 
       if (overviewRequestRef.current !== requestId) return
       setOverviewLastUpdated(new Date().toISOString())
@@ -267,6 +278,7 @@ export function useDashboard() {
       setOverviewError(error instanceof Error ? error.message : 'Erro ao carregar a visão geral.')
     } finally {
       if (overviewRequestRef.current === requestId) setOverviewLoading(false)
+      overviewBypassRef.current = false  // reseta bypass após uso
     }
   }, [clients, period, cmpPeriodParam, visibleMetrics])
 
@@ -537,6 +549,16 @@ export function useDashboard() {
     if (screen !== 'select' || !clients.length) return
     loadOverviewData(period, cmpPeriodParam)
   }, [screen, clients.length, period, cmpPeriodParam, loadOverviewData])
+
+  // Refresh manual: invalida cache do overview e recarrega da API.
+  // Chamado pelo botão "↻ Atualizar" na UI quando o gestor suspeita de dado velho.
+  const refreshOverview = useCallback(() => {
+    overviewBypassRef.current = true
+    // Invalida cache local de TODOS os clientes Meta (sem account_id = limpa tudo).
+    // Em runtime real, isso afeta ~20-50 entries de localStorage — operação rápida.
+    invalidateMetaCache()
+    loadOverviewData(period, cmpPeriodParam)
+  }, [loadOverviewData, period, cmpPeriodParam])
 
   useEffect(() => {
     if (!overviewAutoRefresh || screen !== 'select') return
@@ -896,6 +918,7 @@ export function useDashboard() {
     modalOpen, setModalOpen, modalEdit, setModalEdit, modalLoading, setModalLoading, modalError, setModalError,
     tableSearch, setTableSearch, tableStatus, setTableStatus,
     loadOverviewData, loadData, loadTimeSeries, loadBreakdown, loadAllCampaignData, loadPreview, loadRelatorios, loadBudgetAlerts,
+    refreshOverview,  // botão "↻ Atualizar" no overview
     // Actions
     saveClient, deleteClient, archiveClient, backToSelect, onPeriodApply, switchTab, toggleCamp, toggleAdset, logout,
     deleteRelatorio, dismissAlert, clearDismissed,
