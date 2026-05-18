@@ -241,8 +241,8 @@ function getSetoresNavItems(): NavItem[] {
     },
     {
       icon: <Ico><circle cx="12" cy="12" r="3" /><circle cx="5" cy="6" r="2" /><circle cx="19" cy="6" r="2" /><circle cx="5" cy="18" r="2" /><circle cx="19" cy="18" r="2" /><path d="M10 11l-4-4" /><path d="M14 11l4-4" /><path d="M10 13l-4 4" /><path d="M14 13l4 4" /></Ico>,
-      label: 'Brainstorm',
-      href: '/mapas',
+      label: 'Criativo',
+      href: '/criativo',
     },
     ...(process.env.NEXT_PUBLIC_INTERNAL_CHAT_ENABLED === 'true'
       ? [

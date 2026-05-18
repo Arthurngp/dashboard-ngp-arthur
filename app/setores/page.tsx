@@ -261,6 +261,28 @@ const SETORES: Setor[] = [
     gradient: 'linear-gradient(135deg,#7c3aed,#ec4899)',
   },
   {
+    id: 'criativo',
+    title: 'Criativo',
+    desc: 'Mapas mentais, mapeamento de processos e ferramentas visuais de brainstorm.',
+    icon: (
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <circle cx="12" cy="12" r="3"/>
+        <circle cx="5" cy="6" r="2"/>
+        <circle cx="19" cy="6" r="2"/>
+        <circle cx="5" cy="18" r="2"/>
+        <circle cx="19" cy="18" r="2"/>
+        <path d="M10 11l-4-4"/>
+        <path d="M14 11l4-4"/>
+        <path d="M10 13l-4 4"/>
+        <path d="M14 13l4 4"/>
+      </svg>
+    ),
+    href: '/criativo',
+    external: false,
+    embed: false,
+    gradient: 'linear-gradient(135deg,#f59e0b,#ec4899)',
+  },
+  {
     id: 'gestao-anuncios',
     title: 'Gestão de anúncios',
     desc: 'Setor planejado para criação e operação de campanhas com apoio forte de IA, prompts e revision humana mínima.',

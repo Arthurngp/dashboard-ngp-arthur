@@ -112,9 +112,9 @@ export default function MapasPage() {
       <div className={styles.main}>
         <header className={styles.topbar}>
           <div className={styles.topbarLeft}>
-            <button className={styles.backBtn} onClick={() => router.push('/setores')}>← Setores</button>
+            <button className={styles.backBtn} onClick={() => router.push('/criativo')}>← Criativo</button>
             <div>
-              <div className={styles.eyebrow}>Brainstorm</div>
+              <div className={styles.eyebrow}>Setor Criativo</div>
               <h1 className={styles.title}>Mapas Mentais</h1>
             </div>
           </div>
