@@ -3449,7 +3449,34 @@ function previousPeriodRange(atual){
 // Token Meta NUNCA sai para o cliente — todas as chamadas vão pelo proxy Supabase.
 // Sempre usa time_range absoluto (mesmo quando o usuário escolhe preset). Evita
 // que o relatório re-importe com datas diferentes no futuro.
-async function callMetaProxy(mode, preset, from, until){
+// Cache simples em localStorage. TTL 30min. Key determinística por mode+preset+from+until+account.
+// Falha de cache nunca bloqueia request — degradação graciosa.
+const META_CACHE_TTL_MS = 30 * 60 * 1000;
+const META_CACHE_PREFIX = 'ngp_relmeta_';
+function _metaCacheKey(mode, preset, from, until){
+  return META_CACHE_PREFIX + (_metaAccount||'noacct') + ':' + mode + ':' + (preset||'') + ':' + (from||'') + ':' + (until||'');
+}
+function _metaCacheRead(key){
+  try{
+    const raw = localStorage.getItem(key);
+    if(!raw) return null;
+    const parsed = JSON.parse(raw);
+    if(!parsed || typeof parsed.expiresAt !== 'number') return null;
+    if(parsed.expiresAt < Date.now()){ localStorage.removeItem(key); return null; }
+    return parsed.data;
+  }catch(_){ return null; }
+}
+function _metaCacheWrite(key, data){
+  try{ localStorage.setItem(key, JSON.stringify({data, expiresAt: Date.now() + META_CACHE_TTL_MS})); }catch(_){}
+}
+
+async function callMetaProxy(mode, preset, from, until, opts){
+  const bypass = !!(opts && opts.bypass);
+  const cacheKey = _metaCacheKey(mode, preset, from, until);
+  if(!bypass){
+    const cached = _metaCacheRead(cacheKey);
+    if(cached){ console.log('[meta] cache hit:', cacheKey.replace(META_CACHE_PREFIX,'')); return cached; }
+  }
   const params = {fields:'spend,reach,impressions,clicks,ctr,actions,cost_per_action_type,frequency,cpm'};
   if(mode==='custom'&&from&&until){
     params.time_range = JSON.stringify({since:from, until:until});
@@ -3465,6 +3492,7 @@ async function callMetaProxy(mode, preset, from, until){
   });
   const json = await res.json();
   if(!res.ok || json.error) throw new Error(json.error?.message || json.error || 'Erro no proxy Meta');
+  _metaCacheWrite(cacheKey, json);
   return json;
 }
 

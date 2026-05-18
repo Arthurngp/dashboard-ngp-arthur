@@ -71,6 +71,7 @@ export default function DashboardPage() {
     modalOpen, setModalOpen, modalEdit, setModalEdit, modalLoading, setModalLoading, modalError, setModalError,
     tableSearch, setTableSearch, tableStatus, setTableStatus,
     loadOverviewData, loadData, loadTimeSeries, loadBreakdown, loadAllCampaignData, loadPreview, deleteRelatorio, dismissAlert, clearDismissed,
+    refreshOverview,
     saveClient, deleteClient, archiveClient, backToSelect, onPeriodApply, switchTab, toggleCamp, toggleAdset, logout,
     currentClient, monthlyAuthorized, metricsBase, tSpend, totalPeriodSpend, tParsed, pParsed, totRes, resultLabel, costPerResult,
     filteredOverviewRows, overviewTotals, overviewTotalsCtr, overviewTotalsPrevCtr, overviewTotalsCpc, overviewTotalsPrevCpc,
@@ -349,7 +350,10 @@ export default function DashboardPage() {
               </div>
               <div className={styles.workspaceHeroActions}>
                 <PeriodFilter onApply={onPeriodApply} />
-                <button className={styles.overviewRefreshBtn} onClick={() => loadOverviewData(period, cmpPeriodParam)}>↻ Atualizar</button>
+                <button
+                  className={styles.overviewRefreshBtn}
+                  onClick={refreshOverview}
+                  title="Limpa o cache e busca dados frescos do Meta. Use quando suspeitar que os dados estão velhos.">↻ Atualizar</button>
               </div>
             </div>
             {overviewView === 'overview' ? (
