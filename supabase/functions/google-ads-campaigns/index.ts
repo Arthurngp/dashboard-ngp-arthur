@@ -59,6 +59,29 @@ async function gaqlSearch(opts: {
 // Helper: micros → BRL real (1_000_000 micros = 1 unidade)
 const fromMicros = (v: any) => Number(v || 0) / 1_000_000
 
+// ─── Date clause builder ───────────────────────────────────────────────────
+// Aceita 2 formatos de `date_range`:
+//   - string preset: 'LAST_30_DAYS', 'THIS_MONTH', etc → DURING <preset>
+//   - objeto custom: { since: 'YYYY-MM-DD', until: 'YYYY-MM-DD' } → BETWEEN '...' AND '...'
+// Sanitização: regex valida o formato ISO YYYY-MM-DD pra prevenir SQL injection
+// no GAQL (`'` em strings GAQL é literal; nosso regex bloqueia qualquer outro char).
+const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/
+const PRESET_RE = /^[A-Z_]{1,32}$/  // GAQL aceita só letras maiúsculas e underscore
+function dateClause(date_range: unknown): string {
+  if (typeof date_range === 'string' && PRESET_RE.test(date_range)) {
+    return `DURING ${date_range}`
+  }
+  if (date_range && typeof date_range === 'object') {
+    const obj = date_range as { since?: unknown; until?: unknown }
+    const since = String(obj.since || '')
+    const until = String(obj.until || '')
+    if (ISO_DATE.test(since) && ISO_DATE.test(until)) {
+      return `BETWEEN '${since}' AND '${until}'`
+    }
+  }
+  return `DURING LAST_30_DAYS`  // fallback seguro
+}
+
 serve(async (req) => {
   const cors = handleCors(req)
   if (cors) return cors
@@ -148,7 +171,7 @@ serve(async (req) => {
 
     // ─── CAMPAIGNS (default) ─────────────────────────────────────────────────
     if (query === 'campaigns' || query === 'summary') {
-      const gaql = `SELECT campaign.id, campaign.name, campaign.status, campaign.advertising_channel_type, metrics.cost_micros, metrics.impressions, metrics.clicks, metrics.conversions, metrics.ctr, metrics.average_cpc, metrics.cost_per_conversion, metrics.conversions_from_interactions_rate FROM campaign WHERE segments.date DURING ${date_range} ORDER BY metrics.cost_micros DESC`
+      const gaql = `SELECT campaign.id, campaign.name, campaign.status, campaign.advertising_channel_type, metrics.cost_micros, metrics.impressions, metrics.clicks, metrics.conversions, metrics.ctr, metrics.average_cpc, metrics.cost_per_conversion, metrics.conversions_from_interactions_rate FROM campaign WHERE segments.date ${dateClause(date_range)} ORDER BY metrics.cost_micros DESC`
       const r = await baseSearch(gaql)
       if (!r.ok || r.data?.error) return json(req, { error: r.data?.error?.message || 'Erro Google Ads.', google_error: r.data?.error || r.data }, 200)
       const rows = Array.isArray(r.data.results) ? r.data.results : []
@@ -200,7 +223,7 @@ serve(async (req) => {
 
     // ─── SEARCH TERMS (termos buscados — só Search/Display) ──────────────────
     if (query === 'search_terms') {
-      const gaql = `SELECT search_term_view.search_term, search_term_view.status, segments.search_term_match_type, campaign.name, ad_group.name, metrics.impressions, metrics.clicks, metrics.cost_micros, metrics.conversions, metrics.ctr, metrics.average_cpc FROM search_term_view WHERE segments.date DURING ${date_range} ORDER BY metrics.cost_micros DESC LIMIT 100`
+      const gaql = `SELECT search_term_view.search_term, search_term_view.status, segments.search_term_match_type, campaign.name, ad_group.name, metrics.impressions, metrics.clicks, metrics.cost_micros, metrics.conversions, metrics.ctr, metrics.average_cpc FROM search_term_view WHERE segments.date ${dateClause(date_range)} ORDER BY metrics.cost_micros DESC LIMIT 100`
       const r = await baseSearch(gaql)
       if (!r.ok || r.data?.error) {
         return json(req, { ok: false, error: r.data?.error?.message, google_error: r.data?.error, search_terms: [] }, 200)
@@ -226,7 +249,7 @@ serve(async (req) => {
 
     // ─── KEYWORDS (palavras-chave Search) ────────────────────────────────────
     if (query === 'keywords') {
-      const gaql = `SELECT ad_group_criterion.keyword.text, ad_group_criterion.keyword.match_type, ad_group_criterion.quality_info.quality_score, campaign.name, ad_group.name, metrics.impressions, metrics.clicks, metrics.cost_micros, metrics.conversions, metrics.ctr, metrics.average_cpc FROM keyword_view WHERE segments.date DURING ${date_range} AND metrics.impressions > 0 ORDER BY metrics.cost_micros DESC LIMIT 100`
+      const gaql = `SELECT ad_group_criterion.keyword.text, ad_group_criterion.keyword.match_type, ad_group_criterion.quality_info.quality_score, campaign.name, ad_group.name, metrics.impressions, metrics.clicks, metrics.cost_micros, metrics.conversions, metrics.ctr, metrics.average_cpc FROM keyword_view WHERE segments.date ${dateClause(date_range)} AND metrics.impressions > 0 ORDER BY metrics.cost_micros DESC LIMIT 100`
       const r = await baseSearch(gaql)
       if (!r.ok || r.data?.error) return json(req, { ok: false, error: r.data?.error?.message, google_error: r.data?.error, keywords: [] }, 200)
       const rows = Array.isArray(r.data.results) ? r.data.results : []
@@ -250,7 +273,7 @@ serve(async (req) => {
 
     // ─── DEVICES (mobile / desktop / tablet) ─────────────────────────────────
     if (query === 'devices') {
-      const gaql = `SELECT segments.device, metrics.impressions, metrics.clicks, metrics.cost_micros, metrics.conversions, metrics.ctr, metrics.average_cpc, metrics.cost_per_conversion FROM customer WHERE segments.date DURING ${date_range}`
+      const gaql = `SELECT segments.device, metrics.impressions, metrics.clicks, metrics.cost_micros, metrics.conversions, metrics.ctr, metrics.average_cpc, metrics.cost_per_conversion FROM customer WHERE segments.date ${dateClause(date_range)}`
       const r = await baseSearch(gaql)
       if (!r.ok || r.data?.error) return json(req, { ok: false, error: r.data?.error?.message, google_error: r.data?.error, devices: [] }, 200)
       const rows = Array.isArray(r.data.results) ? r.data.results : []
@@ -271,7 +294,7 @@ serve(async (req) => {
 
     // ─── LOCATIONS (cidades / regiões) ───────────────────────────────────────
     if (query === 'locations') {
-      const gaql = `SELECT geographic_view.country_criterion_id, geographic_view.location_type, segments.geo_target_city, segments.geo_target_region, metrics.impressions, metrics.clicks, metrics.cost_micros, metrics.conversions FROM geographic_view WHERE segments.date DURING ${date_range} AND metrics.impressions > 0 ORDER BY metrics.cost_micros DESC LIMIT 50`
+      const gaql = `SELECT geographic_view.country_criterion_id, geographic_view.location_type, segments.geo_target_city, segments.geo_target_region, metrics.impressions, metrics.clicks, metrics.cost_micros, metrics.conversions FROM geographic_view WHERE segments.date ${dateClause(date_range)} AND metrics.impressions > 0 ORDER BY metrics.cost_micros DESC LIMIT 50`
       const r = await baseSearch(gaql)
       if (!r.ok || r.data?.error) return json(req, { ok: false, error: r.data?.error?.message, google_error: r.data?.error, locations: [] }, 200)
       const rows = Array.isArray(r.data.results) ? r.data.results : []
@@ -291,7 +314,7 @@ serve(async (req) => {
 
     // ─── HOURLY (dia da semana × hora) ───────────────────────────────────────
     if (query === 'hourly') {
-      const gaql = `SELECT segments.day_of_week, segments.hour, metrics.impressions, metrics.clicks, metrics.cost_micros, metrics.conversions FROM customer WHERE segments.date DURING ${date_range}`
+      const gaql = `SELECT segments.day_of_week, segments.hour, metrics.impressions, metrics.clicks, metrics.cost_micros, metrics.conversions FROM customer WHERE segments.date ${dateClause(date_range)}`
       const r = await baseSearch(gaql)
       if (!r.ok || r.data?.error) return json(req, { ok: false, error: r.data?.error?.message, google_error: r.data?.error, hourly: [] }, 200)
       const rows = Array.isArray(r.data.results) ? r.data.results : []
@@ -310,8 +333,8 @@ serve(async (req) => {
 
     // ─── DEMOGRAPHICS (idade + gênero) ───────────────────────────────────────
     if (query === 'demographics') {
-      const ageGaql = `SELECT ad_group_criterion.age_range.type, metrics.impressions, metrics.clicks, metrics.cost_micros, metrics.conversions FROM age_range_view WHERE segments.date DURING ${date_range}`
-      const genderGaql = `SELECT ad_group_criterion.gender.type, metrics.impressions, metrics.clicks, metrics.cost_micros, metrics.conversions FROM gender_view WHERE segments.date DURING ${date_range}`
+      const ageGaql = `SELECT ad_group_criterion.age_range.type, metrics.impressions, metrics.clicks, metrics.cost_micros, metrics.conversions FROM age_range_view WHERE segments.date ${dateClause(date_range)}`
+      const genderGaql = `SELECT ad_group_criterion.gender.type, metrics.impressions, metrics.clicks, metrics.cost_micros, metrics.conversions FROM gender_view WHERE segments.date ${dateClause(date_range)}`
       const [ageRes, genderRes] = await Promise.all([baseSearch(ageGaql), baseSearch(genderGaql)])
       const ageRows = (ageRes.ok && Array.isArray(ageRes.data.results)) ? ageRes.data.results : []
       const genderRows = (genderRes.ok && Array.isArray(genderRes.data.results)) ? genderRes.data.results : []
@@ -336,7 +359,7 @@ serve(async (req) => {
 
     // ─── TOP ADS (anúncios) ──────────────────────────────────────────────────
     if (query === 'top_ads') {
-      const gaql = `SELECT ad_group_ad.ad.id, ad_group_ad.ad.name, ad_group_ad.ad.type, ad_group_ad.status, campaign.name, ad_group.name, metrics.impressions, metrics.clicks, metrics.cost_micros, metrics.conversions, metrics.ctr FROM ad_group_ad WHERE segments.date DURING ${date_range} AND metrics.impressions > 0 ORDER BY metrics.cost_micros DESC LIMIT 30`
+      const gaql = `SELECT ad_group_ad.ad.id, ad_group_ad.ad.name, ad_group_ad.ad.type, ad_group_ad.status, campaign.name, ad_group.name, metrics.impressions, metrics.clicks, metrics.cost_micros, metrics.conversions, metrics.ctr FROM ad_group_ad WHERE segments.date ${dateClause(date_range)} AND metrics.impressions > 0 ORDER BY metrics.cost_micros DESC LIMIT 30`
       const r = await baseSearch(gaql)
       if (!r.ok || r.data?.error) return json(req, { ok: false, error: r.data?.error?.message, google_error: r.data?.error, ads: [] }, 200)
       const rows = Array.isArray(r.data.results) ? r.data.results : []
@@ -360,7 +383,7 @@ serve(async (req) => {
 
     // ─── DAILY (série temporal por dia) ──────────────────────────────────────
     if (query === 'daily') {
-      const gaql = `SELECT segments.date, metrics.cost_micros, metrics.impressions, metrics.clicks, metrics.conversions FROM customer WHERE segments.date DURING ${date_range} ORDER BY segments.date ASC`
+      const gaql = `SELECT segments.date, metrics.cost_micros, metrics.impressions, metrics.clicks, metrics.conversions FROM customer WHERE segments.date ${dateClause(date_range)} ORDER BY segments.date ASC`
       const r = await baseSearch(gaql)
       if (!r.ok || r.data?.error) return json(req, { ok: false, error: r.data?.error?.message, google_error: r.data?.error, daily: [] }, 200)
       const rows = Array.isArray(r.data.results) ? r.data.results : []

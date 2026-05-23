@@ -67,6 +67,10 @@ export default function ChatFloatingButton() {
     () => channels.reduce((sum, c) => sum + (c.unread_count || 0), 0),
     [channels]
   )
+  const mentions = useMemo(
+    () => channels.reduce((sum, c) => sum + (c.unread_mentions || 0), 0),
+    [channels]
+  )
 
   if (!enabled) return null
   if (!visible) return null
@@ -92,7 +96,9 @@ export default function ChatFloatingButton() {
       {!open && (
         <button
           onClick={() => setOpen(true)}
-          title={unread > 0 ? `${unread} mensagens não lidas` : 'Chat NGP'}
+          title={mentions > 0
+            ? `${mentions} menção${mentions > 1 ? 'es' : ''} pendente${mentions > 1 ? 's' : ''}${unread > mentions ? ` + ${unread - mentions} mensagem${unread - mentions > 1 ? 's' : ''}` : ''}`
+            : unread > 0 ? `${unread} mensagens não lidas` : 'Chat NGP'}
           aria-label="Chat NGP"
           style={{
             position: 'fixed',
@@ -108,7 +114,9 @@ export default function ChatFloatingButton() {
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
-            boxShadow: '0 6px 24px rgba(99, 102, 241, 0.45)',
+            boxShadow: mentions > 0
+              ? '0 0 0 3px rgba(245, 158, 11, 0.6), 0 6px 24px rgba(245, 158, 11, 0.55)'
+              : '0 6px 24px rgba(99, 102, 241, 0.45)',
             transition: 'transform 0.18s ease, box-shadow 0.18s ease',
           }}
           onMouseEnter={(e) => {
@@ -359,9 +367,25 @@ function ChannelSection({
                 {c.nome}
               </span>
             </div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexShrink: 0 }}>
               {c.last_message_at && (
                 <span style={{ fontSize: '10.5px', color: '#6b7280' }}>{formatRelative(c.last_message_at)}</span>
+              )}
+              {c.unread_mentions > 0 && (
+                <span
+                  title={`${c.unread_mentions} menção${c.unread_mentions > 1 ? 'es' : ''} pra você`}
+                  style={{
+                    background: '#f59e0b',
+                    color: '#fff',
+                    fontSize: '10px',
+                    fontWeight: 700,
+                    padding: '2px 6px',
+                    borderRadius: '9px',
+                    lineHeight: 1,
+                  }}
+                >
+                  @{c.unread_mentions > 9 ? '9+' : c.unread_mentions}
+                </span>
               )}
               {c.unread_count > 0 ? (
                 <span

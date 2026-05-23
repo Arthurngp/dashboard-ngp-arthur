@@ -1,12 +1,13 @@
 import { useState, useCallback, useRef } from 'react'
-import { googleAdsCall } from '@/lib/google-ads'
+import { googleAdsCall, type GoogleAdsDateRange } from '@/lib/google-ads'
+import type { DateParam } from '@/types'
 import type {
   GoogleAdsCampaign, GoogleAdsSummary,
   SearchTermRow, KeywordRow, DeviceRow, LocationRow, HourlyRow, DemoRow, AdRow, DailyRow,
 } from '@/lib/google-ads-metrics'
 
 // Mapeia preset de período do Meta para o formato Google Ads (GAQL DURING).
-function mapMetaPeriodToGoogle(preset?: string): string {
+function presetToGoogle(preset?: string): string {
   switch (preset) {
     case 'today': return 'TODAY'
     case 'yesterday': return 'YESTERDAY'
@@ -21,6 +22,32 @@ function mapMetaPeriodToGoogle(preset?: string): string {
     case 'last_year': return 'LAST_YEAR'
     default: return 'LAST_30_DAYS'
   }
+}
+
+/**
+ * Converte DateParam (preset OU time_range com since/until) no formato aceito
+ * pelo backend Google Ads:
+ *   - { since, until } quando período é custom
+ *   - string preset (LAST_30_DAYS, etc) quando é preset conhecido
+ *
+ * Aceita também string solta (legacy: passa um preset Meta direto).
+ */
+function resolveDateRange(input: DateParam | string | undefined): GoogleAdsDateRange {
+  if (!input) return 'LAST_30_DAYS'
+  if (typeof input === 'string') return presetToGoogle(input)
+
+  // Período custom: { time_range: '{"since":"YYYY-MM-DD","until":"YYYY-MM-DD"}' }
+  if (input.time_range) {
+    try {
+      const parsed = JSON.parse(input.time_range) as { since?: string; until?: string }
+      if (parsed?.since && parsed?.until) {
+        return { since: parsed.since, until: parsed.until }
+      }
+    } catch {
+      // JSON malformado — cai pro preset
+    }
+  }
+  return presetToGoogle(input.date_preset)
 }
 
 interface UseGoogleAdsOptions {
@@ -70,7 +97,7 @@ export function useGoogleAds({ customerId, enabled = true }: UseGoogleAdsOptions
   const [error, setError] = useState('')
   const reqIdRef = useRef(0)
 
-  const load = useCallback(async (datePreset: string = 'last_30d') => {
+  const load = useCallback(async (dateInput: DateParam | string = 'last_30d') => {
     if (!enabled || !customerId) {
       setData(EMPTY_DATA)
       return
@@ -79,7 +106,7 @@ export function useGoogleAds({ customerId, enabled = true }: UseGoogleAdsOptions
     setLoading(true)
     setError('')
     try {
-      const period = mapMetaPeriodToGoogle(datePreset)
+      const period = resolveDateRange(dateInput)
 
       // Primeiro busca campaigns (rápido, descobre quais painéis fazem sentido).
       const campaignsData = await googleAdsCall(customerId, 'campaigns', period)

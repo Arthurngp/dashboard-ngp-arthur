@@ -3,12 +3,14 @@
 import { useEffect } from 'react'
 import { useGoogleAds } from '../hooks/useGoogleAds'
 import type { GoogleAdsCampaign } from '@/lib/google-ads-metrics'
+import type { DateParam } from '@/types'
 import { fmt } from '@/lib/utils'
 import styles from '../dashboard.module.css'
 
 interface GoogleAdsCardProps {
   customerId?: string | null
-  datePreset: string
+  /** Período do dashboard (suporta preset OU time_range com since/until). */
+  period: DateParam | string
   customerName?: string
 }
 
@@ -22,13 +24,18 @@ function fmtN(value: number): string {
   return new Intl.NumberFormat('pt-BR').format(Math.round(value))
 }
 
-export default function GoogleAdsCard({ customerId, datePreset, customerName }: GoogleAdsCardProps) {
+export default function GoogleAdsCard({ customerId, period, customerName }: GoogleAdsCardProps) {
   const fullData = useGoogleAds({ customerId })
   const { campaigns, summary, loading, error, load } = fullData
 
+  // Recarrega quando muda customer ou QUALQUER parte do período (preset ou time_range)
+  const periodKey = typeof period === 'string'
+    ? period
+    : `${period?.date_preset || ''}|${period?.time_range || ''}`
+
   useEffect(() => {
-    void load(datePreset)
-  }, [customerId, datePreset, load])
+    void load(period)
+  }, [customerId, periodKey, load, period])
 
   if (!customerId) {
     return (

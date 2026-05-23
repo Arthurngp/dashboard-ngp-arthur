@@ -19,7 +19,8 @@ interface Props {
   clienteName: string
   googleAdsCustomerId: string
   periodLabel: string
-  datePreset: string
+  /** Período do dashboard (preset OU time_range com since/until). */
+  period: DateParam | string
   onApplyPeriod: (dp: DateParam, label: string, cmpDp?: DateParam, cmpLabel?: string) => void
   onSwitchToMeta: () => void
   onClose: () => void
@@ -45,9 +46,13 @@ export default function PresentModeGoogle(p: Props) {
   const data = useGoogleAds({ customerId: p.googleAdsCustomerId })
   const { summary, campaigns, searchTerms, keywords, devices, ageGroups, genders, ads, loading, error, load, hasPmax, hasSearch, hasDisplay, channelTypes } = data
 
+  const periodKey = typeof p.period === 'string'
+    ? p.period
+    : `${p.period?.date_preset || ''}|${p.period?.time_range || ''}`
+
   useEffect(() => {
-    void load(p.datePreset)
-  }, [p.datePreset, load])
+    void load(p.period)
+  }, [periodKey, load, p.period])
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {

@@ -18,13 +18,18 @@ import { metaCall } from './meta'
 
 interface CacheEntry<T> {
   data: T
+  cachedAt: number
   expiresAt: number
 }
 
 const memCache = new Map<string, CacheEntry<unknown>>()
 const inflight = new Map<string, Promise<unknown>>()
 
-const DEFAULT_TTL_MS = 30 * 60 * 1000
+// Decisão registrada em [[01-Arquitetura/ADR-001-cache-ttl-metricas-operacionais]]:
+// TTL de métricas operacionais reduzido de 30min → 5min em 2026-05-23. Combinado
+// com componente <MetricsFreshness> (timestamp + refresh visível) pra dar
+// transparência ao usuário sobre frescura do dado.
+const DEFAULT_TTL_MS = 5 * 60 * 1000
 const LS_PREFIX = 'ngp_meta_'
 
 function buildKey(endpoint: string, params: Record<string, string>, accountId?: string | null): string {
@@ -44,6 +49,11 @@ function readLS<T>(key: string): CacheEntry<T> | null {
     if (parsed.expiresAt < Date.now()) {
       localStorage.removeItem(LS_PREFIX + key)
       return null
+    }
+    // Entradas antigas (anteriores ao ADR-001) podem não ter cachedAt — preenche
+    // com expiresAt - TTL pra evitar NaN em consumidores.
+    if (typeof parsed.cachedAt !== 'number') {
+      parsed.cachedAt = parsed.expiresAt - DEFAULT_TTL_MS
     }
     return parsed
   } catch { return null }
@@ -91,7 +101,8 @@ export async function metaCallCached(
 
   try {
     const data = await promise
-    const entry: CacheEntry<unknown> = { data, expiresAt: Date.now() + ttlMs }
+    const now = Date.now()
+    const entry: CacheEntry<unknown> = { data, cachedAt: now, expiresAt: now + ttlMs }
     memCache.set(key, entry)
     if (persist && typeof window !== 'undefined') writeLS(key, entry)
     return data

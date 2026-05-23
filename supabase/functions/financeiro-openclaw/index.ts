@@ -1,7 +1,13 @@
 import { serve } from "std/http/server"
 import { createClient } from "supabase"
 import { handleCors, json } from "../_shared/cors.ts"
-import { hasScope, sha256Hex, validateApiToken } from "../_shared/api_tokens.ts"
+import {
+  authenticateApiToken,
+  AUTH_ERROR_MESSAGES,
+  AUTH_ERROR_STATUS,
+  hasScope,
+  sha256Hex,
+} from "../_shared/api_tokens.ts"
 import { normalizeText, parseCurrencyInput } from "../_shared/financeiro.ts"
 
 type Tipo = 'entrada' | 'saida'
@@ -129,11 +135,15 @@ serve(async (req: Request) => {
   if (cors) return cors
 
   const sb = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
-  let apiToken = null
+  let apiToken: { id: string; name: string; scopes: string[] } | null = null
   let body: any = {}
   try {
-    apiToken = await validateApiToken(sb, req)
-    if (!apiToken) return json(req, { error: 'API token inválido.' }, 401)
+    const auth = await authenticateApiToken(sb, req)
+    if (!auth.ok) {
+      const reason = auth.error!
+      return json(req, { error: AUTH_ERROR_MESSAGES[reason], code: reason }, AUTH_ERROR_STATUS[reason])
+    }
+    apiToken = auth.token!
 
     body = await req.json()
     const { action, ...payload } = body

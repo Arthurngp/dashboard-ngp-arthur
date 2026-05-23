@@ -16,10 +16,17 @@ export type GoogleAdsQuery =
   | 'list_mcc_accounts'
   | 'health_check'
 
+/**
+ * Período aceito pela API Google Ads:
+ * - String preset: 'LAST_30_DAYS', 'THIS_MONTH', etc → vira DURING <preset>
+ * - Objeto custom: { since: 'YYYY-MM-DD', until: 'YYYY-MM-DD' } → vira BETWEEN '...' AND '...'
+ */
+export type GoogleAdsDateRange = string | { since: string; until: string }
+
 export async function googleAdsCall(
   customerId?: string | null,
   query: GoogleAdsQuery = 'campaigns',
-  dateRange: string = 'LAST_30_DAYS'
+  dateRange: GoogleAdsDateRange = 'LAST_30_DAYS'
 ) {
   const sess = getSession()
   if (!sess) throw new Error('Sessão expirada')

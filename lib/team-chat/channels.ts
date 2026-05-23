@@ -1,4 +1,5 @@
 import { getTeamChatClient } from './client'
+import { getUnreadMentionsByChannel } from './mentions'
 import type { TeamChatChannel, TeamChatChannelWithUnread } from './types'
 
 export async function listChannels(currentUsuarioId?: string | null): Promise<TeamChatChannelWithUnread[]> {
@@ -43,7 +44,7 @@ export async function listChannels(currentUsuarioId?: string | null): Promise<Te
     unreadMsgQuery = unreadMsgQuery.neq('autor_id', currentUsuarioId)
   }
 
-  const [readsRes, lastMsgRes, unreadMsgRes, prefsRes, dmsRes] = await Promise.all([
+  const [readsRes, lastMsgRes, unreadMsgRes, prefsRes, dmsRes, mentionsByChannel] = await Promise.all([
     supabase.from('team_chat_reads').select('channel_id,last_read_at').in('channel_id', ids),
     lastMsgQuery,
     unreadMsgQuery,
@@ -57,6 +58,13 @@ export async function listChannels(currentUsuarioId?: string | null): Promise<Te
           .select('channel_id,user_a_id,user_b_id')
           .in('channel_id', dmChannelIds)
       : Promise.resolve({ data: [] as Array<{ channel_id: string; user_a_id: string; user_b_id: string }> }),
+    // Menções pendentes pro usuário atual. RPC team_chat_my_unread_mentions retorna
+    // (channel_id, mention_count). Falha silenciosa: se der erro, vira Map vazio
+    // e o sistema continua funcionando sem destaque de menção.
+    getUnreadMentionsByChannel().catch((e) => {
+      console.warn('[team-chat:channels] getUnreadMentionsByChannel falhou:', e)
+      return new Map<string, number>()
+    }),
   ])
 
   const lastReadByChannel = new Map<string, string>()
@@ -120,6 +128,7 @@ export async function listChannels(currentUsuarioId?: string | null): Promise<Te
       // pra DMs, mostra o nome do outro como nome do canal
       nome: c.type === 'dm' && otherInfo ? otherInfo.nome : c.nome,
       unread_count: unreadCountByChannel.get(c.id) ?? 0,
+      unread_mentions: mentionsByChannel.get(c.id) ?? 0,
       last_message_at: lastMsgByChannel.get(c.id) ?? null,
       is_favorite: pref?.is_favorite ?? false,
       sort_order: pref?.sort_order ?? 0,
