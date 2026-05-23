@@ -46,26 +46,48 @@ export default function ChatNotificationsEffects() {
 
     const tabFocused = document.hasFocus()
     const isInChat = pathname?.startsWith('/chat') ?? false
+    const isMention = latestEvent.isMention
 
-    if (isInChat) return
+    // Quando o usuário está em /chat, só suprime se NÃO for menção.
+    // Menções não-suprimidas ainda checam se ele está no canal exato (linha abaixo).
+    if (isInChat && !isMention) return
 
-    // Som — aba não-focada e não silenciado
-    if (!tabFocused && !mute) {
-      playNotificationBeep(audioBlockedRef)
+    // Se está em /chat E é menção, suprime apenas se o canal ativo na URL
+    // é o mesmo da menção (ele já está olhando).
+    if (isInChat && isMention) {
+      const params = new URLSearchParams(window.location.search)
+      const activeChannel = params.get('canal') || params.get('channel')
+      if (activeChannel && activeChannel === latestEvent.channelId) return
     }
 
-    // Desktop — aba não-focada, permissão granted, não silenciado
-    if (!tabFocused && !mute && desktopPermission === 'granted') {
+    // Som
+    // - Menção: dispara mesmo com aba focada (Arthur quer saber AGORA)
+    // - Não-menção: só com aba não-focada (comportamento legado)
+    const shouldPlaySound = !mute && (isMention || !tabFocused)
+    if (shouldPlaySound) {
+      playNotificationBeep(audioBlockedRef, isMention)
+    }
+
+    // Desktop notification
+    // - Menção: dispara mesmo com aba focada
+    // - Não-menção: só com aba não-focada
+    const shouldDesktopNotify = !mute && desktopPermission === 'granted' && (isMention || !tabFocused)
+    if (shouldDesktopNotify) {
       try {
-        const title = latestEvent.isDM ? 'Nova mensagem' : `Nova mensagem em ${latestEvent.channelName}`
-        const body = latestEvent.isDM
-          ? `${latestEvent.channelName} enviou ${latestEvent.unreadIncrement} mensagem${latestEvent.unreadIncrement > 1 ? 's' : ''}`
-          : `${latestEvent.unreadIncrement} nova${latestEvent.unreadIncrement > 1 ? 's' : ''}`
+        const mentionPrefix = isMention ? '@ ' : ''
+        const title = latestEvent.isDM
+          ? `${mentionPrefix}Nova mensagem`
+          : `${mentionPrefix}${isMention ? 'Você foi mencionado em' : 'Nova mensagem em'} ${latestEvent.channelName}`
+        const body = isMention
+          ? `${latestEvent.mentionIncrement === 1 ? 'Uma menção' : `${latestEvent.mentionIncrement} menções`} pra você${latestEvent.isDM ? '' : ` em ${latestEvent.channelName}`}`
+          : latestEvent.isDM
+            ? `${latestEvent.channelName} enviou ${latestEvent.unreadIncrement} mensagem${latestEvent.unreadIncrement > 1 ? 's' : ''}`
+            : `${latestEvent.unreadIncrement} nova${latestEvent.unreadIncrement > 1 ? 's' : ''}`
         const n = new Notification(title, {
           body,
           icon: '/favicon.ico',
           tag: `chat-${latestEvent.channelId}`,
-          requireInteraction: false,
+          requireInteraction: isMention,
           silent: true,
         })
         n.onclick = () => {
@@ -79,10 +101,12 @@ export default function ChatNotificationsEffects() {
     }
 
     // Toast in-app — aba focada, fora de /chat
-    if (tabFocused) {
-      const text = latestEvent.isDM
-        ? `${latestEvent.channelName} te enviou ${latestEvent.unreadIncrement === 1 ? 'uma mensagem' : `${latestEvent.unreadIncrement} mensagens`}`
-        : `${latestEvent.unreadIncrement === 1 ? 'Nova mensagem' : `${latestEvent.unreadIncrement} novas mensagens`} em ${latestEvent.channelName}`
+    if (tabFocused && !isInChat) {
+      const text = isMention
+        ? `Você foi mencionado em ${latestEvent.channelName}`
+        : latestEvent.isDM
+          ? `${latestEvent.channelName} te enviou ${latestEvent.unreadIncrement === 1 ? 'uma mensagem' : `${latestEvent.unreadIncrement} mensagens`}`
+          : `${latestEvent.unreadIncrement === 1 ? 'Nova mensagem' : `${latestEvent.unreadIncrement} novas mensagens`} em ${latestEvent.channelName}`
       setToastText(text)
       setToastChannelId(latestEvent.channelId)
       setToastVisible(true)
@@ -247,9 +271,10 @@ function drawFavicon(unread: number) {
 
 // Sintetiza um beep curto via Web Audio API — sem dependência de arquivo .mp3,
 // e ainda assim sujeito à política de autoplay (precisa de interação prévia).
-// Duas notas (E5 + A5, ~200ms total) — sutil, profissional, não estridente.
+// - Mensagem comum: 2 notas (E5 + A5, ~200ms) — sutil
+// - Menção:         3 notas (E5 + A5 + E6, ~320ms, gain ~30% maior) — mais saliente
 let _audioCtx: AudioContext | null = null
-function playNotificationBeep(blockedRef: React.MutableRefObject<boolean>) {
+function playNotificationBeep(blockedRef: React.MutableRefObject<boolean>, isMention = false) {
   if (blockedRef.current) return
   try {
     if (!_audioCtx) {
@@ -263,6 +288,7 @@ function playNotificationBeep(blockedRef: React.MutableRefObject<boolean>) {
       ctx.resume().catch(() => { blockedRef.current = true })
     }
     const now = ctx.currentTime
+    const peakGain = isMention ? 0.24 : 0.18
 
     const playTone = (freq: number, startOffset: number, duration: number) => {
       const osc = ctx.createOscillator()
@@ -270,15 +296,18 @@ function playNotificationBeep(blockedRef: React.MutableRefObject<boolean>) {
       osc.type = 'sine'
       osc.frequency.value = freq
       gain.gain.setValueAtTime(0, now + startOffset)
-      gain.gain.linearRampToValueAtTime(0.18, now + startOffset + 0.01)
+      gain.gain.linearRampToValueAtTime(peakGain, now + startOffset + 0.01)
       gain.gain.exponentialRampToValueAtTime(0.001, now + startOffset + duration)
       osc.connect(gain)
       gain.connect(ctx.destination)
       osc.start(now + startOffset)
       osc.stop(now + startOffset + duration + 0.05)
     }
-    playTone(659.25, 0, 0.12)    // E5
-    playTone(880.00, 0.08, 0.16) // A5 (overlapping pra ficar agradável)
+    playTone(659.25, 0, 0.12)         // E5
+    playTone(880.00, 0.08, 0.16)      // A5 (overlapping)
+    if (isMention) {
+      playTone(1318.51, 0.20, 0.18)   // E6 — fecha a tríade, sinaliza "atenção"
+    }
   } catch (e) {
     console.warn('[chat-notif] beep failed:', e)
     blockedRef.current = true

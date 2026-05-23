@@ -24,7 +24,7 @@ import {
   calcDerived,
   getPeriodBudgetFactor,
 } from '../dashboard-utils'
-import { getRequiredApiFields, META_METRICS, DEFAULT_METRICS } from '@/lib/meta-metrics'
+import { getRequiredApiFields, META_METRICS, DEFAULT_METRICS, META_INSIGHTS_DEFAULTS } from '@/lib/meta-metrics'
 import { buildAnalyticsSnapshot } from '@/lib/analytics-snapshot'
 import { efCall } from '@/lib/api'
 
@@ -225,6 +225,7 @@ export function useDashboard() {
         // (botão "↻ Atualizar"). bypass={overviewBypass} controla isso.
         const [currentData, previousData] = await Promise.all([
           metaCallCached('insights', {
+            ...META_INSIGHTS_DEFAULTS,
             level: 'account',
             fields: fieldsToFetch,
             limit: '1',
@@ -232,6 +233,7 @@ export function useDashboard() {
           }, client.meta_account_id, { bypass: overviewBypassRef.current }),
           cmpDp
             ? metaCallCached('insights', {
+                ...META_INSIGHTS_DEFAULTS,
                 level: 'account',
                 fields: fieldsToFetch,
                 limit: '1',
@@ -293,6 +295,7 @@ export function useDashboard() {
       const fieldsToFetch = ['campaign_id', 'campaign_name', ...getRequiredApiFields(visibleMetrics)].join(',')
       const [d, campData] = await Promise.all([
         metaCall('insights', {
+          ...META_INSIGHTS_DEFAULTS,
           level: 'campaign', fields: fieldsToFetch, limit: '100', ...dp,
         }, viewing.account),
         metaCall('campaigns', {
@@ -335,6 +338,7 @@ export function useDashboard() {
     try {
       const fieldsToFetch = ['campaign_id', 'campaign_name', ...getRequiredApiFields(visibleMetrics)].join(',')
       const d = await metaCall('insights', {
+        ...META_INSIGHTS_DEFAULTS,
         level: 'campaign', fields: fieldsToFetch, limit: '100', ...dp,
       }, viewing.account)
       if (d.error) return
@@ -448,7 +452,7 @@ export function useDashboard() {
     setBreakdownLoading(true)
     setBreakdownError('')
     try {
-      const params: Record<string, string> = { level: 'account', fields: metric, limit: '100', ...dp }
+      const params: Record<string, string> = { ...META_INSIGHTS_DEFAULTS, level: 'account', fields: metric, limit: '100', ...dp }
       if (type === 'by_day') params.time_increment = '1'
       else if (type === 'by_device') params.breakdowns = 'impression_device'
       else params.breakdowns = 'publisher_platform'
@@ -484,7 +488,7 @@ export function useDashboard() {
     setTimeSeriesLoading(true)
     setTimeSeriesError('')
     try {
-      const response = await metaCall('insights', { level: 'account', fields: 'spend,impressions,clicks,actions', time_increment: '1', limit: '100', ...dp }, viewing.account)
+      const response = await metaCall('insights', { ...META_INSIGHTS_DEFAULTS, level: 'account', fields: 'spend,impressions,clicks,actions', time_increment: '1', limit: '100', ...dp }, viewing.account)
       const rows = Array.isArray(response?.data) ? response.data as Record<string, unknown>[] : []
       const data = rows.map((row) => {
         const iso = String(row.date_start || '')

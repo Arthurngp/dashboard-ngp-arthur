@@ -1512,6 +1512,25 @@ function FinanceiroInner() {
                     ))}
                   </div>
 
+                  {/* Pills rápidos de status: bug-011 (Nathalli) — atalho pra "o que falta pagar".
+                      Reusa filtroStatus que já está conectado ao modal de filtros avançados. */}
+                  <div className={styles.filtroTipo}>
+                    {([['', 'Todos'], ['confirmado', 'Pagos'], ['pendente', 'Pendentes']] as const).map(([v, label]) => {
+                      const active = v === ''
+                        ? filtroStatus.size === 0
+                        : filtroStatus.size === 1 && filtroStatus.has(v as 'confirmado' | 'pendente')
+                      return (
+                        <button
+                          key={v || 'todos-status'}
+                          className={`${styles.filtroBtn} ${active ? styles.filtroBtnActive : ''}`}
+                          onClick={() => setFiltroStatus(v === '' ? new Set() : new Set([v as 'confirmado' | 'pendente']))}
+                        >
+                          {label}
+                        </button>
+                      )
+                    })}
+                  </div>
+
                   <div className={styles.filtrosWrap}>
                     <button
                       type="button"
@@ -2066,82 +2085,152 @@ function FinanceiroInner() {
           )}
 
           {/* ── CONTAS ── */}
-          {activeTab === 'contas' && (
-            <>
-              <div className={styles.toolbar}>
-                <div className={styles.toolbarLeft}>
-                  <span style={{ fontSize: 13, color: '#8E8E93' }}>
-                    {accounts.length} conta{accounts.length !== 1 ? 's' : ''}
-                    {!showArchivedAccounts && accountsTotais.contas_excluidas > 0 && (
-                      <> · {accountsTotais.contas_inclusas} no saldo · {accountsTotais.contas_excluidas} ocultas</>
-                    )}
-                  </span>
-                  <button type="button" className={styles.filtroBtn} onClick={() => setShowArchivedAccounts(!showArchivedAccounts)}>
-                    {showArchivedAccounts ? 'Ver Ativas' : 'Ver Arquivadas'}
-                  </button>
-                </div>
-                <button className={styles.btnNovo} onClick={openNovaConta}>+ Nova conta</button>
-              </div>
-              {accounts.length === 0 ? <div className={styles.empty}>Nenhuma conta bancária cadastrada. Adicione uma para controlar seu saldo real.</div> : (
-                <div className={styles.listWrap}>
-                  {accountsOrdenadas.map(a => {
-                    const oculta = a.incluir_no_saldo === false
-                    return (
-                      <div
-                        key={a.id}
-                        className={`${styles.listRow} ${styles.listRowClickable}${oculta ? ` ${styles.listRowOculta}` : ''}`}
-                        style={accountMenuOpenId === a.id ? { zIndex: 50 } : undefined}
-                        onClick={() => openAccountTransacoes(a)}
-                      >
-                        {!showArchivedAccounts && (
-                          <button
-                            type="button"
-                            className={styles.accountEyeBtn}
-                            onClick={e => { e.stopPropagation(); void toggleAccountSaldo(a.id, !oculta) }}
-                            title={oculta ? 'Incluir no saldo geral' : 'Excluir do saldo geral'}
-                            aria-label={oculta ? 'Incluir no saldo geral' : 'Excluir do saldo geral'}
-                          >
-                            {oculta ? '🚫' : '👁'}
-                          </button>
-                        )}
-                        <div className={styles.listMain}>
-                          <div className={styles.cadastroNome}>{a.nome}</div>
-                          <div className={styles.listMeta}>
-                            <span>{a.tipo}</span>
-                            <span>Saldo inicial: {fmtBRL(a.saldo_inicial)}</span>
-                            {oculta && <span className={styles.foraDoSaldo}>fora do saldo</span>}
-                          </div>
-                        </div>
-                        <div className={styles.accountRowAside}>
-                          <div className={styles.listValue} style={{ color: a.saldo_atual >= 0 ? '#059669' : '#DC2626' }}>
-                            {fmtBRL(a.saldo_atual)}
-                          </div>
-                          {mesFiltro > 0 && <div className={styles.tdSub} style={{ fontSize: 10, textAlign: 'right' }}>em {MESES[mesFiltro-1]} {anoFiltro}</div>}
-                          <div className={styles.accountMenuWrap}>
-                            <button className={styles.iconMenuBtn} type="button" onClick={(e) => { e.stopPropagation(); openAccountMenu(a.id) }} aria-label="Ações da conta">
-                              ⋯
-                            </button>
-                            {accountMenuOpenId === a.id && (
-                              <div className={styles.accountMenu} onClick={e => e.stopPropagation()}>
-                                <button type="button" className={styles.accountMenuItem} onClick={() => openEditarConta(a)}>Editar conta</button>
-                                <button type="button" className={styles.accountMenuItem} onClick={() => router.push(`/financeiro/conciliacao/${a.id}`)}>🔀 Conciliar extrato</button>
-                                <button type="button" className={styles.accountMenuItem} onClick={() => void exportAccountCsv(a)}>Exportar CSV</button>
-                                {showArchivedAccounts ? (
-                                  <button type="button" className={styles.accountMenuItem} onClick={() => void restaurarConta(a)}>Restaurar conta</button>
-                                ) : (
-                                  <button type="button" className={`${styles.accountMenuItem} ${styles.accountMenuItemDanger}`} onClick={() => void deletarConta(a)}>Arquivar conta</button>
-                                )}
-                              </div>
+          {activeTab === 'contas' && (() => {
+            // Agrupa contas em Bancos (conta_corrente/banco/investimento/poupanca) e Carteiras
+            const isBancoLike = (t: string) => t === 'conta_corrente' || t === 'banco' || t === 'investimento' || t === 'poupanca'
+            const bancos    = accountsOrdenadas.filter(a => isBancoLike(a.tipo))
+            const carteiras = accountsOrdenadas.filter(a => a.tipo === 'carteira')
+            const outras    = accountsOrdenadas.filter(a => !isBancoLike(a.tipo) && a.tipo !== 'carteira')
+
+            const TIPO_LABEL_LOCAL: Record<string, string> = {
+              conta_corrente: 'Conta corrente',
+              banco: 'Conta corrente',
+              investimento: 'Conta de investimento',
+              poupanca: 'Conta poupança',
+              carteira: 'Carteira / Caixa',
+            }
+            const iconClassFor = (tipo: string) => {
+              if (tipo === 'carteira') return styles.contaCardIconCarteira
+              if (tipo === 'investimento') return styles.contaCardIconInvestimento
+              if (tipo === 'poupanca') return styles.contaCardIconPoupanca
+              return '' // banco/conta_corrente usa gradiente roxo default
+            }
+            const emojiFor = (tipo: string) => {
+              if (tipo === 'carteira') return '👛'
+              if (tipo === 'investimento') return '💰'
+              if (tipo === 'poupanca') return '🐷'
+              return '🏦'
+            }
+
+            const renderCard = (a: typeof accountsOrdenadas[number]) => {
+              const oculta = a.incluir_no_saldo === false
+              const isOpen = accountMenuOpenId === a.id
+              return (
+                <article
+                  key={a.id}
+                  className={`${styles.contaCard}${oculta ? ` ${styles.contaCardMuted}` : ''}`}
+                  style={isOpen ? { zIndex: 50, position: 'relative' } : { position: 'relative' }}
+                  onClick={() => openAccountTransacoes(a)}
+                >
+                  <div className={styles.contaCardHead}>
+                    <div className={`${styles.contaCardIcon} ${iconClassFor(a.tipo)}`}>{emojiFor(a.tipo)}</div>
+                    <div className={styles.contaCardHeadText}>
+                      <h3 className={styles.contaCardNome}>{a.nome}</h3>
+                      <span className={styles.contaCardTipoBadge}>{TIPO_LABEL_LOCAL[a.tipo] || a.tipo}</span>
+                    </div>
+                    <div className={styles.contaCardHeadActions} onClick={e => e.stopPropagation()}>
+                      {!showArchivedAccounts && (
+                        <button
+                          type="button"
+                          className={styles.contaCardEyeBtn}
+                          onClick={() => void toggleAccountSaldo(a.id, !oculta)}
+                          title={oculta ? 'Incluir no saldo geral' : 'Excluir do saldo geral'}
+                          aria-label={oculta ? 'Incluir no saldo geral' : 'Excluir do saldo geral'}
+                        >
+                          {oculta ? '🚫' : '👁'}
+                        </button>
+                      )}
+                      <div className={styles.contaCardMenuWrap}>
+                        <button
+                          type="button"
+                          className={styles.contaCardMenuBtn}
+                          onClick={() => openAccountMenu(a.id)}
+                          aria-label="Ações da conta"
+                        >
+                          ⋮
+                        </button>
+                        {isOpen && (
+                          <div className={styles.contaCardMenuDrop}>
+                            <button type="button" className={styles.contaCardMenuItem} onClick={() => openEditarConta(a)}>Editar conta</button>
+                            <button type="button" className={styles.contaCardMenuItem} onClick={() => router.push(`/financeiro/conciliacao/${a.id}`)}>🔀 Conciliar extrato</button>
+                            <button type="button" className={styles.contaCardMenuItem} onClick={() => void exportAccountCsv(a)}>Exportar CSV</button>
+                            {showArchivedAccounts ? (
+                              <button type="button" className={styles.contaCardMenuItem} onClick={() => void restaurarConta(a)}>Restaurar conta</button>
+                            ) : (
+                              <button type="button" className={`${styles.contaCardMenuItem} ${styles.contaCardMenuItemDanger}`} onClick={() => void deletarConta(a)}>Arquivar conta</button>
                             )}
                           </div>
-                        </div>
+                        )}
                       </div>
-                    )
-                  })}
+                    </div>
+                  </div>
+
+                  <div className={styles.contaCardMetrics}>
+                    <div className={styles.contaCardMetric}>
+                      <span className={styles.contaCardMetricLabel}>Saldo atual</span>
+                      <span className={`${styles.contaCardMetricValue} ${a.saldo_atual >= 0 ? styles.contaCardMetricValuePos : styles.contaCardMetricValueNeg}`}>
+                        {fmtBRL(a.saldo_atual)}
+                      </span>
+                      {mesFiltro > 0 && <span className={styles.contaCardMetricSub}>em {MESES[mesFiltro-1]} {anoFiltro}</span>}
+                    </div>
+                    <div className={styles.contaCardMetric}>
+                      <span className={styles.contaCardMetricLabel}>Saldo inicial</span>
+                      <span className={styles.contaCardMetricValue}>{fmtBRL(a.saldo_inicial)}</span>
+                    </div>
+                  </div>
+
+                  {oculta && (
+                    <div className={styles.contaCardFoot}>
+                      <span className={styles.contaCardFoutOculta}>Fora do saldo geral</span>
+                    </div>
+                  )}
+                </article>
+              )
+            }
+
+            return (
+              <>
+                <div className={styles.toolbar}>
+                  <div className={styles.toolbarLeft}>
+                    <span style={{ fontSize: 13, color: '#8E8E93' }}>
+                      {accounts.length} conta{accounts.length !== 1 ? 's' : ''}
+                      {!showArchivedAccounts && accountsTotais.contas_excluidas > 0 && (
+                        <> · {accountsTotais.contas_inclusas} no saldo · {accountsTotais.contas_excluidas} ocultas</>
+                      )}
+                    </span>
+                    <button type="button" className={styles.filtroBtn} onClick={() => setShowArchivedAccounts(!showArchivedAccounts)}>
+                      {showArchivedAccounts ? 'Ver Ativas' : 'Ver Arquivadas'}
+                    </button>
+                  </div>
+                  <button className={styles.btnNovo} onClick={openNovaConta}>+ Nova conta</button>
                 </div>
-              )}
-            </>
-          )}
+                {accounts.length === 0 ? (
+                  <div className={styles.empty}>Nenhuma conta bancária cadastrada. Adicione uma para controlar seu saldo real.</div>
+                ) : (
+                  <>
+                    {bancos.length > 0 && (
+                      <>
+                        <h3 className={styles.contaCardSectionTitle}>Bancos · {bancos.length}</h3>
+                        <div className={styles.contaCardGrid}>{bancos.map(renderCard)}</div>
+                      </>
+                    )}
+                    {carteiras.length > 0 && (
+                      <>
+                        <h3 className={styles.contaCardSectionTitle}>Carteira / Caixa · {carteiras.length}</h3>
+                        <div className={styles.contaCardGrid}>{carteiras.map(renderCard)}</div>
+                      </>
+                    )}
+                    {outras.length > 0 && (
+                      <>
+                        <h3 className={styles.contaCardSectionTitle}>Outras · {outras.length}</h3>
+                        <div className={styles.contaCardGrid}>{outras.map(renderCard)}</div>
+                      </>
+                    )}
+                  </>
+                )}
+              </>
+            )
+          })()}
 
           {/* ── DRE ── */}
           {activeTab === 'dre' && (() => {

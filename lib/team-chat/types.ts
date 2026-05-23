@@ -67,6 +67,8 @@ export interface TeamChatAttachment {
 
 export interface TeamChatChannelWithUnread extends TeamChatChannel {
   unread_count: number
+  /** Menções pendentes (@username, @all, @here) dentro de unread_count. */
+  unread_mentions: number
   last_message_at: string | null
   is_favorite: boolean
   sort_order: number

@@ -1,3 +1,13 @@
+// Decisão registrada em [[01-Arquitetura/ADR-002-attribution-window-canonica]]:
+// Toda chamada Meta `insights` declara explicitamente a janela de atribuição
+// 7d_click + 1d_view (default histórico Meta). Sem isso, a Meta aplica o default
+// da conta de anúncio (varia conta-a-conta) e os números do NGP Space ficam
+// inconsistentes com o Gerenciador da Meta. Espalhe `META_INSIGHTS_DEFAULTS`
+// no início do objeto de params (antes de ...dp e outros spreads do caller).
+export const META_INSIGHTS_DEFAULTS: Record<string, string> = {
+  action_attribution_windows: '["7d_click","1d_view"]',
+}
+
 export type MetricFormat = 'currency' | 'integer' | 'percent' | 'compact' | 'ratio'
 
 export interface MetaMetricDef {

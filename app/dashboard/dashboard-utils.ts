@@ -1,9 +1,11 @@
 // ─── Dashboard Utilities ──────────────────────────────────────────────────────
 // Funções puras extraídas de page.tsx para reduzir o tamanho do arquivo principal.
 
-import { parseIns, fmt } from '@/lib/utils'
+import { parseIns, fmt, fmtN } from '@/lib/utils'
 import { DateParam } from '@/types'
 import { OverviewMetrics } from './types'
+
+export type DeltaUnit = 'currency' | 'number' | 'percent' | 'multiplier'
 
 export function fmtDate(iso: string) {
   try { return new Date(iso).toLocaleDateString('pt-BR') } catch { return iso }
@@ -70,6 +72,29 @@ export function formatSignedPct(curr: number, prev: number) {
   return `${sign}${delta.toFixed(1)}%`
 }
 
+function formatAbsoluteDelta(absDelta: number, unit: DeltaUnit): string {
+  const sign = absDelta > 0 ? '+' : absDelta < 0 ? '-' : ''
+  const mag = Math.abs(absDelta)
+  switch (unit) {
+    case 'currency':   return `${sign}R$ ${fmt(mag)}`
+    case 'percent':    return `${sign}${mag.toFixed(2)}pp`
+    case 'multiplier': return `${sign}${mag.toFixed(2)}x`
+    default:           return `${sign}${fmtN(mag)}`
+  }
+}
+
+/**
+ * Formata "+R$ 660 (+15.2%)" usando o delta absoluto + percentual.
+ * Retorna `null` quando a comparação não é calculável (prev <= 0 ou inf).
+ */
+export function formatSignedDelta(curr: number, prev: number, unit: DeltaUnit = 'number') {
+  const delta = pctChange(curr, prev)
+  if (delta === null || !isFinite(delta)) return null
+  const absLabel = formatAbsoluteDelta(curr - prev, unit)
+  const pctSign = delta > 0 ? '+' : ''
+  return `${absLabel} (${pctSign}${delta.toFixed(1)}%)`
+}
+
 export function normalizeOverviewMetrics(insight?: Record<string, unknown> | null): OverviewMetrics {
   const parsed = parseIns((insight || {}) as Record<string, unknown>) || {
     spend: 0,
@@ -133,13 +158,20 @@ export function calcDerived(data: Record<string, number>, spend: number) {
   })
 }
 
-export function getOverviewDeltaMeta(current: number, previous: number, lowerIsBetter = false) {
+export function getOverviewDeltaMeta(
+  current: number,
+  previous: number,
+  lowerIsBetter = false,
+  unit: DeltaUnit = 'number',
+) {
   const delta = pctChange(current, previous)
   if (delta === null || !isFinite(delta)) return null
   const improved = lowerIsBetter ? delta < 0 : delta > 0
   const tone = improved ? 'good' : Math.abs(delta) >= 15 ? 'bad' : 'warn'
+  const absLabel = formatAbsoluteDelta(current - previous, unit)
+  const pctSign = delta > 0 ? '+' : ''
   return {
-    label: `${delta > 0 ? '+' : ''}${delta.toFixed(1)}%`,
+    label: `${absLabel} (${pctSign}${delta.toFixed(1)}%)`,
     tone,
   }
 }

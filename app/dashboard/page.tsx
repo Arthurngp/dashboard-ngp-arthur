@@ -480,7 +480,7 @@ export default function DashboardPage() {
                   cmpPeriodActive={!!cmpPeriodParam}
                   visibleMetrics={visibleMetrics}
                   googleAdsCustomerId={viewing?.googleAdsCustomerId}
-                  datePreset={period.date_preset || 'last_30d'}
+                  period={period}
                   periodLabel={periodLabel}
                   onPersonalize={() => setMetricsModalOpen(true)}
                   platform={activeTab === 'meta' ? 'meta' : activeTab === 'google' ? 'google' : 'all'}
@@ -495,7 +495,7 @@ export default function DashboardPage() {
 
                 <GoogleAdsCard
                   customerId={viewing?.googleAdsCustomerId}
-                  datePreset={period.date_preset || 'last_30d'}
+                  period={period}
                   customerName={viewing?.name}
                 />
               </>}
@@ -581,6 +581,8 @@ export default function DashboardPage() {
           periodLabel={periodLabel}
           period={period}
           campaigns={campaigns}
+          prevCampaigns={prevCampaigns}
+          cmpLabel={cmpLabel}
           timeSeriesData={timeSeriesData}
           selectedCampIds={selectedCampIds}
           onChangeSelectedCampIds={setSelectedCampIds}
@@ -594,7 +596,7 @@ export default function DashboardPage() {
           clienteName={viewing?.name || ''}
           googleAdsCustomerId={viewing.googleAdsCustomerId}
           periodLabel={periodLabel}
-          datePreset={period.date_preset || 'last_30d'}
+          period={period}
           onApplyPeriod={(dp, label) => onPeriodApply(dp, label)}
           onSwitchToMeta={() => setPresentPlatform('meta')}
           onClose={() => setPresentMode(false)}

@@ -37,6 +37,11 @@ const EXPIRATION_OPTIONS = [
   { value: 'never', label: 'Sem expiração' },
 ]
 
+const SETOR_ENDPOINTS: Array<{ id: string; label: string; url: string }> = [
+  { id: 'financeiro', label: 'Financeiro', url: 'https://uqukfjtwsuffeunikiwz.supabase.co/functions/v1/financeiro-openclaw' },
+  { id: 'feedback',   label: 'Feedback',   url: 'https://uqukfjtwsuffeunikiwz.supabase.co/functions/v1/feedback-api' },
+]
+
 function fmtDate(value?: string | null) {
   if (!value) return 'Nunca'
   return new Date(value).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' })
@@ -73,6 +78,13 @@ export default function IntegracoesPage() {
   })
   const [expiresInDays, setExpiresInDays] = useState('15')
   const [createdToken, setCreatedToken] = useState('')
+  // Scopes que originaram o `createdToken` — congelados no momento do submit
+  // pra que a seção "URLs da API" não mude se o usuário mexer nas boxes
+  // depois de gerar o token (ver bug-008).
+  const [createdScopes, setCreatedScopes] = useState<string[]>([])
+  // Lista de tokens cadastrados mostra só ATIVOS por padrão; usuário pode
+  // expandir pra ver os revogados/expirados quando precisar.
+  const [showRevogados, setShowRevogados] = useState(false)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [msg, setMsg] = useState<{ type: 'ok' | 'err'; text: string } | null>(null)
@@ -103,6 +115,16 @@ export default function IntegracoesPage() {
     const s = getTokenStatus(t)
     return !s.revoked && !s.expired
   }), [tokens])
+
+  const inactiveTokens = useMemo(() => tokens.filter(t => {
+    const s = getTokenStatus(t)
+    return s.revoked || s.expired
+  }), [tokens])
+
+  const visibleTokens = useMemo(
+    () => (showRevogados ? tokens : activeTokens),
+    [showRevogados, tokens, activeTokens]
+  )
 
   /** Calcula o array final de scopes a partir do estado das boxes.
    *  Se qualquer ação delicada do setor estiver marcada, o básico (geralmente :read)
@@ -150,12 +172,14 @@ export default function IntegracoesPage() {
   async function doCreate(scopes: string[]) {
     setSaving(true)
     setCreatedToken('')
+    setCreatedScopes([])
     setMsg(null)
     const data = await efCall('admin-api-tokens', { action: 'criar', name, scopes, expires_in_days: expiresInDays })
     if (data.error) {
       setMsg({ type: 'err', text: String(data.error) })
     } else {
       setCreatedToken(String(data.token || ''))
+      setCreatedScopes(scopes)
       setMsg({ type: 'ok', text: 'Token gerado. Copie agora, ele não será exibido novamente.' })
       await loadTokens()
     }
@@ -330,13 +354,26 @@ export default function IntegracoesPage() {
                 <div className={styles.tokenRevealTitle}>Copie este token agora</div>
                 <div className={styles.tokenValue}>{createdToken}</div>
 
-                <div className={styles.tokenRevealUrl}>
-                  <span className={styles.tokenRevealUrlLabel}>Endpoints disponíveis</span>
-                  <div className={styles.tokenValue}>
-                    Financeiro: https://uqukfjtwsuffeunikiwz.supabase.co/functions/v1/financeiro-openclaw
-                    {'\n'}Feedback:  https://uqukfjtwsuffeunikiwz.supabase.co/functions/v1/feedback-api
-                  </div>
-                </div>
+                {(() => {
+                  const urlsAtivas = SETOR_ENDPOINTS.filter(s =>
+                    createdScopes.some(scope => scope.startsWith(s.id + ':'))
+                  )
+                  if (urlsAtivas.length === 0) return null
+                  return (
+                    <div className={styles.tokenRevealUrl}>
+                      <span className={styles.tokenRevealUrlLabel}>
+                        {urlsAtivas.length > 1 ? 'URLs da API' : 'URL da API'}
+                      </span>
+                      <div className={styles.tokenValue}>
+                        {urlsAtivas.map(s => (
+                          <div key={s.id}>
+                            <strong>{s.label}:</strong> {s.url}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )
+                })()}
 
                 <div className={styles.tokenRevealHint}>
                   Envie o token no header: <code>x-ngp-api-token: {createdToken.slice(0, 16)}...</code>
@@ -350,13 +387,41 @@ export default function IntegracoesPage() {
           <section className={styles.panel}>
             <div>
               <div className={styles.panelTitle}>Tokens cadastrados</div>
-              <div className={styles.panelSub}>{activeTokens.length} token(s) ativo(s).</div>
+              <div className={styles.panelSub}>
+                {activeTokens.length} token(s) ativo(s)
+                {inactiveTokens.length > 0 && (
+                  <>
+                    {' · '}
+                    <button
+                      type="button"
+                      onClick={() => setShowRevogados(v => !v)}
+                      style={{
+                        background: 'transparent',
+                        border: 'none',
+                        color: '#86efac',
+                        cursor: 'pointer',
+                        padding: 0,
+                        font: 'inherit',
+                        textDecoration: 'underline',
+                      }}
+                    >
+                      {showRevogados
+                        ? `esconder ${inactiveTokens.length} revogado(s)/expirado(s)`
+                        : `mostrar ${inactiveTokens.length} revogado(s)/expirado(s)`}
+                    </button>
+                  </>
+                )}
+              </div>
             </div>
 
             {loading ? (
               <div className={styles.empty}>Carregando...</div>
-            ) : tokens.length === 0 ? (
-              <div className={styles.empty}>Nenhum token criado ainda.</div>
+            ) : visibleTokens.length === 0 ? (
+              <div className={styles.empty}>
+                {tokens.length === 0
+                  ? 'Nenhum token criado ainda.'
+                  : 'Nenhum token ativo. Crie um novo acima.'}
+              </div>
             ) : (
               <div className={styles.tableWrap}>
                 <table className={styles.table}>
@@ -370,7 +435,7 @@ export default function IntegracoesPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {tokens.map(token => {
+                    {visibleTokens.map(token => {
                       const status = getTokenStatus(token)
                       const grouped = groupScopesForDisplay(token.scopes || [])
                       return (

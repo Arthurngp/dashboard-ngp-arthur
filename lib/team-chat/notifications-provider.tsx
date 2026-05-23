@@ -28,11 +28,17 @@ interface ChatNotifEvent {
   channelName: string
   isDM: boolean
   unreadIncrement: number
+  /** True quando o delta INCLUI ao menos uma menção nova (@user/@all/@here). */
+  isMention: boolean
+  /** Quantas das mensagens novas são menções. */
+  mentionIncrement: number
   timestamp: number
 }
 
 interface ChatNotifContext {
   totalUnread: number
+  /** Soma de menções pendentes em todos os canais (do usuário atual). */
+  totalMentions: number
   channels: TeamChatChannelWithUnread[]
   mute: boolean
   setMute: (next: boolean) => void
@@ -46,6 +52,7 @@ interface ChatNotifContext {
 
 const NoopCtx: ChatNotifContext = {
   totalUnread: 0,
+  totalMentions: 0,
   channels: [],
   mute: false,
   setMute: () => {},
@@ -67,6 +74,7 @@ export function ChatNotificationsProvider({ children }: { children: React.ReactN
   const [latestEvent, setLatestEvent] = useState<ChatNotifEvent | null>(null)
   const [usuarioId, setUsuarioId] = useState<string | null>(null)
   const prevUnreadByChannel = useRef<Map<string, number>>(new Map())
+  const prevMentionsByChannel = useRef<Map<string, number>>(new Map())
   // Se o usuário ainda não fez nenhum poll completo, NÃO dispara eventos
   // no primeiro carregamento — caso contrário toda mensagem antiga vira "nova".
   const firstPollDone = useRef(false)
@@ -121,23 +129,35 @@ export function ChatNotificationsProvider({ children }: { children: React.ReactN
         const data = await listChannels(usuarioId)
         if (!mountedRef.current) return
 
-        // Detecta delta SE não é o primeiro poll
+        // Detecta delta SE não é o primeiro poll.
+        // Prioriza menções novas como evento principal — mesmo com incremento
+        // de unread menor, uma menção sempre prevalece.
         if (firstPollDone.current) {
           let strongestDelta: ChatNotifEvent | null = null
           for (const ch of data) {
-            const prev = prevUnreadByChannel.current.get(ch.id) ?? 0
-            const cur = ch.unread_count || 0
-            if (cur > prev) {
-              const increment = cur - prev
-              // Pega o canal com MAIOR incremento como evento principal
-              if (!strongestDelta || increment > strongestDelta.unreadIncrement) {
-                strongestDelta = {
-                  channelId: ch.id,
-                  channelName: ch.nome || (ch.type === 'dm' ? 'Mensagem direta' : 'Canal'),
-                  isDM: ch.type === 'dm',
-                  unreadIncrement: increment,
-                  timestamp: Date.now(),
-                }
+            const prevU = prevUnreadByChannel.current.get(ch.id) ?? 0
+            const curU = ch.unread_count || 0
+            const prevM = prevMentionsByChannel.current.get(ch.id) ?? 0
+            const curM = ch.unread_mentions || 0
+            if (curU > prevU) {
+              const increment = curU - prevU
+              const mentionIncrement = Math.max(0, curM - prevM)
+              const candidate: ChatNotifEvent = {
+                channelId: ch.id,
+                channelName: ch.nome || (ch.type === 'dm' ? 'Mensagem direta' : 'Canal'),
+                isDM: ch.type === 'dm',
+                unreadIncrement: increment,
+                isMention: mentionIncrement > 0,
+                mentionIncrement,
+                timestamp: Date.now(),
+              }
+              // Prioridade: (1) menção > não-menção, (2) maior incremento desempata
+              if (
+                !strongestDelta
+                || (candidate.isMention && !strongestDelta.isMention)
+                || (candidate.isMention === strongestDelta.isMention && increment > strongestDelta.unreadIncrement)
+              ) {
+                strongestDelta = candidate
               }
             }
           }
@@ -145,9 +165,14 @@ export function ChatNotificationsProvider({ children }: { children: React.ReactN
         }
 
         // Atualiza estado prévio para o próximo poll
-        const next = new Map<string, number>()
-        for (const ch of data) next.set(ch.id, ch.unread_count || 0)
-        prevUnreadByChannel.current = next
+        const nextUnread = new Map<string, number>()
+        const nextMentions = new Map<string, number>()
+        for (const ch of data) {
+          nextUnread.set(ch.id, ch.unread_count || 0)
+          nextMentions.set(ch.id, ch.unread_mentions || 0)
+        }
+        prevUnreadByChannel.current = nextUnread
+        prevMentionsByChannel.current = nextMentions
 
         setChannels(data)
         firstPollDone.current = true
@@ -179,12 +204,18 @@ export function ChatNotificationsProvider({ children }: { children: React.ReactN
     () => channels.reduce((s, c) => s + (c.unread_count || 0), 0),
     [channels]
   )
+  const totalMentions = useMemo(
+    () => channels.reduce((s, c) => s + (c.unread_mentions || 0), 0),
+    [channels]
+  )
 
   // Quando está na rota /chat, zera o badge global (UX: você já está lendo)
   const visibleTotal = pathname?.startsWith('/chat') ? 0 : totalUnread
+  const visibleMentions = pathname?.startsWith('/chat') ? 0 : totalMentions
 
   const value = useMemo<ChatNotifContext>(() => ({
     totalUnread: visibleTotal,
+    totalMentions: visibleMentions,
     channels,
     mute,
     setMute,
@@ -192,7 +223,7 @@ export function ChatNotificationsProvider({ children }: { children: React.ReactN
     requestDesktopPermission,
     latestEvent,
     clearLatestEvent,
-  }), [visibleTotal, channels, mute, setMute, desktopPermission, requestDesktopPermission, latestEvent, clearLatestEvent])
+  }), [visibleTotal, visibleMentions, channels, mute, setMute, desktopPermission, requestDesktopPermission, latestEvent, clearLatestEvent])
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>
 }

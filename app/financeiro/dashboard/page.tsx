@@ -8,11 +8,82 @@ import { fetchWithRetry } from '@/lib/fetch-utils'
 import Sidebar from '@/components/Sidebar'
 import NGPLoading from '@/components/NGPLoading'
 import FinanceiroAuthModal from '@/components/FinanceiroAuthModal'
+import PeriodFilter from '@/components/PeriodFilter'
+import type { DateParam } from '@/types'
 import { financeiroNav } from '../financeiro-nav'
 import { fmtBRL, fmtBRLCompact } from '@/lib/financeiro-analista'
 import styles from './dashboard.module.css'
 
 type ViewMode = 'competencia' | 'caixa'
+
+/**
+ * Converte um DateParam (preset ou time_range) num par {start, end} em ISO YYYY-MM-DD.
+ * Replica a semântica dos presets aceitos pelo PeriodFilter.
+ */
+function resolveDateRange(dp: DateParam): { start: string; end: string } {
+  const today = new Date()
+  today.setHours(0, 0, 0, 0)
+  const iso = (d: Date) => d.toISOString().slice(0, 10)
+
+  // Período custom já vem pronto
+  if (dp.time_range) {
+    try {
+      const parsed = JSON.parse(dp.time_range) as { since?: string; until?: string }
+      if (parsed?.since && parsed?.until) return { start: parsed.since, end: parsed.until }
+    } catch { /* cai pra preset */ }
+  }
+
+  const preset = dp.date_preset || 'this_month'
+  const startOfMonth = (d: Date) => new Date(d.getFullYear(), d.getMonth(), 1)
+  const endOfMonth   = (d: Date) => new Date(d.getFullYear(), d.getMonth() + 1, 0)
+
+  switch (preset) {
+    case 'today':       return { start: iso(today), end: iso(today) }
+    case 'yesterday': {
+      const y = new Date(today); y.setDate(y.getDate() - 1)
+      return { start: iso(y), end: iso(y) }
+    }
+    case 'last_7d': {
+      const s = new Date(today); s.setDate(s.getDate() - 6)
+      return { start: iso(s), end: iso(today) }
+    }
+    case 'last_14d': {
+      const s = new Date(today); s.setDate(s.getDate() - 13)
+      return { start: iso(s), end: iso(today) }
+    }
+    case 'last_30d': {
+      const s = new Date(today); s.setDate(s.getDate() - 29)
+      return { start: iso(s), end: iso(today) }
+    }
+    case 'last_month': {
+      const lm = new Date(today.getFullYear(), today.getMonth() - 1, 1)
+      return { start: iso(startOfMonth(lm)), end: iso(endOfMonth(lm)) }
+    }
+    case 'this_quarter': {
+      const q = Math.floor(today.getMonth() / 3)
+      return {
+        start: iso(new Date(today.getFullYear(), q * 3, 1)),
+        end:   iso(new Date(today.getFullYear(), q * 3 + 3, 0)),
+      }
+    }
+    case 'last_quarter': {
+      const q = Math.floor(today.getMonth() / 3) - 1
+      const baseYear = q < 0 ? today.getFullYear() - 1 : today.getFullYear()
+      const qNorm = ((q % 4) + 4) % 4
+      return {
+        start: iso(new Date(baseYear, qNorm * 3, 1)),
+        end:   iso(new Date(baseYear, qNorm * 3 + 3, 0)),
+      }
+    }
+    case 'this_year':
+      return { start: `${today.getFullYear()}-01-01`, end: `${today.getFullYear()}-12-31` }
+    case 'last_year':
+      return { start: `${today.getFullYear() - 1}-01-01`, end: `${today.getFullYear() - 1}-12-31` }
+    case 'this_month':
+    default:
+      return { start: iso(startOfMonth(today)), end: iso(endOfMonth(today)) }
+  }
+}
 
 interface Conta { id: string; nome: string; tipo: string; saldo: number; incluir_no_saldo: boolean }
 interface BalancoMes { entradas: number; saidas: number; resultado: number; entradas_count: number; saidas_count: number }
@@ -54,6 +125,8 @@ function DashboardInner() {
   const [showAuthModal, setShowAuthModal] = useState(false)
 
   const [view, setView] = useState<ViewMode>('caixa')
+  const [period, setPeriod] = useState<DateParam>({ date_preset: 'this_month' })
+  const [periodLabel, setPeriodLabel] = useState<string>('Mês atual')
   const [data, setData] = useState<DashboardData | null>(null)
   const [loading, setLoading] = useState(false)
   const [msg, setMsg] = useState<{ type: 'ok' | 'err'; text: string } | null>(null)
@@ -102,14 +175,26 @@ function DashboardInner() {
 
   const load = useCallback(async () => {
     setLoading(true)
-    const resp = await callFn({ action: 'dashboard_resumo', view })
+    const { start, end } = resolveDateRange(period)
+    const resp = await callFn({
+      action: 'dashboard_resumo',
+      view,
+      period_start: start,
+      period_end: end,
+      period_label: periodLabel,
+    })
     setLoading(false)
     if (resp?.error) {
       showMsg('err', resp.error)
       return
     }
     setData(resp as DashboardData)
-  }, [callFn, view])
+  }, [callFn, view, period, periodLabel])
+
+  const onPeriodApply = useCallback((dp: DateParam, label: string) => {
+    setPeriod(dp)
+    setPeriodLabel(label)
+  }, [])
 
   const toggleSaldo = useCallback(async (accountId: string, currentlyIncluded: boolean) => {
     // Otimista: atualiza UI antes da resposta
@@ -165,6 +250,7 @@ function DashboardInner() {
             </p>
           </div>
           <div className={styles.headerActions}>
+            <PeriodFilter onApply={onPeriodApply} />
             <div className={styles.viewToggle} role="tablist">
               <button
                 role="tab"

@@ -1489,10 +1489,26 @@ serve(async (req: Request) => {
     if (action === 'dashboard_resumo') {
       const dashView: ViewMode = viewInput === 'caixa' ? 'caixa' : 'competencia'
 
-      // Mês corrente
+      // Período: aceita `period_start` + `period_end` (YYYY-MM-DD); default = mês corrente
+      const ISO_RE = /^\d{4}-\d{2}-\d{2}$/
       const today = new Date()
-      const ymStart = new Date(today.getFullYear(), today.getMonth(), 1).toISOString().slice(0, 10)
-      const ymEnd = new Date(today.getFullYear(), today.getMonth() + 1, 0).toISOString().slice(0, 10)
+      const periodStartRaw = typeof body?.period_start === 'string' ? body.period_start : ''
+      const periodEndRaw = typeof body?.period_end === 'string' ? body.period_end : ''
+      let ymStart: string
+      let ymEnd: string
+      let periodLabel: string
+      if (ISO_RE.test(periodStartRaw) && ISO_RE.test(periodEndRaw) && periodStartRaw <= periodEndRaw) {
+        ymStart = periodStartRaw
+        ymEnd = periodEndRaw
+        // Label custom: "01/01/2026 → 31/03/2026". O front pode sobrescrever com label próprio se quiser.
+        const labelInput = typeof body?.period_label === 'string' ? body.period_label.trim() : ''
+        periodLabel = labelInput || `${ymStart.split('-').reverse().join('/')} → ${ymEnd.split('-').reverse().join('/')}`
+      } else {
+        // Default: mês corrente
+        ymStart = new Date(today.getFullYear(), today.getMonth(), 1).toISOString().slice(0, 10)
+        ymEnd = new Date(today.getFullYear(), today.getMonth() + 1, 0).toISOString().slice(0, 10)
+        periodLabel = today.toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' })
+      }
       const dateField = dashView === 'caixa' ? 'payment_date' : 'competence_date'
 
       // 1) Saldos das contas ativas (saldo_inicial + soma de confirmados all-time, sem transferências internas)
@@ -1590,7 +1606,7 @@ serve(async (req: Request) => {
 
       return json(req, {
         view: dashView,
-        period: { start: ymStart, end: ymEnd, label: today.toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' }) },
+        period: { start: ymStart, end: ymEnd, label: periodLabel },
         contas,
         saldo_total: saldoTotal,
         saldo_investimentos: saldoInvestimentos,

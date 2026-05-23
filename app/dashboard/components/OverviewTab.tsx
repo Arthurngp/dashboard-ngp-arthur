@@ -5,7 +5,7 @@ import { fmt, fmtN, fmtI } from '@/lib/utils'
 import { debounce } from '@/lib/fetch-utils'
 import { Cliente, Relatorio } from '@/types'
 import { OverviewRow, BudgetAlert, OVERVIEW_COLUMNS, BG_COLORS, Tab, Viewing } from '../types'
-import { formatSignedPct, getOverviewDeltaMeta } from '../dashboard-utils'
+import { formatSignedDelta, getOverviewDeltaMeta } from '../dashboard-utils'
 import styles from '../dashboard.module.css'
 
 // ─── Overview Tab ─────────────────────────────────────────────────────────────
@@ -160,12 +160,12 @@ const OverviewTab = React.memo(function OverviewTab({
                   <tbody>
                     {filteredOverviewRows.map((row, index) => {
                       const clickable = !!row.client.meta_account_id
-                      const spendDelta = row.current && row.previous ? getOverviewDeltaMeta(row.current.spend, row.previous.spend) : null
-                      const resultsDelta = row.current && row.previous ? getOverviewDeltaMeta(row.current.results, row.previous.results) : null
-                      const ctrDelta = row.current && row.previous ? getOverviewDeltaMeta(row.current.ctr, row.previous.ctr) : null
-                      const cpcDelta = row.current && row.previous ? getOverviewDeltaMeta(row.current.cpc, row.previous.cpc, true) : null
-                      const cplDelta = row.current && row.previous ? getOverviewDeltaMeta(row.current.costPerLead, row.previous.costPerLead, true) : null
-                      const roasDelta = row.current && row.previous ? getOverviewDeltaMeta(row.current.roas, row.previous.roas) : null
+                      const spendDelta = row.current && row.previous ? getOverviewDeltaMeta(row.current.spend, row.previous.spend, false, 'currency') : null
+                      const resultsDelta = row.current && row.previous ? getOverviewDeltaMeta(row.current.results, row.previous.results, false, 'number') : null
+                      const ctrDelta = row.current && row.previous ? getOverviewDeltaMeta(row.current.ctr, row.previous.ctr, false, 'percent') : null
+                      const cpcDelta = row.current && row.previous ? getOverviewDeltaMeta(row.current.cpc, row.previous.cpc, true, 'currency') : null
+                      const cplDelta = row.current && row.previous ? getOverviewDeltaMeta(row.current.costPerLead, row.previous.costPerLead, true, 'currency') : null
+                      const roasDelta = row.current && row.previous ? getOverviewDeltaMeta(row.current.roas, row.previous.roas, false, 'multiplier') : null
 
                       const DeltaSpan = ({ delta }: { delta: { label: string; tone: string } | null }) =>
                         delta ? (
@@ -307,7 +307,7 @@ const OverviewTab = React.memo(function OverviewTab({
                         <div className={styles.overviewMetricCell}>
                           <div className={styles.overviewMetricMain}>R$ {fmt(overviewTotals.current.spend)}</div>
                           <div className={styles.overviewMetricSub}>
-                            {cmpLabel ? formatSignedPct(overviewTotals.current.spend, overviewTotals.previous.spend) || 'Sem comparativo' : 'Consolidado'}
+                            {cmpLabel ? formatSignedDelta(overviewTotals.current.spend, overviewTotals.previous.spend, 'currency') || 'Sem comparativo' : 'Consolidado'}
                           </div>
                         </div>
                       </td>
@@ -315,7 +315,7 @@ const OverviewTab = React.memo(function OverviewTab({
                         <div className={styles.overviewMetricCell}>
                           <div className={styles.overviewMetricMain}>{fmtN(overviewTotals.current.results)}</div>
                           <div className={styles.overviewMetricSub}>
-                            {cmpLabel ? formatSignedPct(overviewTotals.current.results, overviewTotals.previous.results) || 'Sem comparativo' : 'Resultados totais'}
+                            {cmpLabel ? formatSignedDelta(overviewTotals.current.results, overviewTotals.previous.results, 'number') || 'Sem comparativo' : 'Resultados totais'}
                           </div>
                         </div>
                       </td>
@@ -323,7 +323,7 @@ const OverviewTab = React.memo(function OverviewTab({
                         <div className={styles.overviewMetricCell}>
                           <div className={styles.overviewMetricMain}>{overviewTotalsCtr.toFixed(2)}%</div>
                           <div className={styles.overviewMetricSub}>
-                            {cmpLabel ? formatSignedPct(overviewTotalsCtr, overviewTotalsPrevCtr) || 'Sem comparativo' : 'CTR consolidado'}
+                            {cmpLabel ? formatSignedDelta(overviewTotalsCtr, overviewTotalsPrevCtr, 'percent') || 'Sem comparativo' : 'CTR consolidado'}
                           </div>
                         </div>
                       </td>
@@ -331,7 +331,7 @@ const OverviewTab = React.memo(function OverviewTab({
                         <div className={styles.overviewMetricCell}>
                           <div className={styles.overviewMetricMain}>R$ {fmt(overviewTotalsCpc)}</div>
                           <div className={styles.overviewMetricSub}>
-                            {cmpLabel ? formatSignedPct(overviewTotalsCpc, overviewTotalsPrevCpc) || 'Sem comparativo' : 'CPC consolidado'}
+                            {cmpLabel ? formatSignedDelta(overviewTotalsCpc, overviewTotalsPrevCpc, 'currency') || 'Sem comparativo' : 'CPC consolidado'}
                           </div>
                         </div>
                       </td>
@@ -340,7 +340,7 @@ const OverviewTab = React.memo(function OverviewTab({
                           <div className={styles.overviewMetricMain}>{overviewTotals.current.leads > 0 ? `R$ ${fmt(overviewTotalsCpl)}` : '—'}</div>
                           <div className={styles.overviewMetricSub}>
                             {overviewTotals.current.leads > 0
-                              ? (cmpLabel ? formatSignedPct(overviewTotalsCpl, overviewTotalsPrevCpl) || 'Sem comparativo' : 'CPL consolidado')
+                              ? (cmpLabel ? formatSignedDelta(overviewTotalsCpl, overviewTotalsPrevCpl, 'currency') || 'Sem comparativo' : 'CPL consolidado')
                               : 'Sem leads'}
                           </div>
                         </div>
@@ -349,7 +349,7 @@ const OverviewTab = React.memo(function OverviewTab({
                         <div className={styles.overviewMetricCell}>
                           <div className={styles.overviewMetricMain}>{overviewTotalsRoas.toFixed(2)}x</div>
                           <div className={styles.overviewMetricSub}>
-                            {cmpLabel ? formatSignedPct(overviewTotalsRoas, overviewTotalsPrevRoas) || 'Sem comparativo' : 'ROAS consolidado'}
+                            {cmpLabel ? formatSignedDelta(overviewTotalsRoas, overviewTotalsPrevRoas, 'multiplier') || 'Sem comparativo' : 'ROAS consolidado'}
                           </div>
                         </div>
                       </td>

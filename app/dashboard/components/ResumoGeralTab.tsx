@@ -7,6 +7,7 @@ import { useEffect } from 'react'
 import { META_METRICS, type MetaMetricDef } from '@/lib/meta-metrics'
 import { useGoogleAds } from '../hooks/useGoogleAds'
 import { unifyAllMetrics, formatMetricValue, calcVariation, type UnifiedMetric } from '@/lib/cross-platform-metrics'
+import type { DateParam } from '@/types'
 
 export type ResumoPlatform = 'all' | 'meta' | 'google'
 
@@ -17,7 +18,8 @@ interface Props {
   cmpPeriodActive: boolean
   visibleMetrics: string[]
   googleAdsCustomerId?: string | null
-  datePreset: string
+  /** Período do dashboard (preset OU time_range com since/until). */
+  period: DateParam | string
   periodLabel: string
   onPersonalize: () => void
   platform?: ResumoPlatform
@@ -27,11 +29,16 @@ export default function ResumoGeralTab(p: Props) {
   const platform: ResumoPlatform = p.platform || 'all'
   const google = useGoogleAds({ customerId: p.googleAdsCustomerId, enabled: platform !== 'meta' })
 
+  // Chave estável que muda quando QUALQUER parte do período muda
+  const periodKey = typeof p.period === 'string'
+    ? p.period
+    : `${p.period?.date_preset || ''}|${p.period?.time_range || ''}`
+
   useEffect(() => {
     if (p.googleAdsCustomerId && platform !== 'meta') {
-      void google.load(p.datePreset)
+      void google.load(p.period)
     }
-  }, [p.googleAdsCustomerId, p.datePreset, platform, google.load])
+  }, [p.googleAdsCustomerId, periodKey, platform, google.load, p.period])
 
   // Pega definições das métricas visíveis
   const metricDefs = p.visibleMetrics
