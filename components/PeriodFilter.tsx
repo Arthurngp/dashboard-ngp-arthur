@@ -164,26 +164,30 @@ function FilterSelect({
   )
 }
 
-function DatePickerField({
-  value,
+function DateRangeField({
+  since,
+  until,
   onChange,
   ariaLabel,
   caption,
-  rangeStart,
-  rangeEnd,
 }: {
-  value: string
-  onChange: (next: string) => void
+  since: string
+  until: string
+  onChange: (since: string, until: string) => void
   ariaLabel: string
   caption: string
-  rangeStart?: string
-  rangeEnd?: string
 }) {
   const [open, setOpen] = useState(false)
+  // `selecting` = o usuário já começou a montar um intervalo NESTA abertura.
+  // Enquanto false, o intervalo exibido veio pré-preenchido (ex: últimos 30 dias):
+  // o primeiro clique então inicia uma seleção limpa, sem o "flash" de tudo sumindo.
+  const [selecting, setSelecting] = useState(false)
+  // Dia sob o cursor enquanto o intervalo está sendo montado (só início escolhido).
+  // Serve pra pintar o preview do período antes do segundo clique.
+  const [hoverDate, setHoverDate] = useState<string>('')
   const rootRef = useOutsideClick<HTMLDivElement>(() => setOpen(false))
-  const selected = parseIsoDate(value)
   const [viewMonth, setViewMonth] = useState(() => {
-    const initial = selected || parseIsoDate(rangeStart || '') || new Date()
+    const initial = parseIsoDate(since) || new Date()
     return new Date(initial.getFullYear(), initial.getMonth(), 1)
   })
   const today = useMemo(() => {
@@ -191,12 +195,13 @@ function DatePickerField({
     return new Date(now.getFullYear(), now.getMonth(), now.getDate())
   }, [])
 
-  // Quando ABRE o calendário, posiciona o viewMonth na data selecionada.
-  // Depende só de `open` (e do valor ISO string, não do objeto Date) pra evitar
-  // resetar o viewMonth a cada clique nas setas de mês.
+  // Quando ABRE o calendário, posiciona o viewMonth no início do intervalo e
+  // zera o flag de seleção. Depende só de `open` pra não resetar a cada clique.
   useEffect(() => {
     if (!open) return
-    const dt = parseIsoDate(value) || parseIsoDate(rangeStart || '') || new Date()
+    setSelecting(false)
+    setHoverDate('')
+    const dt = parseIsoDate(since) || new Date()
     setViewMonth(new Date(dt.getFullYear(), dt.getMonth(), 1))
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open])
@@ -215,41 +220,75 @@ function DatePickerField({
   }, [viewMonth])
 
   const normalizedRange = useMemo(() => {
-    return normalizeRange(parseIsoDate(rangeStart || ''), parseIsoDate(rangeEnd || ''))
-  }, [rangeStart, rangeEnd])
+    return normalizeRange(parseIsoDate(since), parseIsoDate(until))
+  }, [since, until])
 
+  // Preview do intervalo enquanto só o início está escolhido: do `since` até o dia
+  // sob o cursor (`hoverDate`). Só vale durante a montagem (sem `until` ainda).
+  const previewRange = useMemo(() => {
+    if (!selecting || !since || until || !hoverDate) return { start: null, end: null }
+    return normalizeRange(parseIsoDate(since), parseIsoDate(hoverDate))
+  }, [selecting, since, until, hoverDate])
+
+  // Seleção por dois cliques num único calendário:
+  // - 1º clique da abertura (intervalo veio pré-preenchido) → inicia novo início limpo
+  // - sem intervalo completo (sem `until`) e clique >= since → fecha o fim
+  // - sem intervalo completo e clique < since → o clique vira o novo início
+  // - intervalo já completo → recomeça um novo intervalo a partir do dia clicado
   function pickDay(date: Date) {
-    onChange(fmt(date))
+    const iso = fmt(date)
+    const hasFullRange = !!since && !!until
+
+    if (!selecting || !since || hasFullRange) {
+      setSelecting(true)
+      onChange(iso, '')
+      return
+    }
+
+    if (iso < since) {
+      onChange(iso, '')
+      return
+    }
+
+    onChange(since, iso)
     setOpen(false)
   }
 
   function pickToday() {
-    onChange(fmt(today))
-    setOpen(false)
+    const iso = fmt(today)
+    // Só fecha o fim com "Hoje" se já estamos montando um intervalo nesta abertura.
+    if (selecting && since && !until && iso >= since) {
+      onChange(since, iso)
+      setOpen(false)
+      return
+    }
+    setSelecting(true)
+    onChange(iso, '')
   }
 
   function clearValue() {
-    onChange('')
+    setSelecting(true)
+    onChange('', '')
     setOpen(false)
   }
 
-  const rangeLabel = rangeStart && rangeEnd && rangeStart !== rangeEnd
-    ? `${fmtBr(rangeStart)} - ${fmtBr(rangeEnd)}`
-    : value
-      ? fmtBr(value)
-      : 'Selecionar data'
+  const rangeLabel = since && until
+    ? `${fmtBr(since)} - ${fmtBr(until)}`
+    : since
+      ? `${fmtBr(since)} - …`
+      : 'Selecionar período'
 
   return (
-    <div className={styles.calendarField} ref={rootRef}>
+    <div className={`${styles.calendarField} ${styles.calendarFieldRange}`} ref={rootRef}>
       <button
         type="button"
-        className={`${styles.calendarInput} ${open ? styles.calendarInputOpen : ''} ${value ? styles.calendarInputFilled : ''}`}
+        className={`${styles.calendarInput} ${open ? styles.calendarInputOpen : ''} ${since ? styles.calendarInputFilled : ''}`}
         onClick={() => setOpen(prev => !prev)}
         aria-label={ariaLabel}
       >
         <span className={styles.calendarInputCopy}>
           <span className={styles.calendarInputLabel}>{caption}</span>
-          <span className={value ? styles.calendarValue : styles.calendarPlaceholder}>{rangeLabel}</span>
+          <span className={since ? styles.calendarValue : styles.calendarPlaceholder}>{rangeLabel}</span>
         </span>
         <CalendarGlyph />
       </button>
@@ -280,25 +319,31 @@ function DatePickerField({
             {WEEKDAYS_PT.map(day => <span key={day}>{day}</span>)}
           </div>
 
-          <div className={styles.calendarGrid}>
+          <div className={styles.calendarGrid} onMouseLeave={() => setHoverDate('')}>
             {days.map((date) => {
               const isCurrentMonth = date.getMonth() === viewMonth.getMonth()
-              const isSelected = !!selected && sameDay(date, selected)
               const isToday = sameDay(date, today)
               const isRangeStart = !!normalizedRange.start && sameDay(date, normalizedRange.start)
               const isRangeEnd = !!normalizedRange.end && sameDay(date, normalizedRange.end)
               const isInRange = !!normalizedRange.start && !!normalizedRange.end && isBetween(date, normalizedRange.start, normalizedRange.end)
               const isRangeSolo = isRangeStart && isRangeEnd
 
+              // Preview ao passar o mouse: pinta o miolo em azul claro e a ponta sob
+              // o cursor com um destaque mais suave que o início já fixado.
+              const isPreviewStart = !!previewRange.start && sameDay(date, previewRange.start)
+              const isPreviewEnd = !!previewRange.end && sameDay(date, previewRange.end)
+              const isPreviewMid = !!previewRange.start && !!previewRange.end && isBetween(date, previewRange.start, previewRange.end)
+              const isPreviewTip = (isPreviewStart || isPreviewEnd) && !isRangeStart
+
               const classNames = [
                 styles.calendarDay,
                 !isCurrentMonth ? styles.calendarDayMuted : '',
                 isToday ? styles.calendarDayToday : '',
-                isInRange ? styles.calendarDayInRange : '',
+                isInRange || isPreviewMid ? styles.calendarDayInRange : '',
+                isPreviewTip ? styles.calendarDayPreviewTip : '',
                 isRangeStart ? styles.calendarDayRangeStart : '',
                 isRangeEnd ? styles.calendarDayRangeEnd : '',
                 isRangeSolo ? styles.calendarDayRangeSolo : '',
-                isSelected ? styles.calendarDaySelected : '',
               ].filter(Boolean).join(' ')
 
               return (
@@ -307,6 +352,7 @@ function DatePickerField({
                   type="button"
                   className={classNames}
                   onClick={() => pickDay(date)}
+                  onMouseEnter={() => setHoverDate(fmt(date))}
                 >
                   <span>{date.getDate()}</span>
                 </button>
@@ -501,21 +547,15 @@ export default function PeriodFilter({ onApply }: Props) {
 
       {period === 'custom' && (
         <div className={styles.rangeEditor}>
-          <DatePickerField
-            value={since}
-            onChange={setSince}
-            ariaLabel="Data inicial"
-            caption="De"
-            rangeStart={since}
-            rangeEnd={until}
-          />
-          <DatePickerField
-            value={until}
-            onChange={setUntil}
-            ariaLabel="Data final"
-            caption="Até"
-            rangeStart={since}
-            rangeEnd={until}
+          <DateRangeField
+            since={since}
+            until={until}
+            onChange={(nextSince, nextUntil) => {
+              setSince(nextSince)
+              setUntil(nextUntil)
+            }}
+            ariaLabel="Período personalizado"
+            caption="Período"
           />
           <button className={styles.applyBtn} onClick={applyCustomMain}>Aplicar</button>
         </div>
@@ -542,21 +582,15 @@ export default function PeriodFilter({ onApply }: Props) {
 
           {cmpPeriod === 'custom' && (
             <div className={styles.rangeEditor}>
-              <DatePickerField
-                value={cmpSince}
-                onChange={setCmpSince}
-                ariaLabel="Comparação inicial"
-                caption="De"
-                rangeStart={cmpSince}
-                rangeEnd={cmpUntil}
-              />
-              <DatePickerField
-                value={cmpUntil}
-                onChange={setCmpUntil}
-                ariaLabel="Comparação final"
-                caption="Até"
-                rangeStart={cmpSince}
-                rangeEnd={cmpUntil}
+              <DateRangeField
+                since={cmpSince}
+                until={cmpUntil}
+                onChange={(nextSince, nextUntil) => {
+                  setCmpSince(nextSince)
+                  setCmpUntil(nextUntil)
+                }}
+                ariaLabel="Período de comparação"
+                caption="Período"
               />
               <button className={styles.applyBtn} onClick={applyCustomCmp}>Aplicar</button>
             </div>

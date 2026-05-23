@@ -16,7 +16,7 @@ interface Props {
   prevCampaigns?: Campaign[]
   /** Label do período comparativo (ex: "vs 30 dias anteriores"). Vazio → sem comparação. */
   cmpLabel?: string
-  timeSeriesData: Array<{ date: string; spend: number; impressions: number; clicks: number; actions?: Array<{ action_type: string; value: string }> }>
+  timeSeriesData: Array<{ date: string /* YYYY-MM-DD */; spend: number; impressions: number; clicks: number; actions?: Array<{ action_type: string; value: string }> }>
   selectedCampIds: Set<string>
   onChangeSelectedCampIds: (next: Set<string> | ((prev: Set<string>) => Set<string>)) => void
   onApplyPeriod: (dp: DateParam, label: string, cmpDp?: DateParam, cmpLabel?: string) => void
@@ -621,12 +621,12 @@ export default function PresentMode(p: Props) {
               <div style={{ display: 'grid', gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))`, gap: 'clamp(6px, .8vw, 12px)', flexShrink: 0 }}>
                 <Kpi label="Valor Investido" value={`R$ ${fmt(totals.spend)}`}
                   current={totals.spend} previous={prevTotals?.spend} unit="currency" />
-                <Kpi label={resultLabel} value={totals.results > 0 ? String(totals.results) : '—'}
-                  current={totals.results} previous={prevTotals?.results} unit="number" />
                 {isVendas && (
                   <Kpi label="Valor em Compras" value={`R$ ${fmt(totals.resultsValue)}`}
                     current={totals.resultsValue} previous={prevTotals?.resultsValue} unit="currency" />
                 )}
+                <Kpi label={resultLabel} value={totals.results > 0 ? String(totals.results) : '—'}
+                  current={totals.results} previous={prevTotals?.results} unit="number" />
                 {isVendas && (
                   <Kpi label="ROAS" value={roas > 0 ? `${roas.toFixed(2)}x` : '—'}
                     current={roas} previous={prevRoas > 0 ? prevRoas : undefined} unit="multiplier" />
@@ -659,7 +659,7 @@ export default function PresentMode(p: Props) {
               const tsData = tsGranularity === 'week' ? aggregateByWeek(rawData) : rawData
               return tsData.length === 0
                 ? <Empty msg="Sem série temporal" />
-                : <TimelineChart data={tsData} resultLabel={resultLabel} actionKeys={actionKeys} />
+                : <TimelineChart data={tsData} resultLabel={resultLabel} actionKeys={actionKeys} granularity={tsGranularity} />
             })()}
           </Card>
         </div>
@@ -1435,7 +1435,7 @@ function DonutChart({ data }: { data: Bucket[] }) {
   )
 }
 
-function TimelineChart({ data, resultLabel, actionKeys }: { data: Array<{ date: string; spend: number; impressions: number; clicks: number; actions?: Array<{ action_type: string; value: string }> }>; resultLabel: string; actionKeys: string[] }) {
+function TimelineChart({ data, resultLabel, actionKeys, granularity = 'day' }: { data: Array<{ date: string; spend: number; impressions: number; clicks: number; actions?: Array<{ action_type: string; value: string }> }>; resultLabel: string; actionKeys: string[]; granularity?: 'day' | 'week' }) {
   // CPL/CPA real por dia: usa actions do dia se disponível; fallback pra CPC (spend/clicks).
   const enriched = data.map(d => {
     const results = d.actions ? sumActions(d.actions, actionKeys) : 0
@@ -1460,11 +1460,18 @@ function TimelineChart({ data, resultLabel, actionKeys }: { data: Array<{ date: 
   const bw = Math.max(6, stepX * 0.55)
 
   const labelStep = Math.max(1, Math.floor(enriched.length / 6))
-  // Formata 'YYYY-MM-DD' → 'DD/MM' pro eixo X (mais legível). Strings em outro
-  // formato passam direto. bug-012 (melhoria adjacente ao fix da visão semanal).
+  // Formata 'YYYY-MM-DD' → 'DD/MM'. No modo semanal mostra o intervalo da semana
+  // (seg-dom): início + 6 dias → 'DD/MM - DD/MM'. Strings em outro formato passam direto.
   const fmtDate = (s: string) => {
     const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s)
-    return m ? `${m[3]}/${m[2]}` : s
+    if (!m) return s
+    const start = `${m[3]}/${m[2]}`
+    if (granularity !== 'week') return start
+    const end = new Date(`${s}T12:00:00`)
+    end.setDate(end.getDate() + 6)
+    const ed = String(end.getDate()).padStart(2, '0')
+    const em = String(end.getMonth() + 1).padStart(2, '0')
+    return `${start} - ${ed}/${em}`
   }
   const fmtBrl = (n: number) => 'R$ ' + n.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
   const fmtN = (n: number) => n.toLocaleString('pt-BR')
@@ -1585,7 +1592,7 @@ function TimelineChart({ data, resultLabel, actionKeys }: { data: Array<{ date: 
             zIndex: 10,
             lineHeight: 1.4,
           }}>
-            <div style={{ fontWeight: 700, color: '#7dd3fc', fontSize: 12, marginBottom: 4, letterSpacing: '.04em', textTransform: 'uppercase' }}>{d.label}</div>
+            <div style={{ fontWeight: 700, color: '#7dd3fc', fontSize: 12, marginBottom: 4, letterSpacing: '.04em', textTransform: 'uppercase' }}>{fmtDate(d.label)}</div>
             <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10 }}>
               <span style={{ color: '#94a3b8' }}>Investimento</span>
               <strong style={{ color: '#22d3ee', fontVariantNumeric: 'tabular-nums' }}>{fmtBrl(d.spend)}</strong>
