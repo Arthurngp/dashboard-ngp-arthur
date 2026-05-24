@@ -18,7 +18,7 @@ interface Props {
   prevCampaigns?: Campaign[]
   /** Label do período comparativo (ex: "vs 30 dias anteriores"). Vazio → sem comparação. */
   cmpLabel?: string
-  timeSeriesData: Array<{ date: string /* YYYY-MM-DD */; spend: number; impressions: number; clicks: number; actions?: Array<{ action_type: string; value: string }> }>
+  timeSeriesData: Array<{ date: string /* YYYY-MM-DD */; spend: number; impressions: number; clicks: number; actions?: Array<{ action_type: string; value: string }>; action_values?: Array<{ action_type: string; value: string }> }>
   selectedCampIds: Set<string>
   onChangeSelectedCampIds: (next: Set<string> | ((prev: Set<string>) => Set<string>)) => void
   onApplyPeriod: (dp: DateParam, label: string, cmpDp?: DateParam, cmpLabel?: string) => void
@@ -88,31 +88,35 @@ function isoWeekStart(dateStr: string): string {
   return d.toISOString().slice(0, 10)
 }
 
-type TimeRow = { date: string; spend: number; impressions: number; clicks: number; actions?: Array<{ action_type: string; value: string }> }
+type TimeRow = { date: string; spend: number; impressions: number; clicks: number; actions?: Array<{ action_type: string; value: string }>; action_values?: Array<{ action_type: string; value: string }> }
 
 // Agrega linhas diárias em semanais (seg-dom). Soma spend/impressions/clicks
-// e consolida actions por action_type. bug-012.
+// e consolida actions e action_values por action_type. bug-012.
 function aggregateByWeek(daily: TimeRow[]): TimeRow[] {
   if (!daily.length) return daily
-  type Bucket = { date: string; spend: number; impressions: number; clicks: number; actionMap: Map<string, number> }
+  type Bucket = { date: string; spend: number; impressions: number; clicks: number; actionMap: Map<string, number>; valueMap: Map<string, number> }
   const buckets = new Map<string, Bucket>()
+  const sumInto = (map: Map<string, number>, arr?: Array<{ action_type: string; value: string }>) => {
+    if (!Array.isArray(arr)) return
+    for (const a of arr) {
+      if (!a?.action_type) continue
+      map.set(a.action_type, (map.get(a.action_type) || 0) + (+a.value || 0))
+    }
+  }
   for (const row of daily) {
     const monday = isoWeekStart(row.date)
     let cur = buckets.get(monday)
     if (!cur) {
-      cur = { date: monday, spend: 0, impressions: 0, clicks: 0, actionMap: new Map() }
+      cur = { date: monday, spend: 0, impressions: 0, clicks: 0, actionMap: new Map(), valueMap: new Map() }
       buckets.set(monday, cur)
     }
     cur.spend += row.spend || 0
     cur.impressions += row.impressions || 0
     cur.clicks += row.clicks || 0
-    if (Array.isArray(row.actions)) {
-      for (const a of row.actions) {
-        if (!a?.action_type) continue
-        cur.actionMap.set(a.action_type, (cur.actionMap.get(a.action_type) || 0) + (+a.value || 0))
-      }
-    }
+    sumInto(cur.actionMap, row.actions)
+    sumInto(cur.valueMap, row.action_values)
   }
+  const toArr = (map: Map<string, number>) => Array.from(map.entries()).map(([action_type, value]) => ({ action_type, value: String(value) }))
   return Array.from(buckets.values())
     .sort((a, b) => a.date.localeCompare(b.date))
     .map(b => ({
@@ -120,7 +124,8 @@ function aggregateByWeek(daily: TimeRow[]): TimeRow[] {
       spend: b.spend,
       impressions: b.impressions,
       clicks: b.clicks,
-      actions: Array.from(b.actionMap.entries()).map(([action_type, value]) => ({ action_type, value: String(value) })),
+      actions: toArr(b.actionMap),
+      action_values: toArr(b.valueMap),
     }))
 }
 
@@ -447,7 +452,7 @@ export default function PresentMode(p: Props) {
       if (!filteringParam) return null
       const r = await metaCall('insights', withFilter({
         level: 'account', limit: '100',
-        fields: 'spend,impressions,clicks,actions',
+        fields: 'spend,impressions,clicks,actions,action_values',
         time_increment: '1',
         ...p.period,
       }), p.metaAccount)
@@ -458,6 +463,7 @@ export default function PresentMode(p: Props) {
         impressions: +row.impressions || 0,
         clicks: +row.clicks || 0,
         actions: row.actions,
+        action_values: row.action_values,
       }))
     }
 
@@ -1454,16 +1460,18 @@ function DonutChart({ data }: { data: Bucket[] }) {
   )
 }
 
-function TimelineChart({ data, resultLabel, actionKeys, granularity = 'day' }: { data: Array<{ date: string; spend: number; impressions: number; clicks: number; actions?: Array<{ action_type: string; value: string }> }>; resultLabel: string; actionKeys: string[]; granularity?: 'day' | 'week' }) {
+function TimelineChart({ data, resultLabel, actionKeys, granularity = 'day' }: { data: Array<{ date: string; spend: number; impressions: number; clicks: number; actions?: Array<{ action_type: string; value: string }>; action_values?: Array<{ action_type: string; value: string }> }>; resultLabel: string; actionKeys: string[]; granularity?: 'day' | 'week' }) {
   // CPL/CPA real por dia: usa actions do dia se disponível; fallback pra CPC (spend/clicks).
   const enriched = data.map(d => {
     const results = d.actions ? sumActions(d.actions, actionKeys) : 0
+    const revenue = d.action_values ? sumActions(d.action_values, actionKeys) : 0
     return {
       label: d.date,
       spend: d.spend,
       clicks: d.clicks,
       impressions: d.impressions,
       results,
+      revenue,
       cpl: results > 0 ? d.spend / results : (d.clicks > 0 ? d.spend / d.clicks : 0),
       isFallback: results === 0,
     }
@@ -1616,6 +1624,12 @@ function TimelineChart({ data, resultLabel, actionKeys, granularity = 'day' }: {
               <span style={{ color: '#94a3b8' }}>Investimento</span>
               <strong style={{ color: '#22d3ee', fontVariantNumeric: 'tabular-nums' }}>{fmtBrl(d.spend)}</strong>
             </div>
+            {d.revenue > 0 && (
+              <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10 }}>
+                <span style={{ color: '#94a3b8' }}>Vendas</span>
+                <strong style={{ color: '#34d399', fontVariantNumeric: 'tabular-nums' }}>{fmtBrl(d.revenue)}</strong>
+              </div>
+            )}
             <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10 }}>
               <span style={{ color: '#94a3b8' }}>{resultLabel}</span>
               <strong style={{ fontVariantNumeric: 'tabular-nums' }}>{d.results > 0 ? fmtN(d.results) : '—'}</strong>
