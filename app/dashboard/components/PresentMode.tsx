@@ -6,6 +6,7 @@ import { META_INSIGHTS_DEFAULTS, ACTION_KEYS, sumActions, GENDER_NAMES } from '@
 import { fmt, fmtI } from '@/lib/utils'
 import PeriodFilter from '@/components/PeriodFilter'
 import PublicoTab from './PublicoTab'
+import AnunciosTab from './AnunciosTab'
 
 interface Props {
   clienteName: string
@@ -147,7 +148,7 @@ export default function PresentMode(p: Props) {
   // bug-012: granularidade do card "Investimento e CPR". 'day' = padrão, 'week' agrega seg-dom client-side.
   const [tsGranularity, setTsGranularity] = useState<'day' | 'week'>('day')
   // Aba ativa da apresentação. 'overview' = tela atual; 'publico' = análise de público (carrega sob demanda).
-  const [activeTab, setActiveTab] = useState<'overview' | 'publico'>('overview')
+  const [activeTab, setActiveTab] = useState<'overview' | 'publico' | 'anuncios'>('overview')
   const [topView, setTopView] = useState<'campanhas' | 'conjuntos'>('campanhas')
   const [expandedCampId, setExpandedCampId] = useState<string | null>(null)
   const [previewAd, setPreviewAd] = useState<TopAd | null>(null)
@@ -571,7 +572,7 @@ export default function PresentMode(p: Props) {
 
       {/* Abas: Visão geral (tela atual) | Público (análise de público, sob demanda) */}
       <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
-        {([['overview', 'Visão geral'], ['publico', 'Público']] as const).map(([key, label]) => {
+        {([['overview', 'Visão geral'], ['publico', 'Público'], ['anuncios', 'Anúncios']] as const).map(([key, label]) => {
           const on = activeTab === key
           return (
             <button
@@ -693,6 +694,19 @@ export default function PresentMode(p: Props) {
       {/* Aba Público — análise de público (carrega sob demanda) */}
       {activeTab === 'publico' && (
         <PublicoTab
+          metaAccount={p.metaAccount}
+          period={p.period}
+          filteringParam={filteringParam}
+          insightsDefaults={META_INSIGHTS_DEFAULTS}
+          tipo={tipo}
+          resultLabel={resultLabel}
+          cprLabel={cprLabel}
+        />
+      )}
+
+      {/* Aba Anúncios — análise profunda de criativos (carrega sob demanda) */}
+      {activeTab === 'anuncios' && (
+        <AnunciosTab
           metaAccount={p.metaAccount}
           period={p.period}
           filteringParam={filteringParam}
