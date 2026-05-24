@@ -10,6 +10,8 @@ import AnunciosTab from './AnunciosTab'
 
 interface Props {
   clienteName: string
+  clienteId?: string
+  clienteUsername?: string
   metaAccount: string
   periodLabel: string
   period: DateParam
@@ -720,6 +722,10 @@ export default function PresentMode(p: Props) {
           tipo={tipo}
           resultLabel={resultLabel}
           cprLabel={cprLabel}
+          clienteName={p.clienteName}
+          clienteId={p.clienteId}
+          clienteUsername={p.clienteUsername}
+          periodLabel={p.periodLabel}
         />
       )}
 

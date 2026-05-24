@@ -607,6 +607,8 @@ export default function DashboardPage() {
       {presentMode && presentPlatform === 'meta' && (
         <PresentMode
           clienteName={viewing?.name || ''}
+          clienteId={viewing?.id || ''}
+          clienteUsername={viewing?.username || ''}
           metaAccount={viewing?.account || ''}
           periodLabel={periodLabel}
           period={period}

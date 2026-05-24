@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { metaCall } from '@/lib/meta'
+import { efCall } from '@/lib/api'
 import { ACTION_KEYS, sumActions } from '@/lib/meta-metrics'
 import { DateParam } from '@/types'
 
@@ -32,6 +33,22 @@ interface Props {
   tipo: string
   resultLabel: string
   cprLabel: string
+  clienteName?: string
+  clienteId?: string
+  clienteUsername?: string
+  periodLabel?: string
+}
+
+// Prompt template "Análise de Criativos (Meta Ads)" cadastrado no Supabase.
+const CRIATIVOS_PROMPT_ID = 'fb871644-30dc-4eb8-a1ea-28cb9914c33b'
+
+interface AiAnalysis {
+  headline?: string
+  diagnosis?: string
+  wins?: string[]
+  risks?: string[]
+  opportunities?: string[]
+  nextActions?: { title: string; detail: string; priority: 'high' | 'medium' | 'low' }[]
 }
 
 interface AdRow {
@@ -72,6 +89,36 @@ const fmtBrl = (n: number) => 'R$ ' + n.toLocaleString('pt-BR', { minimumFractio
 const fmtN = (n: number) => n.toLocaleString('pt-BR')
 const pct = (n: number) => `${(n * 100).toFixed(1)}%`
 
+const median = (arr: number[]) => {
+  const v = arr.filter(n => n > 0).sort((a, b) => a - b)
+  if (!v.length) return 0
+  const m = Math.floor(v.length / 2)
+  return v.length % 2 ? v[m] : (v[m - 1] + v[m]) / 2
+}
+
+type Verdict = 'escalar' | 'pausar' | 'observar'
+const VERDICT_STYLE: Record<Verdict, { label: string; bg: string; color: string }> = {
+  escalar: { label: '↑ Escalar', bg: 'rgba(34,197,94,.18)', color: '#34d399' },
+  pausar: { label: '↓ Pausar', bg: 'rgba(239,68,68,.16)', color: '#f87171' },
+  observar: { label: '• Observar', bg: 'rgba(148,163,184,.15)', color: '#cbd5e1' },
+}
+
+// Classifica um criativo (regra transparente, sem IA). Usa medianas do conjunto e
+// limiar de gasto RELATIVO ao total (escala entre contas grandes e pequenas).
+// - escalar: CPA <= mediana E frequência < 2.5 (eficiente e não saturado)
+// - pausar: gasto >= 3% do total E (0 resultados OU CPA >= 2x mediana) OU frequência > 4
+// - observar: o resto
+function classify(a: AdRow, medCpa: number, totalSpend: number): Verdict {
+  const spendShare = totalSpend > 0 ? a.spend / totalSpend : 0
+  const saturated = a.frequency > 4
+  const noReturn = spendShare >= 0.03 && a.results === 0
+  const tooExpensive = medCpa > 0 && a.cpa > 0 && a.cpa >= medCpa * 2 && spendShare >= 0.03
+  if (noReturn || tooExpensive || saturated) return 'pausar'
+  const efficient = medCpa > 0 && a.cpa > 0 && a.cpa <= medCpa
+  if (efficient && a.frequency < 2.5 && a.results > 0) return 'escalar'
+  return 'observar'
+}
+
 // Critérios de ordenação do carrossel. `lower` = menor é melhor.
 type SortKey = 'results' | 'cpa' | 'cpm' | 'ctr' | 'spend' | 'roas'
 const SORTS: { k: SortKey; label: string; lower?: boolean; needsRevenue?: boolean }[] = [
@@ -83,7 +130,7 @@ const SORTS: { k: SortKey; label: string; lower?: boolean; needsRevenue?: boolea
   { k: 'roas', label: 'Melhor ROAS', needsRevenue: true },
 ]
 
-export default function AnunciosTab({ metaAccount, period, filteringParam, insightsDefaults, tipo, resultLabel, cprLabel }: Props) {
+export default function AnunciosTab({ metaAccount, period, filteringParam, insightsDefaults, tipo, resultLabel, cprLabel, clienteName, clienteId, clienteUsername, periodLabel }: Props) {
   const [ads, setAds] = useState<AdRow[] | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
@@ -92,6 +139,10 @@ export default function AnunciosTab({ metaAccount, period, filteringParam, insig
   const [objectiveFilter, setObjectiveFilter] = useState<string | null>(null) // filtra o carrossel por objetivo
   const [compareOpen, setCompareOpen] = useState(false) // abre o modal de comparação
   const hasRevenue = useMemo(() => !!ads?.some(a => a.roas > 0), [ads])
+  // Análise IA (sob demanda).
+  const [ai, setAi] = useState<AiAnalysis | null>(null)
+  const [aiLoading, setAiLoading] = useState(false)
+  const [aiError, setAiError] = useState('')
 
   useEffect(() => {
     let cancelled = false
@@ -147,6 +198,10 @@ export default function AnunciosTab({ metaAccount, period, filteringParam, insig
     return () => { cancelled = true }
   }, [metaAccount, period, filteringParam, insightsDefaults, tipo])
 
+  // Invalida a análise IA quando muda o contexto. ANTES de qualquer early return
+  // (Regra dos Hooks: nunca chamar hook depois de return condicional).
+  useEffect(() => { setAi(null); setAiError('') }, [metaAccount, period, tipo, filteringParam])
+
   const sorted = useMemo(() => {
     if (!ads) return []
     const cfg = SORTS.find(s => s.k === sortKey) || SORTS[0]
@@ -170,8 +225,45 @@ export default function AnunciosTab({ metaAccount, period, filteringParam, insig
   if (error) return <div style={{ flex: 1, display: 'flex' }}><Empty msg={error} /></div>
   if (!ads || ads.length === 0) return <div style={{ flex: 1, display: 'flex' }}><Empty msg="Sem anúncios com dados no período" /></div>
 
+  // Veredito por criativo (regra): mediana de CPA e gasto total do conjunto.
+  const medCpa = median(ads.map(a => a.cpa))
+  const totalSpend = ads.reduce((s, a) => s + a.spend, 0)
+  const verdictOf = (a: AdRow) => classify(a, medCpa, totalSpend)
+
   // Carrossel filtrado pelo objetivo selecionado na tabela (ou todos).
   const carouselAds = objectiveFilter ? sorted.filter(a => a.objective === objectiveFilter) : sorted
+
+  async function gerarAnalise() {
+    if (!ads || ads.length === 0) return
+    setAiLoading(true); setAiError('')
+    try {
+      // Top 12 por gasto, payload enxuto (números + selo + objetivo). Limite evita
+      // estourar o max_output_tokens da edge function e truncar o JSON da resposta.
+      const criativos = [...ads].sort((a, b) => b.spend - a.spend).slice(0, 12).map(a => ({
+        nome: a.name, objetivo: a.objective, veredito: verdictOf(a),
+        gasto: Math.round(a.spend), resultados: a.results, custo_result: Math.round(a.cpa),
+        roas: +a.roas.toFixed(1), ctr_pct: +a.ctr.toFixed(1), cpm: Math.round(a.cpm), freq: +a.frequency.toFixed(1),
+      }))
+      const data = await efCall('ai-generate-analysis', {
+        action: 'generate',
+        prompt_id: CRIATIVOS_PROMPT_ID,
+        cliente_id: clienteId || undefined,
+        cliente_username: clienteUsername || undefined,
+        cliente_nome: clienteName || undefined,
+        meta_account_id: metaAccount || undefined,
+        period_label: periodLabel || undefined,
+        metrics: { resultLabel, cprLabel, total_criativos: ads.length, criativos },
+        extra_context: `Análise de criativos do Meta Ads. Métrica principal: ${resultLabel}. Custo: ${cprLabel}.`,
+      })
+      if (data.error) { setAiError(String(data.error)); return }
+      const json = (data.analysis_json || data.analysis || null) as AiAnalysis | string | null
+      setAi(typeof json === 'object' && json ? json : { diagnosis: String(data.analysis || '') })
+    } catch (e) {
+      setAiError(e instanceof Error ? e.message : 'Não foi possível gerar a análise.')
+    } finally {
+      setAiLoading(false)
+    }
+  }
   const selectedAds = sorted.filter(a => selected.includes(a.id))
   const videoAds = sorted.filter(a => a.video3s > 0)
 
@@ -275,23 +367,94 @@ export default function AnunciosTab({ metaAccount, period, filteringParam, insig
       >
         <CreativeCarousel
           ads={carouselAds} sortKey={sortKey} selected={selected} onSelect={toggleSelect}
-          resultLabel={resultLabel} cprLabel={cprLabel} hasRevenue={hasRevenue}
+          resultLabel={resultLabel} cprLabel={cprLabel} hasRevenue={hasRevenue} verdictOf={verdictOf}
         />
       </Card>
 
       {/* Módulos de análise abaixo do carrossel — grid 2 colunas */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 'clamp(8px, 1.2vw, 18px)', alignItems: 'start' }}>
-        <Card title="Por objetivo da campanha">
-          {byObjective.length === 0
-            ? <Empty msg="Sem objetivo identificado" />
-            : <ObjectiveTable groups={byObjective} resultLabel={resultLabel} cprLabel={cprLabel} hasRevenue={hasRevenue} />}
+      {/* Cards de mesma altura (340px); conteúdo rola por dentro quando passa. */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 'clamp(8px, 1.2vw, 18px)', alignItems: 'stretch', flexShrink: 0 }}>
+        <Card title="Por objetivo da campanha" style={{ height: 340 }}>
+          <div style={{ flex: 1, minHeight: 0, overflowY: 'auto' }}>
+            {byObjective.length === 0
+              ? <Empty msg="Sem objetivo identificado" />
+              : <ObjectiveTable groups={byObjective} resultLabel={resultLabel} cprLabel={cprLabel} hasRevenue={hasRevenue} />}
+          </div>
         </Card>
         {videoAds.length > 0 && (
-          <Card title="Métricas de vídeo — retenção">
-            <VideoTable ads={videoAds} />
+          <Card title="Métricas de vídeo — retenção" style={{ height: 340 }}>
+            <div style={{ flex: 1, minHeight: 0, overflowY: 'auto' }}>
+              <VideoTable ads={videoAds} />
+            </div>
           </Card>
         )}
       </div>
+
+      {/* Análise da IA — sob demanda. Interpreta os criativos + selos por regra.
+          flexShrink:0 + minHeight impedem o card de colapsar no flex da aba (igual carrossel). */}
+      <Card
+        title="🤖 Análise da IA — recomendações"
+        style={{ flexShrink: 0, minHeight: 120, marginBottom: 8 }}
+        headerRight={
+          <button onClick={gerarAnalise} disabled={aiLoading} style={{ ...btnGhost, background: aiLoading ? 'rgba(255,255,255,.06)' : '#7dd3fc', color: aiLoading ? '#94a3b8' : '#0a2540', borderColor: '#7dd3fc', cursor: aiLoading ? 'wait' : 'pointer' }}>
+            {aiLoading ? 'Gerando…' : ai ? 'Gerar de novo' : 'Gerar análise'}
+          </button>
+        }
+      >
+        {aiError ? <Empty msg={aiError} />
+          : aiLoading && !ai ? <Empty msg="A IA está analisando os criativos…" />
+          : !ai ? <Empty msg="Clique em 'Gerar análise' para a IA recomendar o que escalar, pausar, melhorar e replicar." />
+          : <AiPanel ai={ai} />}
+      </Card>
+    </div>
+  )
+}
+
+// Renderiza a análise estruturada da IA (headline + diagnóstico + ações priorizadas).
+const PRIO_STYLE: Record<string, { label: string; color: string }> = {
+  high: { label: 'Alta', color: '#f87171' },
+  medium: { label: 'Média', color: '#fbbf24' },
+  low: { label: 'Baixa', color: '#94a3b8' },
+}
+function AiPanel({ ai }: { ai: AiAnalysis }) {
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 12, fontFamily: 'Sora, sans-serif' }}>
+      {ai.headline && <div style={{ fontSize: 15, fontWeight: 800, color: '#fff' }}>{ai.headline}</div>}
+      {ai.diagnosis && <div style={{ fontSize: 13, color: '#cbd5e1', lineHeight: 1.5, whiteSpace: 'pre-wrap' }}>{ai.diagnosis}</div>}
+      {!!ai.nextActions?.length && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          <div style={{ fontSize: 10, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '.04em' }}>Ações recomendadas</div>
+          {ai.nextActions.map((act, i) => {
+            const p = PRIO_STYLE[act.priority] || PRIO_STYLE.medium
+            return (
+              <div key={i} style={{ display: 'flex', gap: 10, alignItems: 'flex-start', background: 'rgba(255,255,255,.03)', borderRadius: 10, padding: '10px 12px', border: '1px solid rgba(255,255,255,.06)' }}>
+                <span style={{ fontSize: 9, fontWeight: 800, color: p.color, border: `1px solid ${p.color}`, borderRadius: 99, padding: '2px 8px', whiteSpace: 'nowrap', marginTop: 1 }}>{p.label}</span>
+                <div>
+                  <div style={{ fontSize: 13, fontWeight: 700, color: '#fff' }}>{act.title}</div>
+                  <div style={{ fontSize: 12, color: '#94a3b8', lineHeight: 1.4 }}>{act.detail}</div>
+                </div>
+              </div>
+            )
+          })}
+        </div>
+      )}
+      {(!!ai.wins?.length || !!ai.opportunities?.length || !!ai.risks?.length) && (
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 10 }}>
+          {!!ai.wins?.length && <AiList title="Destaques" color="#34d399" items={ai.wins} />}
+          {!!ai.opportunities?.length && <AiList title="Oportunidades" color="#7dd3fc" items={ai.opportunities} />}
+          {!!ai.risks?.length && <AiList title="Riscos" color="#f87171" items={ai.risks} />}
+        </div>
+      )}
+    </div>
+  )
+}
+function AiList({ title, color, items }: { title: string; color: string; items: string[] }) {
+  return (
+    <div>
+      <div style={{ fontSize: 10, fontWeight: 800, color, textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 4 }}>{title}</div>
+      <ul style={{ margin: 0, paddingLeft: 16, display: 'flex', flexDirection: 'column', gap: 3 }}>
+        {items.map((it, i) => <li key={i} style={{ fontSize: 12, color: '#cbd5e1', lineHeight: 1.4 }}>{it}</li>)}
+      </ul>
     </div>
   )
 }
@@ -350,9 +513,9 @@ function chip(label: string, active: boolean, onClick: () => void) {
 }
 
 // Carrossel horizontal de cards de criativo (thumbnail + métricas).
-function CreativeCarousel({ ads, sortKey, selected, onSelect, resultLabel, cprLabel, hasRevenue }: {
+function CreativeCarousel({ ads, sortKey, selected, onSelect, resultLabel, cprLabel, hasRevenue, verdictOf }: {
   ads: AdRow[]; sortKey: SortKey; selected: string[]; onSelect: (id: string) => void
-  resultLabel: string; cprLabel: string; hasRevenue: boolean
+  resultLabel: string; cprLabel: string; hasRevenue: boolean; verdictOf: (a: AdRow) => Verdict
 }) {
   const scroller = useRef<HTMLDivElement | null>(null)
   const scroll = (dir: 1 | -1) => scroller.current?.scrollBy({ left: dir * 320, behavior: 'smooth' })
@@ -393,6 +556,10 @@ function CreativeCarousel({ ads, sortKey, selected, onSelect, resultLabel, cprLa
                   : <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#475569', fontSize: 11 }}>sem prévia</div>}
                 <div style={{ position: 'absolute', top: 6, left: 6, background: rank === 0 ? '#fbbf24' : 'rgba(10,37,64,.85)', color: rank === 0 ? '#0a2540' : '#cbd5e1', fontSize: 10, fontWeight: 800, padding: '2px 7px', borderRadius: 99 }}>#{rank + 1}</div>
                 {on && <div style={{ position: 'absolute', top: 6, right: 6, background: '#7dd3fc', color: '#0a2540', fontSize: 10, fontWeight: 800, padding: '2px 8px', borderRadius: 99 }}>✓ comparar</div>}
+                {/* selo de veredito (regra) */}
+                {(() => { const v = verdictOf(a); const st = VERDICT_STYLE[v]; return (
+                  <div style={{ position: 'absolute', bottom: 6, left: 6, background: st.bg, color: st.color, fontSize: 10, fontWeight: 800, padding: '3px 8px', borderRadius: 99, backdropFilter: 'blur(4px)' }}>{st.label}</div>
+                ) })()}
               </div>
               {/* destaque do critério */}
               <div style={{ padding: '8px 10px 4px', borderBottom: '1px solid rgba(255,255,255,.06)' }}>
