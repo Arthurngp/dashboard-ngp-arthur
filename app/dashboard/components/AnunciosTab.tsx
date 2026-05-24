@@ -38,6 +38,7 @@ interface AdRow {
   id: string
   name: string
   thumb: string
+  objective: string // objetivo legível (VENDAS, MENSAGENS, ...) ou 'Outros'
   spend: number
   ctr: number
   results: number
@@ -51,6 +52,19 @@ interface AdRow {
   cpc: number
   video3s: number
   videoThruplay: number
+}
+
+// Mapeia o objective bruto da Meta para o rótulo legível (mesma lógica do PresentMode).
+function objectiveToTipo(raw: string): string {
+  const o = (raw || '').toUpperCase()
+  if (!o) return 'Outros'
+  if (o.includes('SALES') || o.includes('CONVERSION') || o.includes('PRODUCT') || o.includes('CATALOG')) return 'Vendas'
+  if (o.includes('LEAD')) return 'Leads'
+  if (o.includes('MESSAG')) return 'Mensagens'
+  if (o.includes('TRAFFIC') || o.includes('LINK_CLICK')) return 'Tráfego'
+  if (o.includes('ENGAGE') || o.includes('POST')) return 'Engajamento'
+  if (o.includes('AWARENESS') || o.includes('REACH') || o.includes('VIDEO')) return 'Reconhecimento'
+  return 'Outros'
 }
 
 const MAX_CARDS = 20 // top N por gasto que recebem thumbnail e viram cards
@@ -75,6 +89,8 @@ export default function AnunciosTab({ metaAccount, period, filteringParam, insig
   const [error, setError] = useState('')
   const [sortKey, setSortKey] = useState<SortKey>('results')
   const [selected, setSelected] = useState<string[]>([])
+  const [objectiveFilter, setObjectiveFilter] = useState<string | null>(null) // filtra o carrossel por objetivo
+  const [compareOpen, setCompareOpen] = useState(false) // abre o modal de comparação
   const hasRevenue = useMemo(() => !!ads?.some(a => a.roas > 0), [ads])
 
   useEffect(() => {
@@ -85,7 +101,7 @@ export default function AnunciosTab({ metaAccount, period, filteringParam, insig
       try {
         const params: Record<string, string> = {
           ...insightsDefaults, level: 'ad', limit: '200',
-          fields: 'ad_id,ad_name,spend,ctr,actions,impressions,frequency,cpm,reach,inline_link_clicks,video_play_actions,video_thruplay_watched_actions,purchase_roas',
+          fields: 'ad_id,ad_name,objective,spend,ctr,actions,impressions,frequency,cpm,reach,inline_link_clicks,video_play_actions,video_thruplay_watched_actions,purchase_roas',
           ...(period as Record<string, string>),
           ...(filteringParam ? { filtering: filteringParam } : {}),
         }
@@ -100,7 +116,7 @@ export default function AnunciosTab({ metaAccount, period, filteringParam, insig
           const videoThruplay = +(ad.video_thruplay_watched_actions?.[0]?.value || 0)
           const roas = +(ad.purchase_roas?.find((x: any) => x.action_type === 'omni_purchase')?.value || ad.purchase_roas?.[0]?.value || 0)
           return {
-            id: ad.ad_id || '', name: ad.ad_name || '—', thumb: '', spend,
+            id: ad.ad_id || '', name: ad.ad_name || '—', thumb: '', objective: objectiveToTipo(ad.objective), spend,
             ctr: +ad.ctr || 0, results, cpa: results > 0 ? spend / results : 0, roas,
             impressions: +ad.impressions || 0, frequency: +ad.frequency || 0, cpm: +ad.cpm || 0, reach: +ad.reach || 0,
             linkClicks, cpc: linkClicks > 0 ? spend / linkClicks : 0, video3s, videoThruplay,
@@ -154,8 +170,28 @@ export default function AnunciosTab({ metaAccount, period, filteringParam, insig
   if (error) return <div style={{ flex: 1, display: 'flex' }}><Empty msg={error} /></div>
   if (!ads || ads.length === 0) return <div style={{ flex: 1, display: 'flex' }}><Empty msg="Sem anúncios com dados no período" /></div>
 
+  // Carrossel filtrado pelo objetivo selecionado na tabela (ou todos).
+  const carouselAds = objectiveFilter ? sorted.filter(a => a.objective === objectiveFilter) : sorted
   const selectedAds = sorted.filter(a => selected.includes(a.id))
   const videoAds = sorted.filter(a => a.video3s > 0)
+
+  // Agrupa por objetivo da campanha (comparação justa: vendas com vendas, etc).
+  const byObjective = (() => {
+    const map = new Map<string, AdRow[]>()
+    for (const a of sorted) {
+      const arr = map.get(a.objective) || []
+      arr.push(a)
+      map.set(a.objective, arr)
+    }
+    return Array.from(map.entries()).map(([objective, list]) => {
+      const spend = list.reduce((s, x) => s + x.spend, 0)
+      const results = list.reduce((s, x) => s + x.results, 0)
+      const revenue = list.reduce((s, x) => s + (x.roas * x.spend), 0)
+      // melhor criativo do grupo = mais resultados (desempate: menor custo)
+      const best = [...list].sort((x, y) => y.results - x.results || (x.cpa || 1e9) - (y.cpa || 1e9))[0]
+      return { objective, count: list.length, spend, results, cpr: results > 0 ? spend / results : 0, roas: spend > 0 ? revenue / spend : 0, best }
+    }).sort((a, b) => b.spend - a.spend)
+  })()
 
   const sortButtons = (
     <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
@@ -175,32 +211,143 @@ export default function AnunciosTab({ metaAccount, period, filteringParam, insig
 
   return (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 'clamp(8px, 1.2vw, 18px)', minHeight: 0, overflow: 'auto' }}>
-      {/* Comparação lado a lado (quando há seleção) */}
-      {selectedAds.length > 0 && (
-        <Card title={`Comparação (${selectedAds.length}/3)`} headerRight={<button onClick={() => setSelected([])} style={btnGhost}>Limpar</button>}>
-          <CompareGrid ads={selectedAds} resultLabel={resultLabel} cprLabel={cprLabel} hasRevenue={hasRevenue} />
-        </Card>
+      {/* Botão flutuante de comparação — aparece quando há criativos marcados. */}
+      {selectedAds.length > 0 && !compareOpen && (
+        <button onClick={() => setCompareOpen(true)}
+          style={{ position: 'fixed', bottom: 24, left: '50%', transform: 'translateX(-50%)', zIndex: 1100,
+            background: '#7dd3fc', color: '#0a2540', border: 'none', borderRadius: 99, padding: '12px 24px',
+            fontSize: 14, fontWeight: 800, cursor: 'pointer', fontFamily: 'inherit', boxShadow: '0 10px 30px rgba(0,0,0,.4)' }}>
+          Comparar {selectedAds.length} criativo{selectedAds.length > 1 ? 's' : ''}
+        </button>
       )}
 
-      {/* Carrossel de criativos campeões */}
-      <Card title={`Criativos — top ${ads.length} por relevância`} headerRight={sortButtons}>
+      {/* Modal de comparação: thumbnails + métricas, com seletor pra adicionar/remover sem fechar. */}
+      {compareOpen && selectedAds.length > 0 && (
+        <div onClick={() => setCompareOpen(false)} style={{ position: 'fixed', inset: 0, background: 'rgba(5,18,33,.78)', zIndex: 1200, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24 }}>
+          <div onClick={e => e.stopPropagation()} style={{ background: '#0a2540', border: '1px solid rgba(255,255,255,.14)', borderRadius: 16, padding: 20, maxWidth: 960, width: '100%', maxHeight: '88vh', overflow: 'auto', boxShadow: '0 24px 60px rgba(0,0,0,.5)' }}>
+            <div style={{ display: 'flex', alignItems: 'center', marginBottom: 14 }}>
+              <div style={{ flex: 1, fontSize: 14, fontWeight: 800, color: '#fff', textTransform: 'uppercase', letterSpacing: '.04em' }}>Comparação ({selectedAds.length}/3)</div>
+              <button onClick={() => setSelected([])} style={{ ...btnGhost, marginRight: 8 }}>Limpar</button>
+              <button onClick={() => setCompareOpen(false)} style={btnGhost}>✕ Fechar</button>
+            </div>
+            <CompareGrid ads={selectedAds} resultLabel={resultLabel} cprLabel={cprLabel} hasRevenue={hasRevenue} />
+            {/* Seletor: adiciona/remove criativos sem sair do modal */}
+            <div style={{ marginTop: 16, borderTop: '1px solid rgba(255,255,255,.1)', paddingTop: 12 }}>
+              <div style={{ fontSize: 10, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 8 }}>Adicionar / remover (até 3)</div>
+              <div style={{ display: 'flex', gap: 8, overflowX: 'auto', paddingBottom: 6 }}>
+                {carouselAds.map(a => {
+                  const on = selected.includes(a.id)
+                  const disabled = !on && selected.length >= 3
+                  return (
+                    <button key={a.id} onClick={() => !disabled && toggleSelect(a.id)} disabled={disabled}
+                      title={a.name}
+                      style={{ flex: '0 0 auto', width: 64, padding: 0, border: `2px solid ${on ? '#7dd3fc' : 'rgba(255,255,255,.12)'}`, borderRadius: 8, overflow: 'hidden', cursor: disabled ? 'not-allowed' : 'pointer', opacity: disabled ? 0.4 : 1, background: '#0f2942' }}>
+                      <div style={{ width: '100%', aspectRatio: '1', position: 'relative' }}>
+                        {a.thumb ? <img src={a.thumb} alt={a.name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#475569', fontSize: 8 }}>—</div>}
+                        {on && <div style={{ position: 'absolute', inset: 0, background: 'rgba(125,211,252,.25)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontWeight: 800, fontSize: 16 }}>✓</div>}
+                      </div>
+                    </button>
+                  )
+                })}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Carrossel de criativos campeões. flexShrink:0 + overflow visível impedem o
+          card de colapsar (senão os blocos abaixo sobrepõem os cards). */}
+      <Card
+        title={objectiveFilter ? `Criativos — ${objectiveFilter} (${carouselAds.length})` : `Criativos — top ${ads.length} por relevância`}
+        headerRight={
+          <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+            {/* Chips de objetivo: filtram o carrossel. 'Todos' limpa. */}
+            {byObjective.length > 1 && (
+              <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap' }}>
+                {chip('Todos', objectiveFilter === null, () => setObjectiveFilter(null))}
+                {byObjective.map(g => chip(`${g.objective} (${g.count})`, objectiveFilter === g.objective, () => setObjectiveFilter(g.objective)))}
+              </div>
+            )}
+            {sortButtons}
+          </div>
+        }
+        style={{ flexShrink: 0, overflow: 'visible' }}
+      >
         <CreativeCarousel
-          ads={sorted} sortKey={sortKey} selected={selected} onSelect={toggleSelect}
+          ads={carouselAds} sortKey={sortKey} selected={selected} onSelect={toggleSelect}
           resultLabel={resultLabel} cprLabel={cprLabel} hasRevenue={hasRevenue}
         />
       </Card>
 
-      {/* Métricas de vídeo */}
-      {videoAds.length > 0 && (
-        <Card title="Métricas de vídeo — retenção">
-          <VideoTable ads={videoAds} />
+      {/* Módulos de análise abaixo do carrossel — grid 2 colunas */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 'clamp(8px, 1.2vw, 18px)', alignItems: 'start' }}>
+        <Card title="Por objetivo da campanha">
+          {byObjective.length === 0
+            ? <Empty msg="Sem objetivo identificado" />
+            : <ObjectiveTable groups={byObjective} resultLabel={resultLabel} cprLabel={cprLabel} hasRevenue={hasRevenue} />}
         </Card>
-      )}
+        {videoAds.length > 0 && (
+          <Card title="Métricas de vídeo — retenção">
+            <VideoTable ads={videoAds} />
+          </Card>
+        )}
+      </div>
+    </div>
+  )
+}
+
+// Resumo por objetivo: nº de criativos, gasto, resultado, custo médio, ROAS, melhor criativo.
+function ObjectiveTable({ groups, resultLabel, cprLabel, hasRevenue }: {
+  groups: { objective: string; count: number; spend: number; results: number; cpr: number; roas: number; best: AdRow }[]
+  resultLabel: string; cprLabel: string; hasRevenue: boolean
+}) {
+  return (
+    <div style={{ overflowX: 'auto' }}>
+      <table style={{ width: '100%', borderCollapse: 'collapse', fontFamily: 'Sora, sans-serif' }}>
+        <thead>
+          <tr style={{ borderBottom: '1px solid rgba(255,255,255,.1)' }}>
+            <th style={{ ...th, textAlign: 'left' }}>Objetivo</th>
+            <th style={th}>Criativos</th>
+            <th style={th}>Gasto</th>
+            <th style={th}>{resultLabel}</th>
+            <th style={th}>{cprLabel}</th>
+            {hasRevenue && <th style={th}>ROAS</th>}
+          </tr>
+        </thead>
+        <tbody>
+          {groups.map(g => (
+            <tr key={g.objective} style={{ borderBottom: '1px solid rgba(255,255,255,.05)' }}>
+              <td style={{ ...td, textAlign: 'left', fontWeight: 700 }}>
+                {g.objective}
+                <div style={{ fontSize: 9, color: '#64748b', fontWeight: 500, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 160 }} title={g.best?.name}>★ {g.best?.name}</div>
+              </td>
+              <td style={td}>{g.count}</td>
+              <td style={td}>{fmtBrl(g.spend)}</td>
+              <td style={td}>{g.results > 0 ? fmtN(g.results) : '—'}</td>
+              <td style={td}>{g.cpr > 0 ? fmtBrl(g.cpr) : '—'}</td>
+              {hasRevenue && <td style={{ ...td, fontWeight: 700 }}>{g.roas > 0 ? `${g.roas.toFixed(2)}x` : '—'}</td>}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <div style={{ fontSize: 10, color: '#64748b', marginTop: 6 }}>★ = melhor criativo do objetivo (mais resultados). Filtre o carrossel pelos chips acima.</div>
     </div>
   )
 }
 
 const btnGhost: React.CSSProperties = { background: 'rgba(255,255,255,.06)', border: '1px solid rgba(255,255,255,.14)', borderRadius: 8, color: '#cbd5e1', fontSize: 11, fontWeight: 700, padding: '4px 10px', cursor: 'pointer', fontFamily: 'inherit' }
+
+// Chip de filtro (objetivo). Verde-claro quando ativo.
+function chip(label: string, active: boolean, onClick: () => void) {
+  return (
+    <button key={label} onClick={onClick}
+      style={{ fontSize: 11, fontWeight: 700, padding: '4px 10px', borderRadius: 99, cursor: 'pointer', fontFamily: 'inherit',
+        background: active ? '#34d399' : 'rgba(255,255,255,.06)', border: `1px solid ${active ? '#34d399' : 'rgba(255,255,255,.14)'}`,
+        color: active ? '#0a2540' : '#cbd5e1', whiteSpace: 'nowrap' }}>
+      {label}
+    </button>
+  )
+}
 
 // Carrossel horizontal de cards de criativo (thumbnail + métricas).
 function CreativeCarousel({ ads, sortKey, selected, onSelect, resultLabel, cprLabel, hasRevenue }: {
@@ -312,7 +459,16 @@ function CompareGrid({ ads, resultLabel, cprLabel, hasRevenue }: { ads: AdRow[];
         <thead>
           <tr style={{ borderBottom: '1px solid rgba(255,255,255,.1)' }}>
             <th style={{ ...th, textAlign: 'left' }}>Métrica</th>
-            {ads.map(a => <th key={a.id} style={{ ...th, maxWidth: 160, overflow: 'hidden', textOverflow: 'ellipsis' }} title={a.name}>{a.name}</th>)}
+            {ads.map(a => (
+              <th key={a.id} style={{ ...th, cursor: 'default', textAlign: 'center', padding: '4px 8px', verticalAlign: 'bottom' }} title={a.name}>
+                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 5 }}>
+                  <div style={{ width: 72, height: 72, borderRadius: 8, overflow: 'hidden', background: '#0f2942', flexShrink: 0 }}>
+                    {a.thumb ? <img src={a.thumb} alt={a.name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#475569', fontSize: 9 }}>sem prévia</div>}
+                  </div>
+                  <span style={{ maxWidth: 120, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', textTransform: 'none', fontWeight: 700, color: '#e2e8f0' }}>{a.name}</span>
+                </div>
+              </th>
+            ))}
           </tr>
         </thead>
         <tbody>
