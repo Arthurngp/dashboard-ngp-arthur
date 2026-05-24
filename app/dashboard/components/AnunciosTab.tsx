@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { metaCall } from '@/lib/meta'
 import { ACTION_KEYS, sumActions } from '@/lib/meta-metrics'
 import { DateParam } from '@/types'
@@ -9,7 +9,7 @@ import { DateParam } from '@/types'
 function Card({ title, children, style, headerRight }: { title: string; children: React.ReactNode; style?: React.CSSProperties; headerRight?: React.ReactNode }) {
   return (
     <div style={{ background: 'rgba(255,255,255,.04)', border: '1px solid rgba(255,255,255,.08)', borderRadius: 12, padding: 'clamp(10px, 1vw, 16px)', display: 'flex', flexDirection: 'column', minHeight: 0, minWidth: 0, ...style }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 'clamp(6px, .7vw, 10px)' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 'clamp(6px, .7vw, 10px)', flexWrap: 'wrap' }}>
         <div style={{ fontSize: 'clamp(9px, .75vw, 13px)', fontWeight: 700, color: '#fff', letterSpacing: '.06em', textTransform: 'uppercase', flex: 1 }}>{title}</div>
         {headerRight}
       </div>
@@ -37,6 +37,7 @@ interface Props {
 interface AdRow {
   id: string
   name: string
+  thumb: string
   spend: number
   ctr: number
   results: number
@@ -52,20 +53,28 @@ interface AdRow {
   videoThruplay: number
 }
 
-const MIN_SPEND = 1
+const MAX_CARDS = 20 // top N por gasto que recebem thumbnail e viram cards
 const fmtBrl = (n: number) => 'R$ ' + n.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 const fmtN = (n: number) => n.toLocaleString('pt-BR')
 const pct = (n: number) => `${(n * 100).toFixed(1)}%`
 
-type SortKey = 'spend' | 'ctr' | 'cpc' | 'cpa' | 'roas' | 'results' | 'frequency'
+// Critérios de ordenação do carrossel. `lower` = menor é melhor.
+type SortKey = 'results' | 'cpa' | 'cpm' | 'ctr' | 'spend' | 'roas'
+const SORTS: { k: SortKey; label: string; lower?: boolean; needsRevenue?: boolean }[] = [
+  { k: 'results', label: 'Mais resultados' },
+  { k: 'cpa', label: 'Menor custo', lower: true },
+  { k: 'cpm', label: 'Menor CPM', lower: true },
+  { k: 'ctr', label: 'Maior CTR' },
+  { k: 'spend', label: 'Maior investimento' },
+  { k: 'roas', label: 'Melhor ROAS', needsRevenue: true },
+]
 
 export default function AnunciosTab({ metaAccount, period, filteringParam, insightsDefaults, tipo, resultLabel, cprLabel }: Props) {
   const [ads, setAds] = useState<AdRow[] | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
-  const [sortKey, setSortKey] = useState<SortKey>('spend')
-  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc')
-  const [selected, setSelected] = useState<string[]>([]) // ids p/ comparação (máx 3)
+  const [sortKey, setSortKey] = useState<SortKey>('results')
+  const [selected, setSelected] = useState<string[]>([])
   const hasRevenue = useMemo(() => !!ads?.some(a => a.roas > 0), [ads])
 
   useEffect(() => {
@@ -82,8 +91,8 @@ export default function AnunciosTab({ metaAccount, period, filteringParam, insig
         }
         const r = await metaCall('insights', params, metaAccount)
         if (cancelled) return
-        const rows = Array.isArray(r?.data) ? r.data : []
-        const mapped: AdRow[] = rows.map((ad: any): AdRow => {
+        const rows: any[] = Array.isArray(r?.data) ? r.data : []
+        const all: AdRow[] = rows.map((ad: any): AdRow => {
           const spend = +ad.spend || 0
           const results = sumActions(ad.actions, keys)
           const linkClicks = +ad.inline_link_clicks || 0
@@ -91,13 +100,27 @@ export default function AnunciosTab({ metaAccount, period, filteringParam, insig
           const videoThruplay = +(ad.video_thruplay_watched_actions?.[0]?.value || 0)
           const roas = +(ad.purchase_roas?.find((x: any) => x.action_type === 'omni_purchase')?.value || ad.purchase_roas?.[0]?.value || 0)
           return {
-            id: ad.ad_id || '', name: ad.ad_name || '—', spend,
+            id: ad.ad_id || '', name: ad.ad_name || '—', thumb: '', spend,
             ctr: +ad.ctr || 0, results, cpa: results > 0 ? spend / results : 0, roas,
             impressions: +ad.impressions || 0, frequency: +ad.frequency || 0, cpm: +ad.cpm || 0, reach: +ad.reach || 0,
             linkClicks, cpc: linkClicks > 0 ? spend / linkClicks : 0, video3s, videoThruplay,
           }
-        }).filter((a: AdRow) => a.spend > 0 || a.results > 0)
-        setAds(mapped)
+        })
+        const mapped: AdRow[] = all
+          .filter((a) => a.spend > 0 || a.results > 0)
+          .sort((a, b) => b.spend - a.spend)
+          .slice(0, MAX_CARDS)
+
+        // Busca thumbnail só dos top N (1 chamada por anúncio).
+        await Promise.all(mapped.map(async (ad) => {
+          if (!ad.id) return
+          try {
+            const cr = await metaCall(`${ad.id}/`, { fields: 'creative{thumbnail_url.width(320).height(320),image_url}' }, metaAccount)
+            ad.thumb = cr?.creative?.thumbnail_url || cr?.creative?.image_url || ''
+          } catch {}
+        }))
+        if (cancelled) return
+        setAds([...mapped])
       } catch (e) {
         if (!cancelled) setError(e instanceof Error ? e.message : 'Erro ao carregar anúncios.')
       } finally {
@@ -110,17 +133,19 @@ export default function AnunciosTab({ metaAccount, period, filteringParam, insig
 
   const sorted = useMemo(() => {
     if (!ads) return []
-    const arr = [...ads].sort((a, b) => {
+    const cfg = SORTS.find(s => s.k === sortKey) || SORTS[0]
+    return [...ads].sort((a, b) => {
       const va = a[sortKey], vb = b[sortKey]
-      return sortDir === 'desc' ? vb - va : va - vb
+      // métricas "menor é melhor" (cpa/cpm) com valor 0 vão pro fim (0 = sem dado)
+      if (cfg.lower) {
+        if (va === 0) return 1
+        if (vb === 0) return -1
+        return va - vb
+      }
+      return vb - va
     })
-    return arr
-  }, [ads, sortKey, sortDir])
+  }, [ads, sortKey])
 
-  function toggleSort(k: SortKey) {
-    if (k === sortKey) setSortDir(d => d === 'desc' ? 'asc' : 'desc')
-    else { setSortKey(k); setSortDir('desc') }
-  }
   function toggleSelect(id: string) {
     setSelected(prev => prev.includes(id) ? prev.filter(x => x !== id) : prev.length >= 3 ? prev : [...prev, id])
   }
@@ -132,20 +157,35 @@ export default function AnunciosTab({ metaAccount, period, filteringParam, insig
   const selectedAds = sorted.filter(a => selected.includes(a.id))
   const videoAds = sorted.filter(a => a.video3s > 0)
 
+  const sortButtons = (
+    <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+      {SORTS.filter(s => !s.needsRevenue || hasRevenue).map(s => {
+        const on = sortKey === s.k
+        return (
+          <button key={s.k} onClick={() => setSortKey(s.k)}
+            style={{ fontSize: 11, fontWeight: 700, padding: '4px 10px', borderRadius: 8, cursor: 'pointer', fontFamily: 'inherit',
+              background: on ? '#7dd3fc' : 'rgba(255,255,255,.06)', border: `1px solid ${on ? '#7dd3fc' : 'rgba(255,255,255,.14)'}`,
+              color: on ? '#0a2540' : '#cbd5e1' }}>
+            {s.label}
+          </button>
+        )
+      })}
+    </div>
+  )
+
   return (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 'clamp(8px, 1.2vw, 18px)', minHeight: 0, overflow: 'auto' }}>
-      {/* Comparação lado a lado (só quando há seleção) */}
+      {/* Comparação lado a lado (quando há seleção) */}
       {selectedAds.length > 0 && (
         <Card title={`Comparação (${selectedAds.length}/3)`} headerRight={<button onClick={() => setSelected([])} style={btnGhost}>Limpar</button>}>
           <CompareGrid ads={selectedAds} resultLabel={resultLabel} cprLabel={cprLabel} hasRevenue={hasRevenue} />
         </Card>
       )}
 
-      {/* Ranking multi-métrica */}
-      <Card title={`Ranking de anúncios — ${ads.length} no período`}>
-        <Ranking
-          rows={sorted} sortKey={sortKey} sortDir={sortDir} onSort={toggleSort}
-          selected={selected} onSelect={toggleSelect}
+      {/* Carrossel de criativos campeões */}
+      <Card title={`Criativos — top ${ads.length} por relevância`} headerRight={sortButtons}>
+        <CreativeCarousel
+          ads={sorted} sortKey={sortKey} selected={selected} onSelect={toggleSelect}
           resultLabel={resultLabel} cprLabel={cprLabel} hasRevenue={hasRevenue}
         />
       </Card>
@@ -162,63 +202,96 @@ export default function AnunciosTab({ metaAccount, period, filteringParam, insig
 
 const btnGhost: React.CSSProperties = { background: 'rgba(255,255,255,.06)', border: '1px solid rgba(255,255,255,.14)', borderRadius: 8, color: '#cbd5e1', fontSize: 11, fontWeight: 700, padding: '4px 10px', cursor: 'pointer', fontFamily: 'inherit' }
 
-const th: React.CSSProperties = { color: '#94a3b8', fontSize: 10, fontWeight: 700, padding: '5px 6px', textTransform: 'uppercase', letterSpacing: '.03em', textAlign: 'right', whiteSpace: 'nowrap', cursor: 'pointer', userSelect: 'none' }
-const td: React.CSSProperties = { fontSize: 12, padding: '5px 6px', textAlign: 'right', color: '#e2e8f0', fontVariantNumeric: 'tabular-nums' }
-
-function Ranking({ rows, sortKey, sortDir, onSort, selected, onSelect, resultLabel, cprLabel, hasRevenue }: {
-  rows: AdRow[]; sortKey: SortKey; sortDir: 'asc' | 'desc'; onSort: (k: SortKey) => void
-  selected: string[]; onSelect: (id: string) => void; resultLabel: string; cprLabel: string; hasRevenue: boolean
+// Carrossel horizontal de cards de criativo (thumbnail + métricas).
+function CreativeCarousel({ ads, sortKey, selected, onSelect, resultLabel, cprLabel, hasRevenue }: {
+  ads: AdRow[]; sortKey: SortKey; selected: string[]; onSelect: (id: string) => void
+  resultLabel: string; cprLabel: string; hasRevenue: boolean
 }) {
-  const arrow = (k: SortKey) => sortKey === k ? (sortDir === 'desc' ? ' ↓' : ' ↑') : ''
-  const cols: { k: SortKey; label: string; show: boolean }[] = [
-    { k: 'spend', label: 'Gasto', show: true },
-    { k: 'results', label: resultLabel, show: true },
-    { k: 'cpa', label: cprLabel, show: true },
-    { k: 'roas', label: 'ROAS', show: hasRevenue },
-    { k: 'ctr', label: 'CTR', show: true },
-    { k: 'cpc', label: 'CPC', show: true },
-    { k: 'frequency', label: 'Freq.', show: true },
-  ]
+  const scroller = useRef<HTMLDivElement | null>(null)
+  const scroll = (dir: 1 | -1) => scroller.current?.scrollBy({ left: dir * 320, behavior: 'smooth' })
+
+  // métrica em destaque conforme o critério ativo
+  const highlight = (a: AdRow): { label: string; value: string } => {
+    switch (sortKey) {
+      case 'cpa': return { label: cprLabel, value: a.cpa > 0 ? fmtBrl(a.cpa) : '—' }
+      case 'cpm': return { label: 'CPM', value: a.cpm > 0 ? fmtBrl(a.cpm) : '—' }
+      case 'ctr': return { label: 'CTR', value: pct(a.ctr / 100) }
+      case 'spend': return { label: 'Investido', value: fmtBrl(a.spend) }
+      case 'roas': return { label: 'ROAS', value: a.roas > 0 ? `${a.roas.toFixed(2)}x` : '—' }
+      default: return { label: resultLabel, value: a.results > 0 ? fmtN(a.results) : '—' }
+    }
+  }
+
   return (
-    <div style={{ overflowX: 'auto' }}>
-      <table style={{ width: '100%', borderCollapse: 'collapse', fontFamily: 'Sora, sans-serif' }}>
-        <thead>
-          <tr style={{ borderBottom: '1px solid rgba(255,255,255,.1)' }}>
-            <th style={{ ...th, cursor: 'default', textAlign: 'center', width: 32 }}>✓</th>
-            <th style={{ ...th, cursor: 'default', textAlign: 'left' }}>Anúncio</th>
-            {cols.filter(c => c.show).map(c => (
-              <th key={c.k} style={th} onClick={() => onSort(c.k)}>{c.label}{arrow(c.k)}</th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map(a => {
-            const on = selected.includes(a.id)
-            return (
-              <tr key={a.id} style={{ borderBottom: '1px solid rgba(255,255,255,.05)', background: on ? 'rgba(125,211,252,.08)' : 'transparent' }}>
-                <td style={{ ...td, textAlign: 'center' }}>
+    <div style={{ position: 'relative' }}>
+      <div ref={scroller} style={{ display: 'flex', gap: 12, overflowX: 'auto', paddingBottom: 8, scrollbarWidth: 'thin' }}>
+        {ads.map((a, rank) => {
+          const on = selected.includes(a.id)
+          const h = highlight(a)
+          return (
+            <div key={a.id} style={{
+              flex: '0 0 auto', width: 200, background: 'rgba(255,255,255,.03)', borderRadius: 12,
+              border: `1.5px solid ${on ? '#7dd3fc' : 'rgba(255,255,255,.08)'}`, overflow: 'hidden', display: 'flex', flexDirection: 'column',
+            }}>
+              {/* thumbnail */}
+              <div style={{ position: 'relative', width: '100%', aspectRatio: '1', background: '#0f2942' }}>
+                {a.thumb
+                  ? <img src={a.thumb} alt={a.name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                  : <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#475569', fontSize: 11 }}>sem prévia</div>}
+                <div style={{ position: 'absolute', top: 6, left: 6, background: rank === 0 ? '#fbbf24' : 'rgba(10,37,64,.85)', color: rank === 0 ? '#0a2540' : '#cbd5e1', fontSize: 10, fontWeight: 800, padding: '2px 7px', borderRadius: 99 }}>#{rank + 1}</div>
+                <label style={{ position: 'absolute', top: 6, right: 6, cursor: 'pointer' }}>
                   <input type="checkbox" checked={on} onChange={() => onSelect(a.id)} style={{ cursor: 'pointer' }} />
-                </td>
-                <td style={{ ...td, textAlign: 'left', fontWeight: 600, maxWidth: 260, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={a.name}>{a.name}</td>
-                <td style={td}>{fmtBrl(a.spend)}</td>
-                <td style={td}>{a.results > 0 ? fmtN(a.results) : '—'}</td>
-                <td style={td}>{a.cpa > 0 ? fmtBrl(a.cpa) : '—'}</td>
-                {hasRevenue && <td style={{ ...td, fontWeight: 700 }}>{a.roas > 0 ? `${a.roas.toFixed(2)}x` : '—'}</td>}
-                <td style={td}>{pct(a.ctr / 100)}</td>
-                <td style={td}>{a.cpc > 0 ? fmtBrl(a.cpc) : '—'}</td>
-                <td style={{ ...td, color: a.frequency > 3 ? '#f87171' : '#e2e8f0' }}>{a.frequency.toFixed(1)}</td>
-              </tr>
-            )
-          })}
-        </tbody>
-      </table>
-      <div style={{ fontSize: 10, color: '#64748b', marginTop: 6 }}>Clique no cabeçalho pra ordenar. Marque até 3 anúncios pra comparar.</div>
+                </label>
+              </div>
+              {/* destaque do critério */}
+              <div style={{ padding: '8px 10px 4px', borderBottom: '1px solid rgba(255,255,255,.06)' }}>
+                <div style={{ fontSize: 9, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '.04em' }}>{h.label}</div>
+                <div style={{ fontSize: 18, fontWeight: 800, color: '#fff' }}>{h.value}</div>
+              </div>
+              {/* nome + métricas secundárias */}
+              <div style={{ padding: '6px 10px 10px', display: 'flex', flexDirection: 'column', gap: 3 }}>
+                <div style={{ fontSize: 11, fontWeight: 600, color: '#cbd5e1', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={a.name}>{a.name}</div>
+                <Mini label={resultLabel} value={a.results > 0 ? fmtN(a.results) : '—'} />
+                <Mini label={cprLabel} value={a.cpa > 0 ? fmtBrl(a.cpa) : '—'} />
+                {hasRevenue && <Mini label="ROAS" value={a.roas > 0 ? `${a.roas.toFixed(2)}x` : '—'} />}
+                <Mini label="CTR" value={pct(a.ctr / 100)} />
+                <Mini label="CPM" value={a.cpm > 0 ? fmtBrl(a.cpm) : '—'} />
+                <Mini label="Freq." value={a.frequency.toFixed(1)} warn={a.frequency > 3} />
+              </div>
+            </div>
+          )
+        })}
+      </div>
+      {ads.length > 2 && (
+        <>
+          <button onClick={() => scroll(-1)} style={navBtn('left')} aria-label="Anterior">‹</button>
+          <button onClick={() => scroll(1)} style={navBtn('right')} aria-label="Próximo">›</button>
+        </>
+      )}
+      <div style={{ fontSize: 10, color: '#64748b', marginTop: 6 }}>Marque até 3 (caixa no canto do card) pra comparar. Botões acima reordenam.</div>
     </div>
   )
 }
 
+function Mini({ label, value, warn }: { label: string; value: string; warn?: boolean }) {
+  return (
+    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11 }}>
+      <span style={{ color: '#94a3b8' }}>{label}</span>
+      <span style={{ color: warn ? '#f87171' : '#e2e8f0', fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>{value}</span>
+    </div>
+  )
+}
+
+const navBtn = (side: 'left' | 'right'): React.CSSProperties => ({
+  position: 'absolute', top: '38%', [side]: -6, width: 30, height: 30, borderRadius: 99,
+  background: 'rgba(10,37,64,.9)', border: '1px solid rgba(255,255,255,.2)', color: '#fff', fontSize: 18, fontWeight: 700,
+  cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 2,
+})
+
+const th: React.CSSProperties = { color: '#94a3b8', fontSize: 10, fontWeight: 700, padding: '5px 6px', textTransform: 'uppercase', letterSpacing: '.03em', textAlign: 'right', whiteSpace: 'nowrap' }
+const td: React.CSSProperties = { fontSize: 12, padding: '5px 6px', textAlign: 'right', color: '#e2e8f0', fontVariantNumeric: 'tabular-nums' }
+
 function CompareGrid({ ads, resultLabel, cprLabel, hasRevenue }: { ads: AdRow[]; resultLabel: string; cprLabel: string; hasRevenue: boolean }) {
-  // métricas em linhas, anúncios em colunas. Destaca melhor por linha.
   const metrics: { label: string; get: (a: AdRow) => number; fmt: (n: number) => string; better: 'high' | 'low'; show: boolean }[] = [
     { label: 'Gasto', get: a => a.spend, fmt: fmtBrl, better: 'low', show: true },
     { label: resultLabel, get: a => a.results, fmt: fmtN, better: 'high', show: true },
@@ -226,6 +299,7 @@ function CompareGrid({ ads, resultLabel, cprLabel, hasRevenue }: { ads: AdRow[];
     { label: 'ROAS', get: a => a.roas, fmt: (n) => n > 0 ? `${n.toFixed(2)}x` : '—', better: 'high', show: hasRevenue },
     { label: 'CTR', get: a => a.ctr, fmt: (n) => pct(n / 100), better: 'high', show: true },
     { label: 'CPC', get: a => a.cpc, fmt: (n) => n > 0 ? fmtBrl(n) : '—', better: 'low', show: true },
+    { label: 'CPM', get: a => a.cpm, fmt: (n) => n > 0 ? fmtBrl(n) : '—', better: 'low', show: true },
     { label: 'Frequência', get: a => a.frequency, fmt: (n) => n.toFixed(1), better: 'low', show: true },
   ]
   return (
@@ -233,8 +307,8 @@ function CompareGrid({ ads, resultLabel, cprLabel, hasRevenue }: { ads: AdRow[];
       <table style={{ width: '100%', borderCollapse: 'collapse', fontFamily: 'Sora, sans-serif' }}>
         <thead>
           <tr style={{ borderBottom: '1px solid rgba(255,255,255,.1)' }}>
-            <th style={{ ...th, cursor: 'default', textAlign: 'left' }}>Métrica</th>
-            {ads.map(a => <th key={a.id} style={{ ...th, cursor: 'default', maxWidth: 160, overflow: 'hidden', textOverflow: 'ellipsis' }} title={a.name}>{a.name}</th>)}
+            <th style={{ ...th, textAlign: 'left' }}>Métrica</th>
+            {ads.map(a => <th key={a.id} style={{ ...th, maxWidth: 160, overflow: 'hidden', textOverflow: 'ellipsis' }} title={a.name}>{a.name}</th>)}
           </tr>
         </thead>
         <tbody>
@@ -259,7 +333,6 @@ function CompareGrid({ ads, resultLabel, cprLabel, hasRevenue }: { ads: AdRow[];
 }
 
 function VideoTable({ ads }: { ads: AdRow[] }) {
-  // hook rate = video3s / impressions; thruplay rate = thruplay / video3s
   const rows = ads.map(a => ({
     name: a.name,
     hook: a.impressions > 0 ? a.video3s / a.impressions : 0,
@@ -272,10 +345,10 @@ function VideoTable({ ads }: { ads: AdRow[] }) {
       <table style={{ width: '100%', borderCollapse: 'collapse', fontFamily: 'Sora, sans-serif' }}>
         <thead>
           <tr style={{ borderBottom: '1px solid rgba(255,255,255,.1)' }}>
-            <th style={{ ...th, cursor: 'default', textAlign: 'left' }}>Anúncio</th>
-            <th style={{ ...th, cursor: 'default', textAlign: 'left', width: '34%' }}>Hook rate (3s/impr.)</th>
-            <th style={{ ...th, cursor: 'default' }}>Thruplay/3s</th>
-            <th style={{ ...th, cursor: 'default' }}>Views 3s</th>
+            <th style={{ ...th, textAlign: 'left' }}>Anúncio</th>
+            <th style={{ ...th, textAlign: 'left', width: '34%' }}>Hook rate (3s/impr.)</th>
+            <th style={th}>Thruplay/3s</th>
+            <th style={th}>Views 3s</th>
           </tr>
         </thead>
         <tbody>
