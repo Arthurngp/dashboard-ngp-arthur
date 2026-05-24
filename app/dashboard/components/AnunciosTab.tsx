@@ -224,24 +224,28 @@ function CreativeCarousel({ ads, sortKey, selected, onSelect, resultLabel, cprLa
 
   return (
     <div style={{ position: 'relative' }}>
-      <div ref={scroller} style={{ display: 'flex', gap: 12, overflowX: 'auto', paddingBottom: 8, scrollbarWidth: 'thin' }}>
+      {/* minHeight fixa a altura do carrossel — sem isso o flex colapsava e os blocos
+          seguintes (vídeo) sobrepunham os cards. */}
+      <div ref={scroller} style={{ display: 'flex', gap: 12, overflowX: 'auto', overflowY: 'hidden', paddingBottom: 8, minHeight: 380, scrollbarWidth: 'thin' }}>
         {ads.map((a, rank) => {
           const on = selected.includes(a.id)
           const h = highlight(a)
+          const disabled = !on && selected.length >= 3
           return (
-            <div key={a.id} style={{
-              flex: '0 0 auto', width: 200, background: 'rgba(255,255,255,.03)', borderRadius: 12,
-              border: `1.5px solid ${on ? '#7dd3fc' : 'rgba(255,255,255,.08)'}`, overflow: 'hidden', display: 'flex', flexDirection: 'column',
-            }}>
+            // Card inteiro clicável: clica pra marcar/desmarcar (padrão "comparar" de marketplace).
+            <div key={a.id} onClick={() => !disabled && onSelect(a.id)} title={disabled ? 'Máximo de 3 para comparar' : on ? 'Clique para remover da comparação' : 'Clique para comparar'}
+              style={{
+                flex: '0 0 auto', width: 200, alignSelf: 'flex-start', background: on ? 'rgba(125,211,252,.10)' : 'rgba(255,255,255,.03)', borderRadius: 12,
+                border: `2px solid ${on ? '#7dd3fc' : 'rgba(255,255,255,.08)'}`, overflow: 'hidden', display: 'flex', flexDirection: 'column',
+                cursor: disabled ? 'not-allowed' : 'pointer', opacity: disabled ? 0.5 : 1, transition: 'border-color .15s, background .15s',
+              }}>
               {/* thumbnail */}
               <div style={{ position: 'relative', width: '100%', aspectRatio: '1', background: '#0f2942' }}>
                 {a.thumb
                   ? <img src={a.thumb} alt={a.name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
                   : <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#475569', fontSize: 11 }}>sem prévia</div>}
                 <div style={{ position: 'absolute', top: 6, left: 6, background: rank === 0 ? '#fbbf24' : 'rgba(10,37,64,.85)', color: rank === 0 ? '#0a2540' : '#cbd5e1', fontSize: 10, fontWeight: 800, padding: '2px 7px', borderRadius: 99 }}>#{rank + 1}</div>
-                <label style={{ position: 'absolute', top: 6, right: 6, cursor: 'pointer' }}>
-                  <input type="checkbox" checked={on} onChange={() => onSelect(a.id)} style={{ cursor: 'pointer' }} />
-                </label>
+                {on && <div style={{ position: 'absolute', top: 6, right: 6, background: '#7dd3fc', color: '#0a2540', fontSize: 10, fontWeight: 800, padding: '2px 8px', borderRadius: 99 }}>✓ comparar</div>}
               </div>
               {/* destaque do critério */}
               <div style={{ padding: '8px 10px 4px', borderBottom: '1px solid rgba(255,255,255,.06)' }}>
@@ -268,7 +272,7 @@ function CreativeCarousel({ ads, sortKey, selected, onSelect, resultLabel, cprLa
           <button onClick={() => scroll(1)} style={navBtn('right')} aria-label="Próximo">›</button>
         </>
       )}
-      <div style={{ fontSize: 10, color: '#64748b', marginTop: 6 }}>Marque até 3 (caixa no canto do card) pra comparar. Botões acima reordenam.</div>
+      <div style={{ fontSize: 10, color: '#64748b', marginTop: 6 }}>Clique num criativo para marcá-lo (até 3) e ver a comparação no topo. Botões acima reordenam.</div>
     </div>
   )
 }
