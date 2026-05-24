@@ -218,12 +218,16 @@ export default function DashboardPage() {
   }), [top8])
 
   const budgetFactor = getPeriodBudgetFactor(period)
+  // "No período" = teto proporcional aos dias já decorridos (referência de ritmo).
   const authorizedForPeriod = monthlyAuthorized > 0 ? monthlyAuthorized * budgetFactor : 0
-  // "Utilizado" = investimento total do cliente no período (Meta + Google), pois o
+  // "Utilizado" (Y) = investimento total do cliente no período (Meta + Google), pois o
   // autorizado (investimento_autorizado_mensal) é o teto total, não só Meta.
   const totalSpendUsed = totalPeriodSpend + googlePeriodSpend
-  const budgetBalance = authorizedForPeriod - totalSpendUsed
-  const budgetUsage = authorizedForPeriod > 0 ? (totalSpendUsed / authorizedForPeriod) * 100 : 0
+  // Saldo e USO (leitura primária) = Y vs AUTORIZADO TOTAL (X). Modelo: X total, Y usado, X−Y.
+  const budgetBalance = monthlyAuthorized - totalSpendUsed
+  const budgetUsage = monthlyAuthorized > 0 ? (totalSpendUsed / monthlyAuthorized) * 100 : 0
+  // Ritmo (secundário) = Y vs teto proporcional aos dias decorridos. >100% = gastando à frente.
+  const paceUsage = authorizedForPeriod > 0 ? (totalSpendUsed / authorizedForPeriod) * 100 : 0
   const hasBudget = monthlyAuthorized > 0
   const budgetOver = hasBudget && budgetBalance < 0
 
@@ -472,7 +476,20 @@ export default function DashboardPage() {
                 <div className={styles.budgetValue}>{hasBudget ? `R$ ${fmt(monthlyAuthorized)}` : 'Não definido'}</div>
                 <div className={styles.budgetMeta}>{hasBudget ? `Mensal · ${periodLabel}` : 'Defina no cadastro'}</div>
               </div>
-              <div><div className={styles.budgetLabel}>No período</div><div className={styles.budgetValueSmall}>{hasBudget ? `R$ ${fmt(authorizedForPeriod)}` : '—'}</div></div>
+              <div>
+                <div className={styles.budgetLabel}>No período</div>
+                <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
+                  <span className={styles.budgetValueSmall}>{hasBudget ? `R$ ${fmt(authorizedForPeriod)}` : '—'}</span>
+                  {hasBudget && paceUsage > 0 && (
+                    <span title="Ritmo: gasto vs teto proporcional aos dias decorridos. Acima de 100% = gastando à frente do previsto."
+                      style={{ fontSize: 11, fontWeight: 800, padding: '2px 7px', borderRadius: 99, whiteSpace: 'nowrap',
+                        color: paceUsage > 100 ? '#dc2626' : '#16a34a',
+                        background: paceUsage > 100 ? 'rgba(220,38,38,.1)' : 'rgba(22,163,74,.1)' }}>
+                      ritmo {Math.round(paceUsage)}%
+                    </span>
+                  )}
+                </div>
+              </div>
               <div><div className={styles.budgetLabel}>Utilizado</div><div className={styles.budgetValueSmall}>R$ {fmt(totalSpendUsed)}</div></div>
               <div><div className={styles.budgetLabel}>Saldo</div><div style={{ fontSize: 17, fontWeight: 800, color: !hasBudget ? '#AEAEB2' : budgetOver ? '#dc2626' : '#16a34a' }}>{hasBudget ? `${budgetBalance >= 0 ? '+' : '-'}R$ ${fmt(Math.abs(budgetBalance))}` : '—'}</div></div>
               <div style={{ minWidth: 150 }}>
