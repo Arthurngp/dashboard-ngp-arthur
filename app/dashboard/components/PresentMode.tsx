@@ -2,9 +2,10 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Campaign, DateParam } from '@/types'
 import { metaCall } from '@/lib/meta'
-import { META_INSIGHTS_DEFAULTS } from '@/lib/meta-metrics'
+import { META_INSIGHTS_DEFAULTS, ACTION_KEYS, sumActions, GENDER_NAMES } from '@/lib/meta-metrics'
 import { fmt, fmtI } from '@/lib/utils'
 import PeriodFilter from '@/components/PeriodFilter'
+import PublicoTab from './PublicoTab'
 
 interface Props {
   clienteName: string
@@ -75,40 +76,6 @@ interface TopAdset {
   spendShare: number
 }
 
-// Action keys candidatos por tipo (cobre variações Pixel/CAPI/onsite)
-const ACTION_KEYS: Record<string, string[]> = {
-  VENDAS: ['omni_purchase', 'offsite_conversion.fb_pixel_purchase', 'purchase', 'offline_conversion.purchase'],
-  LEADS: ['lead', 'offsite_conversion.fb_pixel_lead', 'onsite_conversion.lead_grouped'],
-  MENSAGENS: ['onsite_conversion.messaging_conversation_started_7d', 'messaging_conversation_started_7d', 'onsite_conversion.messaging_first_reply'],
-  TRÁFEGO: ['link_click'],
-  ENGAJAMENTO: ['post_engagement'],
-  RECONHECIMENTO: [],
-}
-
-// Resolve o valor de uma única "categoria" de evento (compras, leads, mensagens, etc.).
-// CRÍTICO: a Meta retorna o MESMO evento com vários action_types (omni_purchase,
-// offsite_conversion.fb_pixel_purchase, purchase). Somar todos infla o número.
-// Estratégia: usa o PRIMEIRO action_type da lista de keys que existir nos actions.
-// As keys devem estar em ordem de preferência (mais agregado/deduplicado primeiro).
-function sumActions(actions: any[], keys: string[]): number {
-  if (!actions || !actions.length || !keys.length) return 0
-  // Indexar actions por action_type pra busca rápida
-  const byType: Record<string, number> = {}
-  for (const a of actions) {
-    if (a?.action_type) byType[a.action_type] = +a.value || 0
-  }
-  // Procura match exato seguindo a ordem de preferência das keys
-  for (const k of keys) {
-    if (byType[k] !== undefined) return byType[k]
-  }
-  // Fallback: alguns events vêm como "ns_X.key" (raros) — tenta match por sufixo
-  for (const k of keys) {
-    for (const type of Object.keys(byType)) {
-      if (type.endsWith('.' + k)) return byType[type]
-    }
-  }
-  return 0
-}
 
 // Início da semana ISO (segunda-feira) para uma data 'YYYY-MM-DD'.
 // Usa meio-dia local pra ser robusto a horário de verão.
@@ -167,11 +134,6 @@ const DEVICE_NAMES: Record<string, string> = {
   unknown: 'Outros',
   other: 'Outros',
 }
-const GENDER_NAMES: Record<string, string> = {
-  female: 'Feminino',
-  male: 'Masculino',
-  unknown: 'Não informado',
-}
 
 export default function PresentMode(p: Props) {
   const [age, setAge] = useState<Bucket[]>([])
@@ -184,6 +146,8 @@ export default function PresentMode(p: Props) {
   const [filteredTimeSeries, setFilteredTimeSeries] = useState<Props['timeSeriesData'] | null>(null)
   // bug-012: granularidade do card "Investimento e CPR". 'day' = padrão, 'week' agrega seg-dom client-side.
   const [tsGranularity, setTsGranularity] = useState<'day' | 'week'>('day')
+  // Aba ativa da apresentação. 'overview' = tela atual; 'publico' = análise de público (carrega sob demanda).
+  const [activeTab, setActiveTab] = useState<'overview' | 'publico'>('overview')
   const [topView, setTopView] = useState<'campanhas' | 'conjuntos'>('campanhas')
   const [expandedCampId, setExpandedCampId] = useState<string | null>(null)
   const [previewAd, setPreviewAd] = useState<TopAd | null>(null)
@@ -605,7 +569,34 @@ export default function PresentMode(p: Props) {
         <button onClick={p.onClose} style={{ padding: 'clamp(7px, .7vw, 12px) clamp(10px, 1vw, 18px)', background: 'rgba(255,255,255,.08)', border: '1.5px solid rgba(255,255,255,.16)', borderRadius: 10, color: '#fff', fontSize: 'clamp(10px, .8vw, 14px)', fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit' }}>← Voltar</button>
       </div>
 
-      {/* Grid principal: 2 colunas */}
+      {/* Abas: Visão geral (tela atual) | Público (análise de público, sob demanda) */}
+      <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
+        {([['overview', 'Visão geral'], ['publico', 'Público']] as const).map(([key, label]) => {
+          const on = activeTab === key
+          return (
+            <button
+              key={key}
+              onClick={() => setActiveTab(key)}
+              style={{
+                padding: 'clamp(6px, .6vw, 10px) clamp(12px, 1.2vw, 20px)',
+                background: on ? '#7dd3fc' : 'rgba(255,255,255,.06)',
+                border: `1.5px solid ${on ? '#7dd3fc' : 'rgba(255,255,255,.14)'}`,
+                borderRadius: 10,
+                color: on ? '#0a2540' : '#cbd5e1',
+                fontSize: 'clamp(10px, .8vw, 14px)',
+                fontWeight: 700,
+                cursor: 'pointer',
+                fontFamily: 'inherit',
+              }}
+            >
+              {label}
+            </button>
+          )
+        })}
+      </div>
+
+      {/* Grid principal: 2 colunas — só na Visão geral */}
+      {activeTab === 'overview' && (
       <div style={{ flex: 1, display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1.4fr)', gap: 'clamp(8px, 1.2vw, 18px)', minHeight: 0 }}>
         {/* COLUNA ESQUERDA */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: 'clamp(6px, 1vw, 14px)', minHeight: 0 }}>
@@ -697,9 +688,23 @@ export default function PresentMode(p: Props) {
           </div>
         </div>
       </div>
+      )}
+
+      {/* Aba Público — análise de público (carrega sob demanda) */}
+      {activeTab === 'publico' && (
+        <PublicoTab
+          metaAccount={p.metaAccount}
+          period={p.period}
+          filteringParam={filteringParam}
+          insightsDefaults={META_INSIGHTS_DEFAULTS}
+          tipo={tipo}
+          resultLabel={resultLabel}
+          cprLabel={cprLabel}
+        />
+      )}
 
       {/* Overlay de carregamento — aparece quando dados estão sendo buscados na Meta */}
-      {loading && <LoadingOverlay />}
+      {loading && activeTab === 'overview' && <LoadingOverlay />}
 
       {/* Modal de preview do criativo (iframe oficial Meta) — altura ajusta ao conteúdo */}
       {previewAd && <AdPreviewModal previewAd={previewAd} previewHtml={previewHtml} previewLoading={previewLoading} onClose={() => setPreviewAd(null)} />}

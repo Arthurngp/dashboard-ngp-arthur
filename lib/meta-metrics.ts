@@ -8,6 +8,45 @@ export const META_INSIGHTS_DEFAULTS: Record<string, string> = {
   action_attribution_windows: '["7d_click","1d_view"]',
 }
 
+// Action keys candidatos por tipo de campanha (cobre variações Pixel/CAPI/onsite).
+// As keys ficam em ordem de preferência (mais agregado/deduplicado primeiro).
+export const ACTION_KEYS: Record<string, string[]> = {
+  VENDAS: ['omni_purchase', 'offsite_conversion.fb_pixel_purchase', 'purchase', 'offline_conversion.purchase'],
+  LEADS: ['lead', 'offsite_conversion.fb_pixel_lead', 'onsite_conversion.lead_grouped'],
+  MENSAGENS: ['onsite_conversion.messaging_conversation_started_7d', 'messaging_conversation_started_7d', 'onsite_conversion.messaging_first_reply'],
+  TRÁFEGO: ['link_click'],
+  ENGAJAMENTO: ['post_engagement'],
+  RECONHECIMENTO: [],
+}
+
+// Resolve o valor de uma única "categoria" de evento (compras, leads, mensagens, etc.).
+// CRÍTICO: a Meta retorna o MESMO evento com vários action_types (omni_purchase,
+// offsite_conversion.fb_pixel_purchase, purchase). Somar todos infla o número.
+// Estratégia: usa o PRIMEIRO action_type da lista de keys que existir nos actions.
+export function sumActions(actions: any[], keys: string[]): number {
+  if (!actions || !actions.length || !keys.length) return 0
+  const byType: Record<string, number> = {}
+  for (const a of actions) {
+    if (a?.action_type) byType[a.action_type] = +a.value || 0
+  }
+  for (const k of keys) {
+    if (byType[k] !== undefined) return byType[k]
+  }
+  // Fallback: alguns events vêm como "ns_X.key" (raros) — tenta match por sufixo
+  for (const k of keys) {
+    for (const type of Object.keys(byType)) {
+      if (type.endsWith('.' + k)) return byType[type]
+    }
+  }
+  return 0
+}
+
+export const GENDER_NAMES: Record<string, string> = {
+  female: 'Feminino',
+  male: 'Masculino',
+  unknown: 'Não informado',
+}
+
 export type MetricFormat = 'currency' | 'integer' | 'percent' | 'compact' | 'ratio'
 
 export interface MetaMetricDef {
