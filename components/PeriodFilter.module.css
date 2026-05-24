@@ -225,6 +225,11 @@
   flex: 0 0 auto;
 }
 
+/* Campo único de intervalo (De - Até num só): precisa de mais largura. */
+.calendarFieldRange {
+  width: 248px;
+}
+
 .calendarInput {
   width: 100%;
   min-height: 72px;
@@ -386,6 +391,14 @@
 .calendarDayInRange {
   background: rgba(37, 99, 235, 0.14);
   color: #1d4ed8;
+}
+
+/* Ponta do intervalo sob o cursor durante a seleção: azul mais claro que o
+   início já fixado, pra sinalizar "vai até aqui se você clicar". */
+.calendarDayPreviewTip {
+  background: rgba(37, 99, 235, 0.28);
+  color: #1d4ed8;
+  border-radius: 18px;
 }
 
 .calendarDayRangeStart,

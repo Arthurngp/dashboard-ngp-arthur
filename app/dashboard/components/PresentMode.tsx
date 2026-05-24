@@ -2,12 +2,16 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Campaign, DateParam } from '@/types'
 import { metaCall } from '@/lib/meta'
-import { META_INSIGHTS_DEFAULTS } from '@/lib/meta-metrics'
+import { META_INSIGHTS_DEFAULTS, ACTION_KEYS, sumActions, GENDER_NAMES } from '@/lib/meta-metrics'
 import { fmt, fmtI } from '@/lib/utils'
 import PeriodFilter from '@/components/PeriodFilter'
+import PublicoTab from './PublicoTab'
+import AnunciosTab from './AnunciosTab'
 
 interface Props {
   clienteName: string
+  clienteId?: string
+  clienteUsername?: string
   metaAccount: string
   periodLabel: string
   period: DateParam
@@ -16,7 +20,7 @@ interface Props {
   prevCampaigns?: Campaign[]
   /** Label do período comparativo (ex: "vs 30 dias anteriores"). Vazio → sem comparação. */
   cmpLabel?: string
-  timeSeriesData: Array<{ date: string; spend: number; impressions: number; clicks: number; actions?: Array<{ action_type: string; value: string }> }>
+  timeSeriesData: Array<{ date: string /* YYYY-MM-DD */; spend: number; impressions: number; clicks: number; actions?: Array<{ action_type: string; value: string }>; action_values?: Array<{ action_type: string; value: string }> }>
   selectedCampIds: Set<string>
   onChangeSelectedCampIds: (next: Set<string> | ((prev: Set<string>) => Set<string>)) => void
   onApplyPeriod: (dp: DateParam, label: string, cmpDp?: DateParam, cmpLabel?: string) => void
@@ -75,40 +79,6 @@ interface TopAdset {
   spendShare: number
 }
 
-// Action keys candidatos por tipo (cobre variações Pixel/CAPI/onsite)
-const ACTION_KEYS: Record<string, string[]> = {
-  VENDAS: ['omni_purchase', 'offsite_conversion.fb_pixel_purchase', 'purchase', 'offline_conversion.purchase'],
-  LEADS: ['lead', 'offsite_conversion.fb_pixel_lead', 'onsite_conversion.lead_grouped'],
-  MENSAGENS: ['onsite_conversion.messaging_conversation_started_7d', 'messaging_conversation_started_7d', 'onsite_conversion.messaging_first_reply'],
-  TRÁFEGO: ['link_click'],
-  ENGAJAMENTO: ['post_engagement'],
-  RECONHECIMENTO: [],
-}
-
-// Resolve o valor de uma única "categoria" de evento (compras, leads, mensagens, etc.).
-// CRÍTICO: a Meta retorna o MESMO evento com vários action_types (omni_purchase,
-// offsite_conversion.fb_pixel_purchase, purchase). Somar todos infla o número.
-// Estratégia: usa o PRIMEIRO action_type da lista de keys que existir nos actions.
-// As keys devem estar em ordem de preferência (mais agregado/deduplicado primeiro).
-function sumActions(actions: any[], keys: string[]): number {
-  if (!actions || !actions.length || !keys.length) return 0
-  // Indexar actions por action_type pra busca rápida
-  const byType: Record<string, number> = {}
-  for (const a of actions) {
-    if (a?.action_type) byType[a.action_type] = +a.value || 0
-  }
-  // Procura match exato seguindo a ordem de preferência das keys
-  for (const k of keys) {
-    if (byType[k] !== undefined) return byType[k]
-  }
-  // Fallback: alguns events vêm como "ns_X.key" (raros) — tenta match por sufixo
-  for (const k of keys) {
-    for (const type of Object.keys(byType)) {
-      if (type.endsWith('.' + k)) return byType[type]
-    }
-  }
-  return 0
-}
 
 // Início da semana ISO (segunda-feira) para uma data 'YYYY-MM-DD'.
 // Usa meio-dia local pra ser robusto a horário de verão.
@@ -120,31 +90,35 @@ function isoWeekStart(dateStr: string): string {
   return d.toISOString().slice(0, 10)
 }
 
-type TimeRow = { date: string; spend: number; impressions: number; clicks: number; actions?: Array<{ action_type: string; value: string }> }
+type TimeRow = { date: string; spend: number; impressions: number; clicks: number; actions?: Array<{ action_type: string; value: string }>; action_values?: Array<{ action_type: string; value: string }> }
 
 // Agrega linhas diárias em semanais (seg-dom). Soma spend/impressions/clicks
-// e consolida actions por action_type. bug-012.
+// e consolida actions e action_values por action_type. bug-012.
 function aggregateByWeek(daily: TimeRow[]): TimeRow[] {
   if (!daily.length) return daily
-  type Bucket = { date: string; spend: number; impressions: number; clicks: number; actionMap: Map<string, number> }
+  type Bucket = { date: string; spend: number; impressions: number; clicks: number; actionMap: Map<string, number>; valueMap: Map<string, number> }
   const buckets = new Map<string, Bucket>()
+  const sumInto = (map: Map<string, number>, arr?: Array<{ action_type: string; value: string }>) => {
+    if (!Array.isArray(arr)) return
+    for (const a of arr) {
+      if (!a?.action_type) continue
+      map.set(a.action_type, (map.get(a.action_type) || 0) + (+a.value || 0))
+    }
+  }
   for (const row of daily) {
     const monday = isoWeekStart(row.date)
     let cur = buckets.get(monday)
     if (!cur) {
-      cur = { date: monday, spend: 0, impressions: 0, clicks: 0, actionMap: new Map() }
+      cur = { date: monday, spend: 0, impressions: 0, clicks: 0, actionMap: new Map(), valueMap: new Map() }
       buckets.set(monday, cur)
     }
     cur.spend += row.spend || 0
     cur.impressions += row.impressions || 0
     cur.clicks += row.clicks || 0
-    if (Array.isArray(row.actions)) {
-      for (const a of row.actions) {
-        if (!a?.action_type) continue
-        cur.actionMap.set(a.action_type, (cur.actionMap.get(a.action_type) || 0) + (+a.value || 0))
-      }
-    }
+    sumInto(cur.actionMap, row.actions)
+    sumInto(cur.valueMap, row.action_values)
   }
+  const toArr = (map: Map<string, number>) => Array.from(map.entries()).map(([action_type, value]) => ({ action_type, value: String(value) }))
   return Array.from(buckets.values())
     .sort((a, b) => a.date.localeCompare(b.date))
     .map(b => ({
@@ -152,7 +126,8 @@ function aggregateByWeek(daily: TimeRow[]): TimeRow[] {
       spend: b.spend,
       impressions: b.impressions,
       clicks: b.clicks,
-      actions: Array.from(b.actionMap.entries()).map(([action_type, value]) => ({ action_type, value: String(value) })),
+      actions: toArr(b.actionMap),
+      action_values: toArr(b.valueMap),
     }))
 }
 
@@ -167,11 +142,6 @@ const DEVICE_NAMES: Record<string, string> = {
   unknown: 'Outros',
   other: 'Outros',
 }
-const GENDER_NAMES: Record<string, string> = {
-  female: 'Feminino',
-  male: 'Masculino',
-  unknown: 'Não informado',
-}
 
 export default function PresentMode(p: Props) {
   const [age, setAge] = useState<Bucket[]>([])
@@ -184,6 +154,8 @@ export default function PresentMode(p: Props) {
   const [filteredTimeSeries, setFilteredTimeSeries] = useState<Props['timeSeriesData'] | null>(null)
   // bug-012: granularidade do card "Investimento e CPR". 'day' = padrão, 'week' agrega seg-dom client-side.
   const [tsGranularity, setTsGranularity] = useState<'day' | 'week'>('day')
+  // Aba ativa da apresentação. 'overview' = tela atual; 'publico' = análise de público (carrega sob demanda).
+  const [activeTab, setActiveTab] = useState<'overview' | 'publico' | 'anuncios'>('overview')
   const [topView, setTopView] = useState<'campanhas' | 'conjuntos'>('campanhas')
   const [expandedCampId, setExpandedCampId] = useState<string | null>(null)
   const [previewAd, setPreviewAd] = useState<TopAd | null>(null)
@@ -482,7 +454,7 @@ export default function PresentMode(p: Props) {
       if (!filteringParam) return null
       const r = await metaCall('insights', withFilter({
         level: 'account', limit: '100',
-        fields: 'spend,impressions,clicks,actions',
+        fields: 'spend,impressions,clicks,actions,action_values',
         time_increment: '1',
         ...p.period,
       }), p.metaAccount)
@@ -493,6 +465,7 @@ export default function PresentMode(p: Props) {
         impressions: +row.impressions || 0,
         clicks: +row.clicks || 0,
         actions: row.actions,
+        action_values: row.action_values,
       }))
     }
 
@@ -605,7 +578,34 @@ export default function PresentMode(p: Props) {
         <button onClick={p.onClose} style={{ padding: 'clamp(7px, .7vw, 12px) clamp(10px, 1vw, 18px)', background: 'rgba(255,255,255,.08)', border: '1.5px solid rgba(255,255,255,.16)', borderRadius: 10, color: '#fff', fontSize: 'clamp(10px, .8vw, 14px)', fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit' }}>← Voltar</button>
       </div>
 
-      {/* Grid principal: 2 colunas */}
+      {/* Abas: Visão geral (tela atual) | Público (análise de público, sob demanda) */}
+      <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
+        {([['overview', 'Visão geral'], ['publico', 'Público'], ['anuncios', 'Anúncios']] as const).map(([key, label]) => {
+          const on = activeTab === key
+          return (
+            <button
+              key={key}
+              onClick={() => setActiveTab(key)}
+              style={{
+                padding: 'clamp(6px, .6vw, 10px) clamp(12px, 1.2vw, 20px)',
+                background: on ? '#7dd3fc' : 'rgba(255,255,255,.06)',
+                border: `1.5px solid ${on ? '#7dd3fc' : 'rgba(255,255,255,.14)'}`,
+                borderRadius: 10,
+                color: on ? '#0a2540' : '#cbd5e1',
+                fontSize: 'clamp(10px, .8vw, 14px)',
+                fontWeight: 700,
+                cursor: 'pointer',
+                fontFamily: 'inherit',
+              }}
+            >
+              {label}
+            </button>
+          )
+        })}
+      </div>
+
+      {/* Grid principal: 2 colunas — só na Visão geral */}
+      {activeTab === 'overview' && (
       <div style={{ flex: 1, display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1.4fr)', gap: 'clamp(8px, 1.2vw, 18px)', minHeight: 0 }}>
         {/* COLUNA ESQUERDA */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: 'clamp(6px, 1vw, 14px)', minHeight: 0 }}>
@@ -621,12 +621,12 @@ export default function PresentMode(p: Props) {
               <div style={{ display: 'grid', gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))`, gap: 'clamp(6px, .8vw, 12px)', flexShrink: 0 }}>
                 <Kpi label="Valor Investido" value={`R$ ${fmt(totals.spend)}`}
                   current={totals.spend} previous={prevTotals?.spend} unit="currency" />
-                <Kpi label={resultLabel} value={totals.results > 0 ? String(totals.results) : '—'}
-                  current={totals.results} previous={prevTotals?.results} unit="number" />
                 {isVendas && (
                   <Kpi label="Valor em Compras" value={`R$ ${fmt(totals.resultsValue)}`}
                     current={totals.resultsValue} previous={prevTotals?.resultsValue} unit="currency" />
                 )}
+                <Kpi label={resultLabel} value={totals.results > 0 ? String(totals.results) : '—'}
+                  current={totals.results} previous={prevTotals?.results} unit="number" />
                 {isVendas && (
                   <Kpi label="ROAS" value={roas > 0 ? `${roas.toFixed(2)}x` : '—'}
                     current={roas} previous={prevRoas > 0 ? prevRoas : undefined} unit="multiplier" />
@@ -659,7 +659,7 @@ export default function PresentMode(p: Props) {
               const tsData = tsGranularity === 'week' ? aggregateByWeek(rawData) : rawData
               return tsData.length === 0
                 ? <Empty msg="Sem série temporal" />
-                : <TimelineChart data={tsData} resultLabel={resultLabel} actionKeys={actionKeys} />
+                : <TimelineChart data={tsData} resultLabel={resultLabel} actionKeys={actionKeys} granularity={tsGranularity} />
             })()}
           </Card>
         </div>
@@ -697,9 +697,40 @@ export default function PresentMode(p: Props) {
           </div>
         </div>
       </div>
+      )}
+
+      {/* Aba Público — análise de público (carrega sob demanda) */}
+      {activeTab === 'publico' && (
+        <PublicoTab
+          metaAccount={p.metaAccount}
+          period={p.period}
+          filteringParam={filteringParam}
+          insightsDefaults={META_INSIGHTS_DEFAULTS}
+          tipo={tipo}
+          resultLabel={resultLabel}
+          cprLabel={cprLabel}
+        />
+      )}
+
+      {/* Aba Anúncios — análise profunda de criativos (carrega sob demanda) */}
+      {activeTab === 'anuncios' && (
+        <AnunciosTab
+          metaAccount={p.metaAccount}
+          period={p.period}
+          filteringParam={filteringParam}
+          insightsDefaults={META_INSIGHTS_DEFAULTS}
+          tipo={tipo}
+          resultLabel={resultLabel}
+          cprLabel={cprLabel}
+          clienteName={p.clienteName}
+          clienteId={p.clienteId}
+          clienteUsername={p.clienteUsername}
+          periodLabel={p.periodLabel}
+        />
+      )}
 
       {/* Overlay de carregamento — aparece quando dados estão sendo buscados na Meta */}
-      {loading && <LoadingOverlay />}
+      {loading && activeTab === 'overview' && <LoadingOverlay />}
 
       {/* Modal de preview do criativo (iframe oficial Meta) — altura ajusta ao conteúdo */}
       {previewAd && <AdPreviewModal previewAd={previewAd} previewHtml={previewHtml} previewLoading={previewLoading} onClose={() => setPreviewAd(null)} />}
@@ -1435,16 +1466,18 @@ function DonutChart({ data }: { data: Bucket[] }) {
   )
 }
 
-function TimelineChart({ data, resultLabel, actionKeys }: { data: Array<{ date: string; spend: number; impressions: number; clicks: number; actions?: Array<{ action_type: string; value: string }> }>; resultLabel: string; actionKeys: string[] }) {
+function TimelineChart({ data, resultLabel, actionKeys, granularity = 'day' }: { data: Array<{ date: string; spend: number; impressions: number; clicks: number; actions?: Array<{ action_type: string; value: string }>; action_values?: Array<{ action_type: string; value: string }> }>; resultLabel: string; actionKeys: string[]; granularity?: 'day' | 'week' }) {
   // CPL/CPA real por dia: usa actions do dia se disponível; fallback pra CPC (spend/clicks).
   const enriched = data.map(d => {
     const results = d.actions ? sumActions(d.actions, actionKeys) : 0
+    const revenue = d.action_values ? sumActions(d.action_values, actionKeys) : 0
     return {
       label: d.date,
       spend: d.spend,
       clicks: d.clicks,
       impressions: d.impressions,
       results,
+      revenue,
       cpl: results > 0 ? d.spend / results : (d.clicks > 0 ? d.spend / d.clicks : 0),
       isFallback: results === 0,
     }
@@ -1460,11 +1493,18 @@ function TimelineChart({ data, resultLabel, actionKeys }: { data: Array<{ date: 
   const bw = Math.max(6, stepX * 0.55)
 
   const labelStep = Math.max(1, Math.floor(enriched.length / 6))
-  // Formata 'YYYY-MM-DD' → 'DD/MM' pro eixo X (mais legível). Strings em outro
-  // formato passam direto. bug-012 (melhoria adjacente ao fix da visão semanal).
+  // Formata 'YYYY-MM-DD' → 'DD/MM'. No modo semanal mostra o intervalo da semana
+  // (seg-dom): início + 6 dias → 'DD/MM - DD/MM'. Strings em outro formato passam direto.
   const fmtDate = (s: string) => {
     const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s)
-    return m ? `${m[3]}/${m[2]}` : s
+    if (!m) return s
+    const start = `${m[3]}/${m[2]}`
+    if (granularity !== 'week') return start
+    const end = new Date(`${s}T12:00:00`)
+    end.setDate(end.getDate() + 6)
+    const ed = String(end.getDate()).padStart(2, '0')
+    const em = String(end.getMonth() + 1).padStart(2, '0')
+    return `${start} - ${ed}/${em}`
   }
   const fmtBrl = (n: number) => 'R$ ' + n.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
   const fmtN = (n: number) => n.toLocaleString('pt-BR')
@@ -1585,11 +1625,17 @@ function TimelineChart({ data, resultLabel, actionKeys }: { data: Array<{ date: 
             zIndex: 10,
             lineHeight: 1.4,
           }}>
-            <div style={{ fontWeight: 700, color: '#7dd3fc', fontSize: 12, marginBottom: 4, letterSpacing: '.04em', textTransform: 'uppercase' }}>{d.label}</div>
+            <div style={{ fontWeight: 700, color: '#7dd3fc', fontSize: 12, marginBottom: 4, letterSpacing: '.04em', textTransform: 'uppercase' }}>{fmtDate(d.label)}</div>
             <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10 }}>
               <span style={{ color: '#94a3b8' }}>Investimento</span>
               <strong style={{ color: '#22d3ee', fontVariantNumeric: 'tabular-nums' }}>{fmtBrl(d.spend)}</strong>
             </div>
+            {d.revenue > 0 && (
+              <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10 }}>
+                <span style={{ color: '#94a3b8' }}>Vendas</span>
+                <strong style={{ color: '#34d399', fontVariantNumeric: 'tabular-nums' }}>{fmtBrl(d.revenue)}</strong>
+              </div>
+            )}
             <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10 }}>
               <span style={{ color: '#94a3b8' }}>{resultLabel}</span>
               <strong style={{ fontVariantNumeric: 'tabular-nums' }}>{d.results > 0 ? fmtN(d.results) : '—'}</strong>

@@ -171,7 +171,7 @@ serve(async (req) => {
 
     // ─── CAMPAIGNS (default) ─────────────────────────────────────────────────
     if (query === 'campaigns' || query === 'summary') {
-      const gaql = `SELECT campaign.id, campaign.name, campaign.status, campaign.advertising_channel_type, metrics.cost_micros, metrics.impressions, metrics.clicks, metrics.conversions, metrics.ctr, metrics.average_cpc, metrics.cost_per_conversion, metrics.conversions_from_interactions_rate FROM campaign WHERE segments.date ${dateClause(date_range)} ORDER BY metrics.cost_micros DESC`
+      const gaql = `SELECT campaign.id, campaign.name, campaign.status, campaign.advertising_channel_type, metrics.cost_micros, metrics.impressions, metrics.clicks, metrics.conversions, metrics.conversions_value, metrics.ctr, metrics.average_cpc, metrics.cost_per_conversion, metrics.conversions_from_interactions_rate FROM campaign WHERE segments.date ${dateClause(date_range)} ORDER BY metrics.cost_micros DESC`
       const r = await baseSearch(gaql)
       if (!r.ok || r.data?.error) return json(req, { error: r.data?.error?.message || 'Erro Google Ads.', google_error: r.data?.error || r.data }, 200)
       const rows = Array.isArray(r.data.results) ? r.data.results : []
@@ -180,12 +180,16 @@ serve(async (req) => {
         acc.impressions += Number(row.metrics?.impressions || 0)
         acc.clicks += Number(row.metrics?.clicks || 0)
         acc.conversions += Number(row.metrics?.conversions || 0)
+        // conversions_value já vem em unidade da moeda (não micros) na Google Ads API.
+        acc.conversion_value += Number(row.metrics?.conversionsValue || 0)
         return acc
-      }, { spend: 0, impressions: 0, clicks: 0, conversions: 0 })
+      }, { spend: 0, impressions: 0, clicks: 0, conversions: 0, conversion_value: 0 })
       totals.ctr = totals.impressions > 0 ? totals.clicks / totals.impressions : 0
       totals.avg_cpc = totals.clicks > 0 ? totals.spend / totals.clicks : 0
       totals.cpa = totals.conversions > 0 ? totals.spend / totals.conversions : 0
       totals.conversion_rate = totals.clicks > 0 ? totals.conversions / totals.clicks : 0
+      // ROAS sobre os TOTAIS (receita_total / gasto_total), não média de ROAS por campanha.
+      totals.roas = totals.spend > 0 ? totals.conversion_value / totals.spend : 0
 
       // Detecta tipo de campanhas (Pmax x Search/Display) pra UI saber o que mostrar
       const channelTypes = new Set<string>()
@@ -204,20 +208,26 @@ serve(async (req) => {
         has_pmax: channelTypes.has('PERFORMANCE_MAX'),
         has_search: channelTypes.has('SEARCH'),
         has_display: channelTypes.has('DISPLAY'),
-        campaigns: rows.map((row: any) => ({
-          id: row.campaign?.id || '',
-          name: row.campaign?.name || '',
-          status: row.campaign?.status || '',
-          channel_type: row.campaign?.advertisingChannelType || '',
-          spend: fromMicros(row.metrics?.costMicros),
-          impressions: Number(row.metrics?.impressions || 0),
-          clicks: Number(row.metrics?.clicks || 0),
-          conversions: Number(row.metrics?.conversions || 0),
-          ctr: Number(row.metrics?.ctr || 0),
-          avg_cpc: fromMicros(row.metrics?.averageCpc),
-          cpa: fromMicros(row.metrics?.costPerConversion),
-          conversion_rate: Number(row.metrics?.conversionsFromInteractionsRate || 0),
-        })),
+        campaigns: rows.map((row: any) => {
+          const spend = fromMicros(row.metrics?.costMicros)
+          const conversionValue = Number(row.metrics?.conversionsValue || 0)
+          return {
+            id: row.campaign?.id || '',
+            name: row.campaign?.name || '',
+            status: row.campaign?.status || '',
+            channel_type: row.campaign?.advertisingChannelType || '',
+            spend,
+            impressions: Number(row.metrics?.impressions || 0),
+            clicks: Number(row.metrics?.clicks || 0),
+            conversions: Number(row.metrics?.conversions || 0),
+            conversion_value: conversionValue,
+            ctr: Number(row.metrics?.ctr || 0),
+            avg_cpc: fromMicros(row.metrics?.averageCpc),
+            cpa: fromMicros(row.metrics?.costPerConversion),
+            roas: spend > 0 ? conversionValue / spend : 0,
+            conversion_rate: Number(row.metrics?.conversionsFromInteractionsRate || 0),
+          }
+        }),
       })
     }
 

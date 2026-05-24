@@ -109,7 +109,7 @@ export function useDashboard() {
   const [breakdownError, setBreakdownError] = useState('')
 
   // ── Time series data ───────────────────────────────────────────────────────
-  const [timeSeriesData, setTimeSeriesData] = useState<Array<{ date: string; spend: number; impressions: number; clicks: number; actions?: Array<{ action_type: string; value: string }> }>>([])
+  const [timeSeriesData, setTimeSeriesData] = useState<Array<{ date: string; spend: number; impressions: number; clicks: number; actions?: Array<{ action_type: string; value: string }>; action_values?: Array<{ action_type: string; value: string }> }>>([])
   const [timeSeriesLoading, setTimeSeriesLoading] = useState(false)
   const [timeSeriesError, setTimeSeriesError] = useState('')
 
@@ -488,14 +488,16 @@ export function useDashboard() {
     setTimeSeriesLoading(true)
     setTimeSeriesError('')
     try {
-      const response = await metaCall('insights', { ...META_INSIGHTS_DEFAULTS, level: 'account', fields: 'spend,impressions,clicks,actions', time_increment: '1', limit: '100', ...dp }, viewing.account)
+      const response = await metaCall('insights', { ...META_INSIGHTS_DEFAULTS, level: 'account', fields: 'spend,impressions,clicks,actions,action_values', time_increment: '1', limit: '100', ...dp }, viewing.account)
       const rows = Array.isArray(response?.data) ? response.data as Record<string, unknown>[] : []
       const data = rows.map((row) => {
+        // date fica em ISO (YYYY-MM-DD); a formatação para exibição é responsabilidade
+        // de quem renderiza. Formatar aqui quebrava a agregação semanal do PresentMode
+        // (isoWeekStart não parseava "01 de mai.") — bug do relatório por semana.
         const iso = String(row.date_start || '')
-        let dateLabel = iso
-        try { dateLabel = new Date(`${iso}T00:00:00`).toLocaleDateString('pt-BR', { day: '2-digit', month: 'short' }) } catch {}
         const actions = Array.isArray(row.actions) ? row.actions as Array<{ action_type: string; value: string }> : undefined
-        return { date: dateLabel, spend: Number(row.spend || 0), impressions: Number(row.impressions || 0), clicks: Number(row.clicks || 0), actions }
+        const action_values = Array.isArray(row.action_values) ? row.action_values as Array<{ action_type: string; value: string }> : undefined
+        return { date: iso, spend: Number(row.spend || 0), impressions: Number(row.impressions || 0), clicks: Number(row.clicks || 0), actions, action_values }
       })
       setTimeSeriesData(data)
     } catch (e) {

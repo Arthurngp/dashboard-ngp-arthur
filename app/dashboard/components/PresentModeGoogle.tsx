@@ -122,11 +122,14 @@ export default function PresentModeGoogle(p: Props) {
 
       {summary && hasAnyData && (
         <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 'clamp(8px, 1.2vw, 18px)', minHeight: 0, overflow: 'hidden' }}>
-          {/* KPIs no topo (6 cards horizontais) */}
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6, minmax(0, 1fr))', gap: 'clamp(6px, .8vw, 12px)', flexShrink: 0 }}>
+          {/* KPIs no topo (8 cards horizontais). ROAS e Valor em Vendas mostram '—'
+              quando a conta não rastreia valor de conversão (varia por cliente). */}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(8, minmax(0, 1fr))', gap: 'clamp(6px, .8vw, 12px)', flexShrink: 0 }}>
             <Kpi label="Valor Investido" value={`R$ ${fmt(summary.spend)}`} accent="#fbbf24" />
+            <Kpi label="Valor em Vendas" value={(summary.conversion_value ?? 0) > 0 ? `R$ ${fmt(summary.conversion_value ?? 0)}` : '—'} accent="#34d399" />
             <Kpi label="Conversões" value={fmtN(summary.conversions)} accent="#fbbf24" />
             <Kpi label="CPA" value={summary.cpa > 0 ? `R$ ${fmt(summary.cpa)}` : '—'} accent="#fbbf24" />
+            <Kpi label="ROAS" value={(summary.roas ?? 0) > 0 ? `${(summary.roas ?? 0).toFixed(2)}x` : '—'} accent="#34d399" />
             <Kpi label="Impressões" value={fmtI(summary.impressions)} />
             <Kpi label="Cliques" value={fmtN(summary.clicks)} />
             <Kpi label="CTR" value={`${(summary.ctr * 100).toFixed(2)}%`} />

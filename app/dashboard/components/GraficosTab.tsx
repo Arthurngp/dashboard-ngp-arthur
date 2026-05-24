@@ -10,12 +10,18 @@ const Bar = dynamic(() => import('react-chartjs-2').then(m => ({ default: m.Bar 
 const Doughnut = dynamic(() => import('react-chartjs-2').then(m => ({ default: m.Doughnut })), { ssr: false })
 const Line = dynamic(() => import('react-chartjs-2').then(m => ({ default: m.Line })), { ssr: false })
 
+// 'YYYY-MM-DD' → 'DD/MM' para o eixo X. Outros formatos passam direto.
+const fmtDateBr = (s: string) => {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s)
+  return m ? `${m[3]}/${m[2]}` : s
+}
+
 interface GraficosTabProps {
   campaigns: Campaign[]
   chartMetric: 'spend' | 'impressions' | 'clicks'
   chartData: any
   donutData: any
-  timeSeriesData: Array<{ date: string; spend: number; impressions: number; clicks: number }>
+  timeSeriesData: Array<{ date: string /* YYYY-MM-DD */; spend: number; impressions: number; clicks: number }>
   timeSeriesLoading: boolean
   timeSeriesError: string
   onSetChartMetric: (m: 'spend' | 'impressions' | 'clicks') => void
@@ -62,7 +68,7 @@ export default function GraficosTab({
               ? <div className={styles.empty}>Sem dados de série temporal.</div>
               : <Line
                   data={{
-                    labels: timeSeriesData.map(d => d.date),
+                    labels: timeSeriesData.map(d => fmtDateBr(d.date)),
                     datasets: [
                       { label: 'Gasto (R$)', data: timeSeriesData.map(d => d.spend), borderColor: '#2563eb', backgroundColor: 'rgba(204, 20, 20, 0.05)', tension: 0.4, fill: true, pointRadius: 3, pointBackgroundColor: '#2563eb', pointBorderColor: '#fff', pointBorderWidth: 2, yAxisID: 'y' },
                       { label: 'Impressões (k)', data: timeSeriesData.map(d => d.impressions / 1000), borderColor: '#3B82F6', backgroundColor: 'rgba(59, 130, 246, 0.05)', tension: 0.4, fill: true, pointRadius: 3, pointBackgroundColor: '#3B82F6', pointBorderColor: '#fff', pointBorderWidth: 2, yAxisID: 'y1' },

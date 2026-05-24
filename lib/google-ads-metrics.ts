@@ -9,9 +9,11 @@ export interface GoogleAdsCampaign {
   impressions: number
   clicks: number
   conversions: number
+  conversion_value?: number // receita atribuída; ausente em respostas antigas
   ctr: number
   avg_cpc: number
   cpa: number
+  roas?: number // conversion_value / spend; ausente em respostas antigas
   conversion_rate: number
 }
 
@@ -20,9 +22,11 @@ export interface GoogleAdsSummary {
   impressions: number
   clicks: number
   conversions: number
+  conversion_value?: number // receita atribuída; ausente em respostas antigas
   ctr: number
   avg_cpc: number
   cpa: number
+  roas?: number // conversion_value / spend; ausente em respostas antigas
   conversion_rate: number
 }
 
