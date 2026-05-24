@@ -27,6 +27,7 @@ import ResumoGeralTab from './components/ResumoGeralTab'
 import { Tab, WorkspaceNavSection } from './types'
 import { getPeriodBudgetFactor, fmtDate } from './dashboard-utils'
 import { useDashboard } from './hooks/useDashboard'
+import { useGoogleAds } from './hooks/useGoogleAds'
 import { META_METRICS, DEFAULT_METRICS } from '@/lib/meta-metrics'
 
 const CampanhasTab = dynamic(() => import('./components/CampanhasTab'), { ssr: false })
@@ -77,6 +78,15 @@ export default function DashboardPage() {
     filteredOverviewRows, overviewTotals, overviewTotalsCtr, overviewTotalsPrevCtr, overviewTotalsCpc, overviewTotalsPrevCpc,
     overviewTotalsCpl, overviewTotalsPrevCpl, overviewTotalsRoas, overviewTotalsPrevRoas, overviewHeroStats, loadedAds, analyticsSnapshot
   } = useDashboard()
+
+  // Gasto do Google para a barra de investimento somar Meta + Google (o "Utilizado"
+  // do topo precisa refletir o investimento total, não só Meta). Load manual.
+  const googleBudget = useGoogleAds({ customerId: viewing?.googleAdsCustomerId, enabled: !!viewing?.googleAdsCustomerId })
+  useEffect(() => {
+    if (viewing?.googleAdsCustomerId) void googleBudget.load(period)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [viewing?.googleAdsCustomerId, period])
+  const googlePeriodSpend = googleBudget.summary?.spend || 0
 
   const colMenuRef = useRef<HTMLDivElement>(null)
   const campFilterRef = useRef<HTMLDivElement>(null)
@@ -209,8 +219,11 @@ export default function DashboardPage() {
 
   const budgetFactor = getPeriodBudgetFactor(period)
   const authorizedForPeriod = monthlyAuthorized > 0 ? monthlyAuthorized * budgetFactor : 0
-  const budgetBalance = authorizedForPeriod - totalPeriodSpend
-  const budgetUsage = authorizedForPeriod > 0 ? (totalPeriodSpend / authorizedForPeriod) * 100 : 0
+  // "Utilizado" = investimento total do cliente no período (Meta + Google), pois o
+  // autorizado (investimento_autorizado_mensal) é o teto total, não só Meta.
+  const totalSpendUsed = totalPeriodSpend + googlePeriodSpend
+  const budgetBalance = authorizedForPeriod - totalSpendUsed
+  const budgetUsage = authorizedForPeriod > 0 ? (totalSpendUsed / authorizedForPeriod) * 100 : 0
   const hasBudget = monthlyAuthorized > 0
   const budgetOver = hasBudget && budgetBalance < 0
 
@@ -460,7 +473,7 @@ export default function DashboardPage() {
                 <div className={styles.budgetMeta}>{hasBudget ? `Mensal · ${periodLabel}` : 'Defina no cadastro'}</div>
               </div>
               <div><div className={styles.budgetLabel}>No período</div><div className={styles.budgetValueSmall}>{hasBudget ? `R$ ${fmt(authorizedForPeriod)}` : '—'}</div></div>
-              <div><div className={styles.budgetLabel}>Utilizado</div><div className={styles.budgetValueSmall}>R$ {fmt(totalPeriodSpend)}</div></div>
+              <div><div className={styles.budgetLabel}>Utilizado</div><div className={styles.budgetValueSmall}>R$ {fmt(totalSpendUsed)}</div></div>
               <div><div className={styles.budgetLabel}>Saldo</div><div style={{ fontSize: 17, fontWeight: 800, color: !hasBudget ? '#AEAEB2' : budgetOver ? '#dc2626' : '#16a34a' }}>{hasBudget ? `${budgetBalance >= 0 ? '+' : '-'}R$ ${fmt(Math.abs(budgetBalance))}` : '—'}</div></div>
               <div style={{ minWidth: 150 }}>
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, marginBottom: 8 }}>
