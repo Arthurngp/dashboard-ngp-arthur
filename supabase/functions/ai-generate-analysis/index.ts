@@ -348,6 +348,77 @@ serve(async (req) => {
       const periodLabel = cleanText(snapshotRow?.period_label || period_label || 'Período atual', 80)
       const accountLabel = cleanText(snapshotRow?.meta_account_id || meta_account_id || 'não informada', 80)
 
+      // ====================================================================
+      // HOOK COPILOT — injeta memória persistente do cliente como contexto
+      // antes da análise. Tudo que o NGP Copilot aprendeu (profile + timeline)
+      // passa a alimentar relatórios automaticamente.
+      // ====================================================================
+      let copilotMemoryBlock = ''
+      try {
+        const cidCandidate = snapshotRow?.cliente_id || cliente_id || null
+        if (cidCandidate) {
+          // Resolve clientes.id (pode vir como usuarios.id do dashboard)
+          const { data: resolvedId } = await sb.rpc('resolve_cliente_id', { p_input: cidCandidate })
+          const realClientId = (typeof resolvedId === 'string' && resolvedId) ? resolvedId : null
+          if (realClientId) {
+            const [profileRes, timelineRes] = await Promise.all([
+              sb.from('client_memory_profiles')
+                .select('executive_summary, business_context, offer_context, icp_context, brand_positioning, creative_learnings, content_strategy, wins, losses, competition_notes, operational_rules, risks, key_metrics, channel_notes, last_compacted_at')
+                .eq('client_id', realClientId).maybeSingle(),
+              sb.from('client_timeline_events')
+                .select('event_type, title, description, motivador, resultado_esperado, resultado_observado, hypothesis_status, event_at')
+                .eq('client_id', realClientId)
+                .in('event_type', ['decisao', 'feedback_cliente', 'alteracao_aprovada', 'hipotese_levantada', 'resultado_observado', 'memory_update'])
+                .order('event_at', { ascending: false })
+                .limit(15),
+            ])
+
+            const p = profileRes.data
+            const events = timelineRes.data || []
+
+            if (p) {
+              const parts = ['', '=== MEMÓRIA PERSISTENTE DO CLIENTE (NGP Copilot) ===']
+              if (p.executive_summary) parts.push(`Resumo executivo:\n${p.executive_summary}`)
+              if (p.business_context) parts.push(`\nNegócio:\n${p.business_context}`)
+              if (p.offer_context) parts.push(`\nOferta atual:\n${p.offer_context}`)
+              if (p.icp_context) parts.push(`\nICP / Público:\n${p.icp_context}`)
+              if (p.brand_positioning) parts.push(`\nPosicionamento de marca:\n${p.brand_positioning}`)
+              if (p.content_strategy) parts.push(`\nEstratégia de conteúdo:\n${p.content_strategy}`)
+              if (p.creative_learnings) parts.push(`\nAprendizados de criativo:\n${p.creative_learnings}`)
+              if (p.wins) parts.push(`\nO que JÁ FUNCIONOU (wins):\n${p.wins}`)
+              if (p.losses) parts.push(`\nO que NÃO funcionou (losses):\n${p.losses}`)
+              if (p.competition_notes) parts.push(`\nConcorrência:\n${p.competition_notes}`)
+              if (p.operational_rules) parts.push(`\nRegras operacionais (RESPEITAR):\n${p.operational_rules}`)
+              if (p.risks) parts.push(`\nRiscos/atenções:\n${p.risks}`)
+              if (p.key_metrics) parts.push(`\nMétricas-chave:\n${p.key_metrics}`)
+              if (p.channel_notes && typeof p.channel_notes === 'object') {
+                const cn = p.channel_notes as Record<string, string | null>
+                const meta = cn.meta, google = cn.google, notas = cn.notas_gerais
+                if (meta) parts.push(`\nNotas Meta Ads:\n${meta}`)
+                if (google) parts.push(`\nNotas Google Ads:\n${google}`)
+                if (notas) parts.push(`\nNotas gerais por canal:\n${notas}`)
+              }
+              if (p.last_compacted_at) parts.push(`\n(Memória atualizada em ${p.last_compacted_at})`)
+              copilotMemoryBlock = parts.join('\n')
+            }
+
+            if (events.length) {
+              copilotMemoryBlock += '\n\n=== EVENTOS RECENTES DA TIMELINE ==='
+              for (const e of events) {
+                const dateStr = e.event_at ? String(e.event_at).slice(0, 10) : ''
+                const hStatus = e.hypothesis_status && e.hypothesis_status !== 'na' ? ` [hipótese: ${e.hypothesis_status}]` : ''
+                copilotMemoryBlock += `\n- ${dateStr} [${e.event_type}]${hStatus} ${e.title}`
+                if (e.motivador) copilotMemoryBlock += `\n  motivador: ${e.motivador}`
+                if (e.resultado_esperado) copilotMemoryBlock += `\n  esperado: ${e.resultado_esperado}`
+                if (e.resultado_observado) copilotMemoryBlock += `\n  observado: ${e.resultado_observado}`
+              }
+            }
+          }
+        }
+      } catch (e) {
+        console.error('[ai-generate-analysis] copilot memory hook failed (não-bloqueante):', e?.message)
+      }
+
       const userText = `${prompt.user_prompt}
 
 Cliente: ${clientLabel}
@@ -356,10 +427,13 @@ Período: ${periodLabel}
 
 Snapshot analítico estruturado (JSON):
 ${metricsToText(metrics)}
+${copilotMemoryBlock}
 
 ${extraContext ? `Contexto adicional:\n${extraContext}\n` : ''}Regras:
 - Não invente dados que não foram enviados.
 - Quando faltar dado, sinalize a ausência.
+- USE a MEMÓRIA PERSISTENTE acima quando for relevante: cite wins/losses conhecidos, respeite regras operacionais, considere o posicionamento de marca e o ICP nas recomendações.
+- Quando uma observação contradiz a memória persistente, sinalize explicitamente.
 - Entregue uma leitura objetiva para decisão de tráfego pago.
 - Priorize clareza operacional, sem frases genéricas.
 - Retorne SOMENTE o JSON no schema solicitado.`

@@ -16,11 +16,19 @@ interface ClienteCentral {
   created_at: string
   foto_url?: string | null
   meta_account_id?: string | null
+  google_ads_customer_id?: string | null
   analytics_enabled: boolean
   reports_enabled: boolean
   crm_enabled: boolean
   crm_pipeline_count: number
   crm_pipeline_name?: string | null
+}
+
+// Customer ID Google Ads tem 10 dígitos; exibe formato xxx-xxx-xxxx pra leitura.
+function formatGoogleAdsId(id: string): string {
+  const clean = String(id).replace(/-/g, '')
+  if (clean.length !== 10) return id
+  return `${clean.slice(0, 3)}-${clean.slice(3, 6)}-${clean.slice(6)}`
 }
 
 const emptyForm = {
@@ -29,6 +37,7 @@ const emptyForm = {
   email: '',
   password: '',
   meta_account_id: '',
+  google_ads_customer_id: '',
   ativo: true,
   analytics_enabled: true,
   reports_enabled: true,
@@ -91,6 +100,7 @@ export default function ClientesCentralPanel() {
       email: cliente.email,
       password: '',
       meta_account_id: cliente.meta_account_id || '',
+      google_ads_customer_id: cliente.google_ads_customer_id || '',
       ativo: cliente.ativo,
       analytics_enabled: cliente.analytics_enabled,
       reports_enabled: cliente.reports_enabled,
@@ -111,6 +121,7 @@ export default function ClientesCentralPanel() {
         nome: form.nome,
         email: form.email,
         meta_account_id: form.meta_account_id || undefined,
+        google_ads_customer_id: form.google_ads_customer_id || undefined,
         ativo: form.ativo,
         analytics_enabled: form.analytics_enabled,
         reports_enabled: form.reports_enabled,
@@ -265,6 +276,16 @@ export default function ClientesCentralPanel() {
               />
             </label>
 
+            <label className={styles.field}>
+              <span>Google Ads Customer ID</span>
+              <input
+                type="text"
+                value={form.google_ads_customer_id}
+                onChange={(e) => setForm((prev) => ({ ...prev, google_ads_customer_id: e.target.value }))}
+                placeholder="123-456-7890 ou 1234567890"
+              />
+            </label>
+
             <label className={`${styles.field} ${styles.fieldFull}`}>
               <span>Nome do CRM inicial</span>
               <input
@@ -383,6 +404,10 @@ export default function ClientesCentralPanel() {
                   <div>
                     <span className={styles.metaLabel}>Meta Account</span>
                     <strong>{cliente.meta_account_id || 'Não vinculada'}</strong>
+                  </div>
+                  <div>
+                    <span className={styles.metaLabel}>Google Ads</span>
+                    <strong>{cliente.google_ads_customer_id ? formatGoogleAdsId(cliente.google_ads_customer_id) : 'Não vinculada'}</strong>
                   </div>
                   <div>
                     <span className={styles.metaLabel}>CRM</span>

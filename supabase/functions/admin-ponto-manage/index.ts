@@ -24,7 +24,7 @@ const TIPOS_BATIDA = new Set([
 ])
 
 const TIPOS_AUSENCIA = new Set([
-  'atestado', 'feriado', 'folga', 'falta_justificada',
+  'atestado', 'feriado', 'folga', 'folga_aniversario', 'falta_justificada',
 ])
 
 function isDateTimeStr(s: unknown): s is string {
@@ -230,6 +230,9 @@ serve(async (req) => {
       }
       if (escopo !== 'dia' && escopo !== 'faixa') {
         return json(req, { error: "escopo deve ser 'dia' ou 'faixa'." }, 400)
+      }
+      if (tipo_ausencia === 'folga_aniversario' && escopo !== 'dia') {
+        return json(req, { error: 'Folga aniversário só pode ser marcada como dia inteiro.' }, 400)
       }
       if (escopo === 'faixa') {
         if (!isHHmm(hora_inicio) || !isHHmm(hora_fim)) {

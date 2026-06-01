@@ -337,6 +337,20 @@ async function processWebhookPayload(
 }
 
 // ── Handler ───────────────────────────────────────────────────────────────────
+// Comparação constant-time evita timing attack que permitiria recuperar o
+// secret um caractere por vez observando latência de resposta.
+function constantTimeEq(a: string, b: string): boolean {
+  if (a.length !== b.length) {
+    // ainda assim percorre B inteiro pra não vazar diferença de length precisa
+    let dummy = 0
+    for (let i = 0; i < b.length; i++) dummy |= b.charCodeAt(i)
+    return false
+  }
+  let diff = 0
+  for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i)
+  return diff === 0
+}
+
 Deno.serve(async (req: Request) => {
   const rawBody = req.method === 'POST' ? await req.text() : ''
 
@@ -348,8 +362,9 @@ Deno.serve(async (req: Request) => {
 
   const incoming = req.headers.get('apikey') || req.headers.get('authorization') || req.headers.get('x-webhook-secret') || ''
   const normalized = incoming.replace(/^Bearer\s+/i, '')
-  if (normalized !== secretToken) {
-    console.log('[whatsapp-webhook] 401 - token recebido:', normalized?.slice(0, 8) + '...')
+  if (!constantTimeEq(normalized, secretToken)) {
+    // Loga só os 4 primeiros chars (não vaza secret). Antes logava 8.
+    console.log('[whatsapp-webhook] 401 - prefix recebido:', normalized?.slice(0, 4) + '…')
     return new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 401 })
   }
 

@@ -140,6 +140,23 @@ const SETORES: Setor[] = [
     gradient: 'linear-gradient(135deg,#dc2626,#f97316)',
   },
   {
+    id: 'copilot',
+    title: 'NGP Copilot',
+    desc: 'Agente de tráfego com memória persistente por cliente. Conversa, aprende, propõe campanhas.',
+    icon: (
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M12 2a4 4 0 014 4v2h1.5A2.5 2.5 0 0120 10.5V18a4 4 0 01-4 4H8a4 4 0 01-4-4v-7.5A2.5 2.5 0 016.5 8H8V6a4 4 0 014-4z"/>
+        <circle cx="9" cy="14" r="1.2"/>
+        <circle cx="15" cy="14" r="1.2"/>
+      </svg>
+    ),
+    href: '/copilot',
+    external: false,
+    embed: false,
+    gradient: 'linear-gradient(135deg,#7c3aed,#ec4899)',
+    badge: 'beta',
+  },
+  {
     id: 'pessoas',
     title: 'Pessoas',
     desc: 'Gestão de equipe, colaboradores, onboarding e cultura NGP.',
@@ -242,6 +259,28 @@ const SETORES: Setor[] = [
     external: false,
     embed: false,
     gradient: 'linear-gradient(135deg,#7c3aed,#ec4899)',
+  },
+  {
+    id: 'criativo',
+    title: 'Criativo',
+    desc: 'Mapas mentais, mapeamento de processos e ferramentas visuais de brainstorm.',
+    icon: (
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <circle cx="12" cy="12" r="3"/>
+        <circle cx="5" cy="6" r="2"/>
+        <circle cx="19" cy="6" r="2"/>
+        <circle cx="5" cy="18" r="2"/>
+        <circle cx="19" cy="18" r="2"/>
+        <path d="M10 11l-4-4"/>
+        <path d="M14 11l4-4"/>
+        <path d="M10 13l-4 4"/>
+        <path d="M14 13l4 4"/>
+      </svg>
+    ),
+    href: '/criativo',
+    external: false,
+    embed: false,
+    gradient: 'linear-gradient(135deg,#f59e0b,#ec4899)',
   },
   {
     id: 'gestao-anuncios',

@@ -37,7 +37,16 @@ async function fileToBase64(file: File): Promise<{ data: string; mime: string }>
 // Rotas onde o botão NÃO deve aparecer (usuário ainda não logou)
 const HIDDEN_PATHS = ['/login', '/']
 
-export default function FeedbackFloatingButton() {
+// Evento global pra abrir o modal de feedback a partir de outro componente
+// (ex.: link "Reportar bug" dentro do ChatFloatingButton).
+export const FEEDBACK_OPEN_EVENT = 'ngp:open-feedback-modal'
+
+interface FeedbackFloatingButtonProps {
+  /** Quando true, esconde o botão flutuante vermelho. O modal segue acessível via evento. */
+  hideTrigger?: boolean
+}
+
+export default function FeedbackFloatingButton({ hideTrigger = false }: FeedbackFloatingButtonProps = {}) {
   const pathname = usePathname()
   const [visible, setVisible] = useState(false)
   const [open, setOpen] = useState(false)
@@ -75,6 +84,13 @@ export default function FeedbackFloatingButton() {
     window.addEventListener('paste', onPaste)
     return () => window.removeEventListener('paste', onPaste)
   }, [open])
+
+  // Permite abrir o modal a partir de outros componentes (ex.: painel do chat)
+  useEffect(() => {
+    const onExternal = () => handleOpen()
+    window.addEventListener(FEEDBACK_OPEN_EVENT, onExternal)
+    return () => window.removeEventListener(FEEDBACK_OPEN_EVENT, onExternal)
+  }, [])
 
   if (!visible) return null
   if (HIDDEN_PATHS.includes(pathname)) return null
@@ -148,7 +164,7 @@ export default function FeedbackFloatingButton() {
   return (
     <>
       {/* Botão flutuante */}
-      {!open && (
+      {!open && !hideTrigger && (
         <button
           onClick={handleOpen}
           title="Enviar feedback, reportar bug ou sugestão"

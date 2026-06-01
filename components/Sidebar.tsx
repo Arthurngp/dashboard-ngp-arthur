@@ -10,6 +10,7 @@ import { getAdminNavigation } from '@/lib/admin-navigation'
 import WorkspaceTopbar from './WorkspaceTopbar'
 import styles from './Sidebar.module.css'
 import { TaskCliente, TaskSetor } from '@/types/tasks'
+import { useChatNotifications } from '@/lib/team-chat/notifications-provider'
 
 interface Props {
   activeTab?: string
@@ -30,6 +31,8 @@ interface NavItem {
   href: string
   tab?: string
   badge?: string
+  /** Contador numérico (não-lidas etc). Renderiza em vermelho ao lado do label. */
+  badgeCount?: number
   subItems?: NavItem[]
   action?: {
     icon: React.ReactNode
@@ -236,6 +239,20 @@ function getSetoresNavItems(): NavItem[] {
       label: 'Gestão de Tarefas',
       href: '/tarefas',
     },
+    {
+      icon: <Ico><circle cx="12" cy="12" r="3" /><circle cx="5" cy="6" r="2" /><circle cx="19" cy="6" r="2" /><circle cx="5" cy="18" r="2" /><circle cx="19" cy="18" r="2" /><path d="M10 11l-4-4" /><path d="M14 11l4-4" /><path d="M10 13l-4 4" /><path d="M14 13l4 4" /></Ico>,
+      label: 'Criativo',
+      href: '/criativo',
+    },
+    ...(process.env.NEXT_PUBLIC_INTERNAL_CHAT_ENABLED === 'true'
+      ? [
+          {
+            icon: <Ico><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z" /></Ico>,
+            label: 'Chat',
+            href: '/chat',
+          },
+        ]
+      : []),
   ]
 }
 
@@ -560,6 +577,15 @@ function SidebarInner({
   let resolvedSectorNav = setoresOnlyOpen ? getSetoresNavItems() : sectorNav || autoSector?.nav || []
   const resolvedSectorTitle = setoresOnlyOpen ? 'SETORES' : sectorNavTitle || autoSector?.title || 'NAVEGAÇÃO'
 
+  // Injeta badge de mensagens não-lidas no item "Chat" — visível em qualquer rota
+  // sem precisar entrar na /chat. Provider já cuida de zerar quando estamos lá.
+  const { totalUnread: chatUnread } = useChatNotifications()
+  if (chatUnread > 0 && resolvedSectorNav.length > 0) {
+    resolvedSectorNav = resolvedSectorNav.map(item =>
+      item.href === '/chat' ? { ...item, badgeCount: chatUnread } : item
+    )
+  }
+
   // Injetar pastas de clientes se estiver no setor de tarefas (Estilo ClickUp)
   if (pathname.startsWith('/tarefas') && !pathname.startsWith('/tarefas/config') && clients.length > 0) {
     const clientsFolder: NavItem = {
@@ -701,7 +727,23 @@ function SidebarInner({
         handleNav(() => window.open(item.href, '_blank', 'noopener,noreferrer'))
         return
       }
-      handleNav(() => router.push(item.href))
+      // Para /relatorio?novo=1: anexa cid/username do cliente atualmente em viewing,
+      // para que o save grave cliente_id corretamente.
+      let target = item.href
+      if (target.startsWith('/relatorio') && typeof window !== 'undefined') {
+        const cid  = sessionStorage.getItem('ngp_viewing_id') || ''
+        const user = sessionStorage.getItem('ngp_viewing_username') || ''
+        const name = sessionStorage.getItem('ngp_viewing_name') || ''
+        if (cid || user) {
+          const [base, q] = target.split('?')
+          const sp = new URLSearchParams(q || '')
+          if (cid && !sp.get('cid')) sp.set('cid', cid)
+          if (user && !sp.get('username')) sp.set('username', user)
+          if (name && !sp.get('cliente')) sp.set('cliente', name)
+          target = `${base}?${sp.toString()}`
+        }
+      }
+      handleNav(() => router.push(target))
     }
 
     return (
@@ -725,6 +767,11 @@ function SidebarInner({
           )}
           {isGroup && <span className={`${styles.chevron} ${isExpanded ? styles.chevronOpen : ''}`}>›</span>}
           {item.badge && <span className={styles.navBadge}>{item.badge}</span>}
+          {typeof item.badgeCount === 'number' && item.badgeCount > 0 && (
+            <span className={styles.navBadgeCount} aria-label={`${item.badgeCount} não lidas`}>
+              {item.badgeCount > 99 ? '99+' : item.badgeCount}
+            </span>
+          )}
         </button>
         {isGroup && isExpanded && (
           <div className={styles.navGroupChildren}>

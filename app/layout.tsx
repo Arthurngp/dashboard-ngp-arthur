@@ -2,6 +2,11 @@ import type { Metadata } from 'next'
 import './globals.css'
 import InactivityGuard from '@/components/InactivityGuard'
 import FeedbackFloatingButton from '@/components/FeedbackFloatingButton'
+import ChatFloatingButton from '@/components/ChatFloatingButton'
+import { ChatNotificationsProvider } from '@/lib/team-chat/notifications-provider'
+import ChatNotificationsEffects from '@/components/ChatNotificationsEffects'
+
+const CHAT_ENABLED = process.env.NEXT_PUBLIC_INTERNAL_CHAT_ENABLED === 'true'
 
 export const metadata: Metadata = {
   title: 'NGP Space',
@@ -17,7 +22,21 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           rel="stylesheet"
         />
       </head>
-      <body><InactivityGuard>{children}</InactivityGuard><FeedbackFloatingButton /></body>
+      <body>
+        {CHAT_ENABLED ? (
+          <ChatNotificationsProvider>
+            <InactivityGuard>{children}</InactivityGuard>
+            <ChatFloatingButton />
+            <FeedbackFloatingButton hideTrigger />
+            <ChatNotificationsEffects />
+          </ChatNotificationsProvider>
+        ) : (
+          <>
+            <InactivityGuard>{children}</InactivityGuard>
+            <FeedbackFloatingButton />
+          </>
+        )}
+      </body>
     </html>
   )
 }

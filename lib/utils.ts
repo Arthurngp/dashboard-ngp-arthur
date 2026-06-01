@@ -27,7 +27,13 @@ export function parseIns(ins: Record<string, unknown>) {
   const av = (ins.action_values as { action_type: string; value: string }[]) || []
   
   const spend = parseFloat(String(ins.spend || 0))
-  const purVal = parseFloat(av.find((a) => a.action_type === 'purchase')?.value || '0')
+  // Receita (purchase_value): prioriza omni_purchase (deduplicado pela Meta) pra bater com gerenciador
+  const purVal = parseFloat(
+    av.find((a) => a.action_type === 'omni_purchase')?.value ||
+    av.find((a) => a.action_type === 'purchase')?.value ||
+    av.find((a) => a.action_type === 'offsite_conversion.fb_pixel_purchase')?.value ||
+    '0'
+  )
   const roasArr = (ins.purchase_roas as { value: string }[]) || []
   let roas = roasArr.length ? parseFloat(roasArr[0].value) : 0
   if (!roas && purVal > 0 && spend > 0) roas = purVal / spend
@@ -41,17 +47,33 @@ export function parseIns(ins: Record<string, unknown>) {
       if (metric.actionType === 'purchase_value') {
         val = purVal
       } else {
-        // Find action
-        const actionMatch = actions.find(a => {
-          if (metric.actionType === 'messaging_conversation_started_7d') {
-            return a.action_type?.includes('messaging_conversation_started') || a.action_type?.includes('total_messaging')
-          }
-          if (metric.actionType === 'lead') {
-            return a.action_type === 'lead' || a.action_type === 'leadgen_grouped'
-          }
-          return a.action_type === metric.actionType
-        })
-        val = parseFloat(actionMatch?.value || '0')
+        // Find action — prioriza variantes "omni_*" (deduplicadas pela Meta,
+        // batem com o que aparece no Gerenciador de Anúncios).
+        // Pra cada métrica, define uma lista de keys em ordem de preferência.
+        let keysToTry: string[] = []
+        if (metric.actionType === 'purchase') {
+          keysToTry = ['omni_purchase', 'purchase', 'offsite_conversion.fb_pixel_purchase']
+        } else if (metric.actionType === 'lead') {
+          keysToTry = ['lead', 'offsite_conversion.fb_pixel_lead', 'leadgen_grouped', 'onsite_conversion.lead_grouped']
+        } else if (metric.actionType === 'messaging_conversation_started_7d') {
+          keysToTry = ['onsite_conversion.messaging_conversation_started_7d', 'messaging_conversation_started_7d', 'onsite_conversion.total_messaging_connection']
+        } else if (metric.actionType) {
+          keysToTry = [metric.actionType]
+        }
+        // Encontra o primeiro action_type que existir nos actions (não soma, pra evitar duplicação)
+        let matched: { action_type: string; value: string } | undefined
+        for (const k of keysToTry) {
+          matched = actions.find(a => a.action_type === k)
+          if (matched) break
+        }
+        // Fallback adicional: pra leads, alguns ad accounts retornam só por sufixo
+        if (!matched && metric.actionType === 'lead') {
+          matched = actions.find(a => a.action_type?.endsWith('.lead') || a.action_type?.includes('lead_grouped'))
+        }
+        if (!matched && metric.actionType === 'messaging_conversation_started_7d') {
+          matched = actions.find(a => a.action_type?.includes('messaging_conversation_started') || a.action_type?.includes('total_messaging'))
+        }
+        val = parseFloat(matched?.value || '0')
       }
     } else if (metric.apiField) {
       if (metric.apiField === 'purchase_roas') {

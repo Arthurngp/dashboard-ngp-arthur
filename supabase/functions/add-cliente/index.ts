@@ -1,6 +1,21 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
-import * as bcrypt from "https://deno.land/x/bcrypt@v0.4.1/mod.ts";
 import { handleCors, json } from "../_shared/cors.ts";
+
+const PBKDF2_ITERATIONS = 100_000;
+
+async function hashPasswordPbkdf2(password: string): Promise<string> {
+  const salt = crypto.getRandomValues(new Uint8Array(16));
+  const key = await crypto.subtle.importKey(
+    'raw', new TextEncoder().encode(password), 'PBKDF2', false, ['deriveBits']
+  );
+  const derived = await crypto.subtle.deriveBits(
+    { name: 'PBKDF2', salt, iterations: PBKDF2_ITERATIONS, hash: 'SHA-256' },
+    key, 256
+  );
+  const hashHex = Array.from(new Uint8Array(derived)).map(b => b.toString(16).padStart(2, '0')).join('');
+  const saltHex = Array.from(salt).map(b => b.toString(16).padStart(2, '0')).join('');
+  return `pbkdf2:${saltHex}:${hashHex}`;
+}
 
 const errMsg = (e: unknown): string => {
   if (!e) return 'Erro desconhecido';
@@ -15,7 +30,7 @@ Deno.serve(async (req) => {
   if (cors) return cors;
 
   try {
-    const { session_token, nome, username, meta_account_id, senha, foto_base64, foto_mime } = await req.json();
+    const { session_token, nome, username, meta_account_id, google_ads_customer_id, senha, foto_base64, foto_mime } = await req.json();
 
     if (!session_token) {
       return json(req, { error: 'Sessão inválida.' }, 401);
@@ -86,8 +101,8 @@ Deno.serve(async (req) => {
       }
     }
 
-    // Hash da senha com bcrypt
-    const hashedPassword = await bcrypt.hash(senha);
+    // Hash da senha com PBKDF2 (mesmo formato usado pelo login)
+    const hashedPassword = await hashPasswordPbkdf2(senha);
 
     const insertData: Record<string, unknown> = {
       nome:          nome.trim(),
@@ -97,6 +112,16 @@ Deno.serve(async (req) => {
       password_hash: hashedPassword,
     };
     if (meta_account_id) insertData.meta_account_id = meta_account_id.trim();
+
+    // Google Ads customer_id: aceita "123-456-7890" ou "1234567890". Armazena sem hífens.
+    if (google_ads_customer_id) {
+      const googleAdsClean = String(google_ads_customer_id).trim().replace(/-/g, '');
+      if (!/^\d{10}$/.test(googleAdsClean)) {
+        return json(req, { error: 'Google Ads Customer ID inválido. Use 10 dígitos (ex: 123-456-7890).' }, 400);
+      }
+      insertData.google_ads_customer_id = googleAdsClean;
+    }
+
     if (fotoUrl) insertData.foto_url = fotoUrl;
 
     const { error } = await sb.from('usuarios').insert(insertData);

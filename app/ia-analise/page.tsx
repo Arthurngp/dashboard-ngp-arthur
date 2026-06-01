@@ -3,7 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import CustomSelect, { SelectOption } from '@/components/CustomSelect'
 import { useRouter } from 'next/navigation'
 import { getSession } from '@/lib/auth'
-import { efCall } from '@/lib/api'
+import { efCall, efCallCached, invalidateEfCache } from '@/lib/api'
 import Sidebar from '@/components/Sidebar'
 import {
   parseStructuredAnalysis,
@@ -259,13 +259,15 @@ export default function IaAnalisePage() {
   const analysisInFlight = useRef(false)
   const promptSaveInFlight = useRef(false)
 
-  const loadLatestSnapshot = useCallback(async (cid: string, username: string, account: string) => {
-    const data = await efCall('analytics-snapshots', {
+  const loadLatestSnapshot = useCallback(async (cid: string, username: string, account: string, opts?: { bypass?: boolean }) => {
+    // Cache 30min: snapshots de IA são caros de gerar e raramente mudam dentro
+    // de uma sessão de trabalho. Bypass via botão "↻ Atualizar".
+    const data = await efCallCached('analytics-snapshots', {
       action: 'latest',
       cliente_id: cid || undefined,
       cliente_username: username || undefined,
       meta_account_id: account || undefined,
-    })
+    }, { bypass: opts?.bypass })
 
     if (data.error) {
       setSnapshot(null)
@@ -288,7 +290,9 @@ export default function IaAnalisePage() {
   }, [])
 
   const loadPrompts = useCallback(async () => {
-    const data = await efCall('ai-generate-analysis', {
+    // Cache de prompts: muda raramente (apenas quando admin edita).
+    // Invalidamos via invalidateEfCache('ai-generate-analysis') após salvar prompt.
+    const data = await efCallCached('ai-generate-analysis', {
       action: 'list_prompts',
       include_inactive: true,
     })
@@ -305,12 +309,12 @@ export default function IaAnalisePage() {
     setSelectedPromptId((prev) => prev || list.find((p) => p.is_active)?.id || list[0]?.id || '')
   }, [])
 
-  const loadHistory = useCallback(async (cid: string, username: string) => {
-    const data = await efCall('ai-generate-analysis', {
+  const loadHistory = useCallback(async (cid: string, username: string, opts?: { bypass?: boolean }) => {
+    const data = await efCallCached('ai-generate-analysis', {
       action: 'history',
       cliente_id: cid || undefined,
       cliente_username: username || undefined,
-    })
+    }, { bypass: opts?.bypass })
 
     if (!data.error && Array.isArray(data.history)) {
       setHistory(data.history as AnalysisRun[])
@@ -440,7 +444,9 @@ export default function IaAnalisePage() {
       setRawOutput(markdown)
       setOutputHtml(structured ? null : renderMarkdown(markdown))
       setNotice('Análise gerada e salva no histórico.')
-      await loadHistory(clientId, clientUsername)
+      // Nova análise gerada → invalida cache de history pra mostrar a nova.
+      invalidateEfCache('ai-generate-analysis')
+      await loadHistory(clientId, clientUsername, { bypass: true })
     } catch {
       setNotice('')
       setError('Nao foi possivel gerar a analise agora. Tente novamente em alguns segundos.')

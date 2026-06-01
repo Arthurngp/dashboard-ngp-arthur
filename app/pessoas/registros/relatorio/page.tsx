@@ -73,8 +73,26 @@ interface DayInfo {
   totalMins: number
   extrasMins: number
   negMins: number
+  folgaDescontoMins: number
   targetMins: number
   status: 'complete' | 'overtime' | 'below' | 'incomplete' | 'empty'
+}
+
+type FolgaKind = 'compensatoria' | 'aniversario' | null
+function classifyFolga(obs: string | null | undefined): FolgaKind {
+  if (!obs) return null
+  if (obs.startsWith('FOLGA ANIVERSARIO')) return 'aniversario'
+  if (obs.startsWith('FOLGA')) return 'compensatoria'
+  return null
+}
+function extractFaixaMins(obs: string | null | undefined): number | null {
+  if (!obs) return null
+  const m = obs.match(/(\d{2}):(\d{2})-(\d{2}):(\d{2})/)
+  if (!m) return null
+  const ini = parseInt(m[1], 10) * 60 + parseInt(m[2], 10)
+  const fim = parseInt(m[3], 10) * 60 + parseInt(m[4], 10)
+  const diff = fim - ini
+  return diff > 0 ? diff : null
 }
 
 function buildDayInfo(records: PontoRecord[], dateStr: string, jornada: Jornada): DayInfo {
@@ -115,7 +133,21 @@ function buildDayInfo(records: PontoRecord[], dateStr: string, jornada: Jornada)
 
   const diff = totalMins - target
   const extrasMins = diff > 0 ? diff : 0
-  const negMins = target > 0 && diff < 0 && (status === 'below' || status === 'incomplete') ? -diff : 0
+  const rawNeg = target > 0 && diff < 0 && (status === 'below' || status === 'incomplete') ? -diff : 0
+
+  // Desconto de folga compensatória: só conta se for tipo 'compensatoria'.
+  // Aniversário é brinde (não desconta). Faixa desconta duração; dia inteiro
+  // desconta a jornada do dia.
+  const folgaKind = classifyFolga(ausenciaObs)
+  let folgaDescontoMins = 0
+  if (folgaKind === 'compensatoria' && target > 0) {
+    const faixa = extractFaixaMins(ausenciaObs)
+    folgaDescontoMins = faixa ?? target
+    if (folgaDescontoMins > target) folgaDescontoMins = target
+  }
+  // Folga em faixa já está dentro do déficit (target - totalMins) quando há
+  // batidas. Subtrai antes de somar pra evitar double-counting.
+  const negMins = Math.max(0, rawNeg - folgaDescontoMins)
 
   return {
     dateStr,
@@ -130,6 +162,7 @@ function buildDayInfo(records: PontoRecord[], dateStr: string, jornada: Jornada)
     totalMins,
     extrasMins,
     negMins,
+    folgaDescontoMins,
     targetMins: target,
     status,
   }
@@ -240,7 +273,7 @@ function RelatorioInner() {
   const resumo = useMemo(() => {
     const totalTrabalhado = days.reduce((s, d) => s + d.totalMins, 0)
     const totalExtras = days.reduce((s, d) => s + d.extrasMins, 0)
-    const totalNeg = days.reduce((s, d) => s + d.negMins, 0)
+    const totalNeg = days.reduce((s, d) => s + d.negMins + d.folgaDescontoMins, 0)
     const saldo = totalExtras - totalNeg
     const diasTrabalhados = days.filter(d => d.entrada).length
     const diasAusencia = days.filter(d => d.hasAusencia).length

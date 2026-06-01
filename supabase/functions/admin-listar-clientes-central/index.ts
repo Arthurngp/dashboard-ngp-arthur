@@ -22,7 +22,7 @@ serve(async (req) => {
 
     const { data: usuarios, error: usuariosError } = await sb
       .from('usuarios')
-      .select('id, nome, username, email, role, ativo, created_at, foto_url, meta_account_id')
+      .select('id, nome, username, email, role, ativo, created_at, foto_url, meta_account_id, google_ads_customer_id')
       .eq('role', 'cliente')
       .is('archived_at', null)
       .order('created_at', { ascending: false })

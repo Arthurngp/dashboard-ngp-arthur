@@ -1,0 +1,428 @@
+.shell {
+  display: flex;
+  min-height: 100vh;
+  background: #f4f6fa;
+  font-family: 'Plus Jakarta Sans', sans-serif;
+}
+
+.main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.topbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 16px 24px;
+  background: #fff;
+  border-bottom: 1px solid #e5e7eb;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+.topbarLeft {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+.topbarRight {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.backBtn {
+  border: 1px solid #d1d5db;
+  background: #fff;
+  color: #4b5563;
+  padding: 8px 12px;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.backBtn:hover { background: #f3f4f6; }
+
+.eyebrow {
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: #7c8497;
+  font-weight: 600;
+  margin-bottom: 2px;
+}
+.title {
+  font-size: 20px;
+  font-weight: 700;
+  color: #111827;
+  margin: 0;
+}
+.titleSmall {
+  font-size: 17px;
+  font-weight: 700;
+  color: #111827;
+  margin: 0;
+}
+
+.userPill {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  background: #f3f4f6;
+  border: 0;
+  padding: 6px 12px 6px 6px;
+  border-radius: 100px;
+  cursor: pointer;
+}
+.userDot {
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #3b82f6, #7c3aed);
+  color: #fff;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-weight: 700;
+}
+.userName {
+  font-size: 13px;
+  color: #1f2937;
+  font-weight: 600;
+}
+.btnLogout {
+  border: 1px solid #fca5a5;
+  background: #fff;
+  color: #b91c1c;
+  padding: 7px 12px;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.btnLogout:hover { background: #fef2f2; }
+
+/* INDEX (lista de clientes) */
+.content {
+  padding: 32px 28px;
+}
+.contentFull {
+  padding: 16px 20px 32px;
+}
+.hero {
+  margin-bottom: 24px;
+  max-width: 720px;
+}
+.hero h2 {
+  font-size: 22px;
+  color: #111827;
+  margin: 0 0 6px;
+}
+.hero p {
+  font-size: 14px;
+  color: #6b7280;
+  margin: 0 0 14px;
+  line-height: 1.5;
+}
+.search {
+  width: 100%;
+  max-width: 380px;
+  padding: 10px 14px;
+  border: 1px solid #d1d5db;
+  border-radius: 10px;
+  font-size: 14px;
+  background: #fff;
+}
+.search:focus {
+  outline: 2px solid #2563eb;
+  outline-offset: -1px;
+  border-color: #2563eb;
+}
+
+.loadingMsg, .empty {
+  padding: 40px 0;
+  text-align: center;
+  color: #6b7280;
+}
+.empty h3 { color: #1f2937; margin: 0 0 6px; font-size: 16px; }
+.empty p { margin: 0; font-size: 13px; }
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 14px;
+}
+
+.clientCard {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px;
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-radius: 12px;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 0.15s, box-shadow 0.15s, transform 0.05s;
+}
+.clientCard:hover {
+  border-color: #2563eb;
+  box-shadow: 0 2px 8px rgba(37, 99, 235, 0.1);
+}
+.clientCard:active { transform: scale(0.99); }
+
+.clientAvatar {
+  width: 42px;
+  height: 42px;
+  border-radius: 10px;
+  background: linear-gradient(135deg, #3b82f6, #7c3aed);
+  color: #fff;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+  font-size: 14px;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+.clientAvatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.clientBody {
+  flex: 1;
+  min-width: 0;
+}
+.clientName {
+  font-size: 14px;
+  font-weight: 700;
+  color: #111827;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.clientMeta {
+  font-size: 12px;
+  color: #6b7280;
+  margin-top: 2px;
+}
+.clientArrow {
+  color: #9ca3af;
+  font-size: 18px;
+}
+
+/* SWITCHER (na página do cliente) */
+.switcherWrap {
+  position: relative;
+}
+.switcherBtn {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-start;
+  background: #fff;
+  border: 1px solid #d1d5db;
+  padding: 6px 14px;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 11px;
+  color: #6b7280;
+  line-height: 1.2;
+}
+.switcherBtn:hover { background: #f9fafb; }
+.switcherCurrent {
+  color: #111827;
+  font-weight: 600;
+  font-size: 13px;
+  margin-top: 2px;
+  max-width: 200px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.switcherPop {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  margin-top: 6px;
+  width: 280px;
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-radius: 12px;
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.12);
+  padding: 8px;
+  z-index: 50;
+}
+.switcherSearch {
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid #d1d5db;
+  border-radius: 8px;
+  font-size: 13px;
+  margin-bottom: 8px;
+}
+.switcherList {
+  max-height: 360px;
+  overflow-y: auto;
+}
+.switcherItem {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 8px 10px;
+  border: 0;
+  background: transparent;
+  border-radius: 6px;
+  font-size: 13px;
+  color: #1f2937;
+  cursor: pointer;
+}
+.switcherItem:hover { background: #f3f4f6; }
+.switcherItemActive {
+  background: #dbeafe;
+  color: #1e40af;
+  font-weight: 600;
+}
+.switcherEmpty {
+  padding: 12px;
+  color: #9ca3af;
+  font-size: 13px;
+  text-align: center;
+}
+
+/* ========================================================================
+   Model Picker — dropdown de modelo OpenAI no header do setor Copilot
+   ======================================================================== */
+.modelPickerWrap {
+  position: relative;
+}
+.modelPickerBtn {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  background: #fff;
+  border: 1px solid #d1d5db;
+  padding: 6px 12px;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 11px;
+  color: #6b7280;
+  line-height: 1.2;
+  text-align: left;
+  position: relative;
+  padding-right: 28px;
+}
+.modelPickerBtn:hover { background: #f9fafb; border-color: #9ca3af; }
+.modelPickerLabel {
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #9ca3af;
+  font-weight: 600;
+}
+.modelPickerValue {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: #111827;
+  font-weight: 700;
+  font-size: 13px;
+}
+.modelBadgeReason {
+  display: inline-flex;
+  padding: 1px 6px;
+  background: linear-gradient(135deg, #7c3aed, #ec4899);
+  color: #fff;
+  border-radius: 6px;
+  font-size: 9px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.modelPickerCaret {
+  position: absolute;
+  right: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: #9ca3af;
+  transition: transform 0.15s;
+}
+.modelPickerCaretOpen {
+  transform: translateY(-50%) rotate(180deg);
+}
+.modelPickerPop {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  width: 320px;
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-radius: 12px;
+  box-shadow: 0 12px 32px rgba(15, 23, 42, 0.16);
+  padding: 8px;
+  z-index: 60;
+}
+.modelPickerPopHead {
+  font-size: 10px;
+  font-weight: 700;
+  color: #6b7280;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  padding: 8px 10px 6px;
+}
+.modelPickerItem {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: 0;
+  border-radius: 8px;
+  padding: 10px 10px;
+  cursor: pointer;
+  transition: background 0.12s;
+}
+.modelPickerItem:hover { background: #f3f4f6; }
+.modelPickerItemActive {
+  background: #dbeafe;
+}
+.modelPickerItemActive:hover { background: #bfdbfe; }
+.modelPickerItemRow {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+}
+.modelPickerItemName {
+  font-size: 13px;
+  font-weight: 700;
+  color: #111827;
+}
+.modelPickerTiers {
+  display: inline-flex;
+  gap: 6px;
+  font-size: 11px;
+}
+.modelTier {
+  color: #6b7280;
+  font-family: monospace;
+  letter-spacing: -1px;
+}
+.modelPickerItemHint {
+  font-size: 11.5px;
+  color: #6b7280;
+  margin-top: 4px;
+  line-height: 1.4;
+}
+.modelPickerFoot {
+  font-size: 10px;
+  color: #9ca3af;
+  padding: 8px 10px 4px;
+  text-align: right;
+  border-top: 1px solid #f3f4f6;
+  margin-top: 4px;
+}

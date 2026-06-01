@@ -8,10 +8,36 @@ serve(async (req) => {
 
   try {
     const body = await req.json()
-    const { session_token, endpoint, params = {}, account_id } = body
+    const { session_token, endpoint, params = {}, account_id, image_url } = body
 
-    if (!session_token || !endpoint) {
+    if (!session_token) {
       return json(req, { error: 'Parâmetros inválidos.' }, 400)
+    }
+    if (!endpoint && !image_url) {
+      return json(req, { error: 'Parâmetros inválidos.' }, 400)
+    }
+
+    // Modo proxy de imagem: busca uma URL do CDN do Meta e devolve como data URL.
+    // Resolve CORS do scontent.fxxx.fbcdn.net que bloqueia leitura no browser.
+    if (image_url) {
+      // Validação básica: só aceita URLs do CDN do Meta
+      const allowed = /^https?:\/\/[^/]*\.(?:fbcdn\.net|facebook\.com|cdninstagram\.com)\//.test(image_url)
+      if (!allowed) {
+        return json(req, { error: 'URL não permitida.' }, 400)
+      }
+      try {
+        const r = await fetch(image_url, { signal: AbortSignal.timeout(10000) })
+        if (!r.ok) return json(req, { error: `Falha ao buscar imagem: ${r.status}` }, 502)
+        const ct = r.headers.get('content-type') || 'image/jpeg'
+        const buf = new Uint8Array(await r.arrayBuffer())
+        // base64
+        let bin = ''
+        for (let i = 0; i < buf.length; i++) bin += String.fromCharCode(buf[i])
+        const b64 = btoa(bin)
+        return json(req, { data_url: `data:${ct};base64,${b64}` })
+      } catch (e) {
+        return json(req, { error: `Erro ao buscar imagem: ${(e as Error).message}` }, 502)
+      }
     }
 
     const SURL = Deno.env.get('SUPABASE_URL')!

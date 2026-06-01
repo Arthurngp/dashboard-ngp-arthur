@@ -3,6 +3,7 @@ import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { useRouter } from 'next/navigation'
 import { getSession } from '@/lib/auth'
 import { metaCall } from '@/lib/meta'
+import { metaCallCached, invalidateMetaCache } from '@/lib/meta-cached'
 import { fetchWithRetry } from '@/lib/fetch-utils'
 import { parseIns, fmt, fmtN, fmtI } from '@/lib/utils'
 import { clearSession } from '@/lib/auth'
@@ -23,7 +24,7 @@ import {
   calcDerived,
   getPeriodBudgetFactor,
 } from '../dashboard-utils'
-import { getRequiredApiFields, META_METRICS, DEFAULT_METRICS } from '@/lib/meta-metrics'
+import { getRequiredApiFields, META_METRICS, DEFAULT_METRICS, META_INSIGHTS_DEFAULTS } from '@/lib/meta-metrics'
 import { buildAnalyticsSnapshot } from '@/lib/analytics-snapshot'
 import { efCall } from '@/lib/api'
 
@@ -43,7 +44,7 @@ export function useDashboard() {
 
   // ── Screens & tabs ──────────────────────────────────────────────────────
   const [screen, setScreen]       = useState<Screen>('select')
-  const [activeTab, setActiveTab] = useState<Tab>('resumo')
+  const [activeTab, setActiveTab] = useState<Tab>('resumo-geral')
 
   // ── Account selector ────────────────────────────────────────────────────
   const [clients, setClients]     = useState<Cliente[]>([])
@@ -56,6 +57,10 @@ export function useDashboard() {
   const [overviewAutoRefresh, setOverviewAutoRefresh] = useState(false)
   const [overviewLastUpdated, setOverviewLastUpdated] = useState('')
   const overviewRequestRef = useRef(0)
+  // overviewBypassRef: quando gestor clica "↻ Atualizar", seta pra true antes
+  // de loadOverviewData(). loadClientOverview lê esse ref pra forçar bypass
+  // do cache. Reseta pra false no finally.
+  const overviewBypassRef = useRef(false)
   const lastSnapshotSaveRef = useRef('')
 
   const [visibleOverviewCols, setVisibleOverviewCols] = useState<string[]>(() => {
@@ -104,7 +109,7 @@ export function useDashboard() {
   const [breakdownError, setBreakdownError] = useState('')
 
   // ── Time series data ───────────────────────────────────────────────────────
-  const [timeSeriesData, setTimeSeriesData] = useState<Array<{ date: string; spend: number; impressions: number; clicks: number }>>([])
+  const [timeSeriesData, setTimeSeriesData] = useState<Array<{ date: string; spend: number; impressions: number; clicks: number; actions?: Array<{ action_type: string; value: string }>; action_values?: Array<{ action_type: string; value: string }> }>>([])
   const [timeSeriesLoading, setTimeSeriesLoading] = useState(false)
   const [timeSeriesError, setTimeSeriesError] = useState('')
 
@@ -127,11 +132,29 @@ export function useDashboard() {
   })
 
   // ── Campaign filter (resumo) ─────────────────────────────────────────────
+  // Persistido por conta Meta no localStorage. Mudar período NÃO reseta:
+  // o usuário pode estar analisando as mesmas campanhas em períodos diferentes.
   const [selectedCampIds, setSelectedCampIds] = useState<Set<string>>(new Set())
   const [campFilterOpen, setCampFilterOpen]   = useState(false)
 
-  // Reset filter when account/period changes
-  useEffect(() => { setSelectedCampIds(new Set()) }, [viewing, period])
+  // Carrega a seleção salva ao trocar de conta
+  useEffect(() => {
+    if (!viewing?.account) { setSelectedCampIds(new Set()); return }
+    try {
+      const saved = localStorage.getItem(`ngp:campFilter:${viewing.account}`)
+      setSelectedCampIds(saved ? new Set(JSON.parse(saved)) : new Set())
+    } catch { setSelectedCampIds(new Set()) }
+  }, [viewing])
+
+  // Persiste a seleção sempre que muda
+  useEffect(() => {
+    if (!viewing?.account) return
+    const key = `ngp:campFilter:${viewing.account}`
+    try {
+      if (selectedCampIds.size === 0) localStorage.removeItem(key)
+      else localStorage.setItem(key, JSON.stringify(Array.from(selectedCampIds)))
+    } catch {}
+  }, [selectedCampIds, viewing])
 
   // ── Metrics customizer ───────────────────────────────────────────────────
   const [visibleMetrics, setVisibleMetrics] = useState<string[]>(() => {
@@ -196,28 +219,36 @@ export function useDashboard() {
 
       try {
         const fieldsToFetch = getRequiredApiFields(visibleMetrics).join(',')
+        // metaCallCached: cache de 30min em memória + localStorage.
+        // Quando gestor abre dashboard → 5 gestores diferentes navegando o mesmo
+        // dia = 1 só request real ao Meta, 4 cache hits. Bypass via refresh manual
+        // (botão "↻ Atualizar"). bypass={overviewBypass} controla isso.
         const [currentData, previousData] = await Promise.all([
-          metaCall('insights', {
+          metaCallCached('insights', {
+            ...META_INSIGHTS_DEFAULTS,
             level: 'account',
             fields: fieldsToFetch,
             limit: '1',
             ...dp,
-          }, client.meta_account_id),
+          }, client.meta_account_id, { bypass: overviewBypassRef.current }),
           cmpDp
-            ? metaCall('insights', {
+            ? metaCallCached('insights', {
+                ...META_INSIGHTS_DEFAULTS,
                 level: 'account',
                 fields: fieldsToFetch,
                 limit: '1',
                 ...cmpDp,
-              }, client.meta_account_id)
+              }, client.meta_account_id, { bypass: overviewBypassRef.current })
             : Promise.resolve(null),
         ])
 
         return {
           client,
-          current: normalizeOverviewMetrics(currentData?.data?.[0] as Record<string, unknown> | undefined),
-          previous: previousData?.data?.[0]
-            ? normalizeOverviewMetrics(previousData.data[0] as Record<string, unknown>)
+          // Type assertion: metaCallCached retorna unknown porque o cache não
+          // preserva tipo. Estrutura é mesma de metaCall.
+          current: normalizeOverviewMetrics((currentData as { data?: Record<string, unknown>[] })?.data?.[0]),
+          previous: (previousData as { data?: Record<string, unknown>[] })?.data?.[0]
+            ? normalizeOverviewMetrics((previousData as { data: Record<string, unknown>[] }).data[0])
             : null,
           status: 'ok',
         }
@@ -233,14 +264,14 @@ export function useDashboard() {
     }
 
     try {
-      const chunkSize = 4
-      for (let index = 0; index < orderedClients.length; index += chunkSize) {
-        const batch = orderedClients.slice(index, index + chunkSize)
-        const batchResults = await Promise.all(batch.map(loadClientOverview))
-        rows.push(...batchResults)
-        if (overviewRequestRef.current !== requestId) return
-        setOverviewRows([...rows])
-      }
+      // PARALELISMO TOTAL: antes era chunkSize=4 (5 rodadas serializadas em 20 clientes).
+      // Agora dispara todos de uma vez. Como ~80% vem do cache, sobrecarga real ao
+      // Meta API é baixíssima. Meta API aguenta dezenas de requests paralelos por
+      // app — não tem rate limit a esse nível por accountId distinto.
+      const allResults = await Promise.all(orderedClients.map(loadClientOverview))
+      if (overviewRequestRef.current !== requestId) return
+      rows.push(...allResults)
+      setOverviewRows([...rows])
 
       if (overviewRequestRef.current !== requestId) return
       setOverviewLastUpdated(new Date().toISOString())
@@ -249,31 +280,38 @@ export function useDashboard() {
       setOverviewError(error instanceof Error ? error.message : 'Erro ao carregar a visão geral.')
     } finally {
       if (overviewRequestRef.current === requestId) setOverviewLoading(false)
+      overviewBypassRef.current = false  // reseta bypass após uso
     }
   }, [clients, period, cmpPeriodParam, visibleMetrics])
 
-  const loadDataInflightRef = useRef(false)
+  // Em vez de bloquear novas requisições enquanto uma está em curso (que descarta cliques
+  // rápidos no "Aplicar"), usamos um request-id: só aceita o resultado da chamada mais recente.
+  const loadDataReqIdRef = useRef(0)
   const loadData = useCallback(async (dp: DateParam = period) => {
     if (!viewing) return
-    if (loadDataInflightRef.current) return
-    loadDataInflightRef.current = true
+    const reqId = ++loadDataReqIdRef.current
     setLoading(true); setError('')
     try {
       const fieldsToFetch = ['campaign_id', 'campaign_name', ...getRequiredApiFields(visibleMetrics)].join(',')
       const [d, campData] = await Promise.all([
         metaCall('insights', {
+          ...META_INSIGHTS_DEFAULTS,
           level: 'campaign', fields: fieldsToFetch, limit: '100', ...dp,
         }, viewing.account),
         metaCall('campaigns', {
-          fields: 'id,effective_status', limit: '100',
+          fields: 'id,effective_status,objective', limit: '100',
         }, viewing.account),
       ])
+      // Descarta resultado se uma requisição mais recente foi disparada
+      if (reqId !== loadDataReqIdRef.current) return
       if (d.error) throw new Error(d.error.message || JSON.stringify(d.error))
 
       const statusMap: Record<string, string> = {}
+      const objectiveMap: Record<string, string> = {}
       if (campData?.data) {
-        for (const c of campData.data as { id: string; effective_status: string }[]) {
+        for (const c of campData.data as { id: string; effective_status: string; objective: string }[]) {
           statusMap[c.id] = c.effective_status || ''
+          objectiveMap[c.id] = c.objective || ''
         }
       }
 
@@ -281,16 +319,17 @@ export function useDashboard() {
         const campId = String(c.campaign_id || '')
         return {
           id: campId, name: String(c.campaign_name || ''),
-          status: statusMap[campId] || '', objective: '',
+          status: statusMap[campId] || '', objective: objectiveMap[campId] || '',
           ...(parseIns(c) || {}),
         }
       }) as Campaign[]
       setCampaigns(mapped.sort((a, b) => b.spend - a.spend))
     } catch (e: unknown) {
+      if (reqId !== loadDataReqIdRef.current) return
       setError(e instanceof Error ? e.message : 'Erro ao carregar dados')
     } finally {
-      setLoading(false)
-      loadDataInflightRef.current = false
+      // Só limpa loading se for a request mais recente
+      if (reqId === loadDataReqIdRef.current) setLoading(false)
     }
   }, [viewing, period, visibleMetrics])
 
@@ -299,6 +338,7 @@ export function useDashboard() {
     try {
       const fieldsToFetch = ['campaign_id', 'campaign_name', ...getRequiredApiFields(visibleMetrics)].join(',')
       const d = await metaCall('insights', {
+        ...META_INSIGHTS_DEFAULTS,
         level: 'campaign', fields: fieldsToFetch, limit: '100', ...dp,
       }, viewing.account)
       if (d.error) return
@@ -412,7 +452,7 @@ export function useDashboard() {
     setBreakdownLoading(true)
     setBreakdownError('')
     try {
-      const params: Record<string, string> = { level: 'account', fields: metric, limit: '100', ...dp }
+      const params: Record<string, string> = { ...META_INSIGHTS_DEFAULTS, level: 'account', fields: metric, limit: '100', ...dp }
       if (type === 'by_day') params.time_increment = '1'
       else if (type === 'by_device') params.breakdowns = 'impression_device'
       else params.breakdowns = 'publisher_platform'
@@ -448,13 +488,16 @@ export function useDashboard() {
     setTimeSeriesLoading(true)
     setTimeSeriesError('')
     try {
-      const response = await metaCall('insights', { level: 'account', fields: 'spend,impressions,clicks', time_increment: '1', limit: '100', ...dp }, viewing.account)
+      const response = await metaCall('insights', { ...META_INSIGHTS_DEFAULTS, level: 'account', fields: 'spend,impressions,clicks,actions,action_values', time_increment: '1', limit: '100', ...dp }, viewing.account)
       const rows = Array.isArray(response?.data) ? response.data as Record<string, unknown>[] : []
       const data = rows.map((row) => {
+        // date fica em ISO (YYYY-MM-DD); a formatação para exibição é responsabilidade
+        // de quem renderiza. Formatar aqui quebrava a agregação semanal do PresentMode
+        // (isoWeekStart não parseava "01 de mai.") — bug do relatório por semana.
         const iso = String(row.date_start || '')
-        let dateLabel = iso
-        try { dateLabel = new Date(`${iso}T00:00:00`).toLocaleDateString('pt-BR', { day: '2-digit', month: 'short' }) } catch {}
-        return { date: dateLabel, spend: Number(row.spend || 0), impressions: Number(row.impressions || 0), clicks: Number(row.clicks || 0) }
+        const actions = Array.isArray(row.actions) ? row.actions as Array<{ action_type: string; value: string }> : undefined
+        const action_values = Array.isArray(row.action_values) ? row.action_values as Array<{ action_type: string; value: string }> : undefined
+        return { date: iso, spend: Number(row.spend || 0), impressions: Number(row.impressions || 0), clicks: Number(row.clicks || 0), actions, action_values }
       })
       setTimeSeriesData(data)
     } catch (e) {
@@ -472,8 +515,9 @@ export function useDashboard() {
     const vName = sessionStorage.getItem('ngp_viewing_name')
     const vUser = sessionStorage.getItem('ngp_viewing_username')
     const vId   = sessionStorage.getItem('ngp_viewing_id')
+    const vGoogle = sessionStorage.getItem('ngp_viewing_google_ads')
     if (vAcc && vName && vUser) {
-      setViewing({ account: vAcc, name: vName, username: vUser, id: vId || '' })
+      setViewing({ account: vAcc, name: vName, username: vUser, id: vId || '', googleAdsCustomerId: vGoogle || null })
       setScreen('dashboard')
     }
     loadClients()
@@ -512,6 +556,16 @@ export function useDashboard() {
     loadOverviewData(period, cmpPeriodParam)
   }, [screen, clients.length, period, cmpPeriodParam, loadOverviewData])
 
+  // Refresh manual: invalida cache do overview e recarrega da API.
+  // Chamado pelo botão "↻ Atualizar" na UI quando o gestor suspeita de dado velho.
+  const refreshOverview = useCallback(() => {
+    overviewBypassRef.current = true
+    // Invalida cache local de TODOS os clientes Meta (sem account_id = limpa tudo).
+    // Em runtime real, isso afeta ~20-50 entries de localStorage — operação rápida.
+    invalidateMetaCache()
+    loadOverviewData(period, cmpPeriodParam)
+  }, [loadOverviewData, period, cmpPeriodParam])
+
   useEffect(() => {
     if (!overviewAutoRefresh || screen !== 'select') return
     const intervalId = window.setInterval(() => {
@@ -522,13 +576,24 @@ export function useDashboard() {
 
   // ─── Actions ─────────────────────────────────────────────────────────────
   const selectAccount = (c: Cliente) => {
-    const acc = { account: c.meta_account_id || '', name: c.nome, username: c.username, id: c.id }
+    const acc = {
+      account: c.meta_account_id || '',
+      name: c.nome,
+      username: c.username,
+      id: c.id,
+      googleAdsCustomerId: c.google_ads_customer_id || null,
+    }
     setViewing(acc)
     setScreen('dashboard')
     sessionStorage.setItem('ngp_viewing_account', acc.account)
     sessionStorage.setItem('ngp_viewing_name', acc.name)
     sessionStorage.setItem('ngp_viewing_username', acc.username)
     sessionStorage.setItem('ngp_viewing_id', acc.id)
+    if (acc.googleAdsCustomerId) {
+      sessionStorage.setItem('ngp_viewing_google_ads', acc.googleAdsCustomerId)
+    } else {
+      sessionStorage.removeItem('ngp_viewing_google_ads')
+    }
   }
 
   function toggleMetric(id: string) {
@@ -741,16 +806,19 @@ export function useDashboard() {
     setBreakdownData([]); setTimeSeriesData([])
     setBreakdownError(''); setTimeSeriesError('')
     loadData(dp)
+    // Sempre recarrega a série temporal — usada em Gráficos e no PresentMode (sem
+    // depender da aba ativa, pra evitar tela "Sem série temporal" quando muda período).
+    loadTimeSeries(dp)
     if (cmp) loadPrevData(cmp)
   }
 
   const loadRelatorios = useCallback(async () => {
     if (!viewing) return
     try {
-      const res = await fetch(`${SURL}/functions/v1/get-cliente-relatorios`, {
+      const res = await fetch(`${SURL}/functions/v1/get-relatorios`, {
         method: 'POST',
         headers: efHeaders(),
-        body: JSON.stringify({ session_token: sess?.session, cliente_id: viewing.id }),
+        body: JSON.stringify({ session_token: sess?.session, cliente_id: viewing.id, cliente_username: viewing.username }),
       })
       const data = await res.json()
       if (data.relatorios) setRelatorios(data.relatorios)
@@ -856,6 +924,7 @@ export function useDashboard() {
     modalOpen, setModalOpen, modalEdit, setModalEdit, modalLoading, setModalLoading, modalError, setModalError,
     tableSearch, setTableSearch, tableStatus, setTableStatus,
     loadOverviewData, loadData, loadTimeSeries, loadBreakdown, loadAllCampaignData, loadPreview, loadRelatorios, loadBudgetAlerts,
+    refreshOverview,  // botão "↻ Atualizar" no overview
     // Actions
     saveClient, deleteClient, archiveClient, backToSelect, onPeriodApply, switchTab, toggleCamp, toggleAdset, logout,
     deleteRelatorio, dismissAlert, clearDismissed,

@@ -1,17 +1,19 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import ProfileModal from '@/components/ProfileModal'
 import Sidebar from '@/components/Sidebar'
 import { getSession, clearSession } from '@/lib/auth'
 import { metaCall } from '@/lib/meta'
+import { META_INSIGHTS_DEFAULTS } from '@/lib/meta-metrics'
 import { parseIns, fmt, fmtN, fmtI } from '@/lib/utils'
 import { SURL, ANON } from '@/lib/constants'
 import { efCall, efHeaders } from '@/lib/api'
 import { Campaign, DateParam, Relatorio } from '@/types'
 import PeriodFilter from '@/components/PeriodFilter'
 import MetaAnalysisPanel from '@/components/MetaAnalysisPanel'
+import PresentMode from '@/app/dashboard/components/PresentMode'
 import { buildClientPortalNav } from './client-nav'
 import styles from './cliente.module.css'
 
@@ -42,9 +44,15 @@ export default function ClienteAnalyticsView() {
   const [prevCampaigns, setPrevCampaigns] = useState<Campaign[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
+  const [period, setPeriod] = useState<DateParam>({ date_preset: 'last_30d' })
   const [periodLabel, setPeriodLabel] = useState('Últimos 30 dias')
   const [comparisonLabel, setComparisonLabel] = useState('')
   const [openCards, setOpenCards] = useState<Set<string>>(new Set())
+  // Apresentação nativa: estado só na sessão (não persiste no localStorage do cliente).
+  const [presentMode, setPresentMode] = useState(false)
+  const [presentLoading, setPresentLoading] = useState(false)
+  const [selectedCampIds, setSelectedCampIds] = useState<Set<string>>(new Set())
+  const [timeSeriesData, setTimeSeriesData] = useState<Array<{ date: string; spend: number; impressions: number; clicks: number; actions?: Array<{ action_type: string; value: string }> }>>([])
   const [relatorios, setRelatorios] = useState<Relatorio[]>([])
   const [accessChecked, setAccessChecked] = useState(false)
   const [analyticsEnabled, setAnalyticsEnabled] = useState(false)
@@ -150,8 +158,44 @@ export default function ClienteAnalyticsView() {
 
   function onPeriodApply(dp: DateParam, label: string, cmpDp?: DateParam, cmpLbl?: string) {
     if (!analyticsEnabled) return
+    setPeriod(dp)
     setPeriodLabel(label)
+    // Reset do filtro: as campanhas do novo período podem ter IDs diferentes,
+    // manter ids selecionados antigos pode esconder tudo.
+    setSelectedCampIds(new Set())
     loadAll(dp, cmpDp, cmpLbl)
+  }
+
+  // Carrega série temporal (time_increment=1) e abre o PresentMode.
+  // Mesma lógica do dashboard interno: o PresentMode pega a série do parent
+  // quando não há filtro, e refaz quando o cliente filtra.
+  async function openPresentMode() {
+    if (!campaigns.length) return
+    setPresentLoading(true)
+    try {
+      const r = await metaCall('insights', {
+        ...META_INSIGHTS_DEFAULTS,
+        level: 'account', limit: '100',
+        fields: 'spend,impressions,clicks,actions',
+        time_increment: '1',
+        ...period,
+      })
+      const rows = Array.isArray(r?.data) ? r.data : []
+      setTimeSeriesData(rows.map((row: { date_start?: string; spend?: string; impressions?: string; clicks?: string; actions?: Array<{ action_type: string; value: string }> }) => ({
+        date: String(row.date_start || ''),
+        spend: +(row.spend || 0),
+        impressions: +(row.impressions || 0),
+        clicks: +(row.clicks || 0),
+        actions: row.actions,
+      })))
+      setPresentMode(true)
+    } catch {
+      // Mesmo se a série falhar, abre o PresentMode — ele cuida do empty state
+      setTimeSeriesData([])
+      setPresentMode(true)
+    } finally {
+      setPresentLoading(false)
+    }
   }
 
   function toggleCard(id: string) {
@@ -168,12 +212,17 @@ export default function ClienteAnalyticsView() {
     clearSession(); router.replace('/login')
   }
 
-  const tSpend  = campaigns.reduce((s, c) => s + c.spend, 0)
-  const tImp    = campaigns.reduce((s, c) => s + c.impressions, 0)
-  const tClk    = campaigns.reduce((s, c) => s + c.clicks, 0)
-  const tConv   = campaigns.reduce((s, c) => s + c.conversations, 0)
-  const tLeads  = campaigns.reduce((s, c) => s + c.leads, 0)
-  const tPur    = campaigns.reduce((s, c) => s + c.purchases, 0)
+  // Filtro de campanhas: vazio = todas (default). Quando o usuário escolhe um
+  // subconjunto, KPIs e lista recalculam só com as selecionadas.
+  const filteredCampaigns = selectedCampIds.size > 0
+    ? campaigns.filter(c => selectedCampIds.has(c.id))
+    : campaigns
+  const tSpend  = filteredCampaigns.reduce((s, c) => s + c.spend, 0)
+  const tImp    = filteredCampaigns.reduce((s, c) => s + c.impressions, 0)
+  const tClk    = filteredCampaigns.reduce((s, c) => s + c.clicks, 0)
+  const tConv   = filteredCampaigns.reduce((s, c) => s + c.conversations, 0)
+  const tLeads  = filteredCampaigns.reduce((s, c) => s + c.leads, 0)
+  const tPur    = filteredCampaigns.reduce((s, c) => s + c.purchases, 0)
   const avgCtr  = tImp > 0 ? (tClk / tImp * 100) : 0
   const results = tConv || tLeads || tPur
   const resLabel = tConv ? ' conv' : tLeads ? ' leads' : ' compras'
@@ -199,6 +248,23 @@ export default function ClienteAnalyticsView() {
           <div className={styles.headerRight}>
             <button className={styles.btnSecondary} onClick={() => router.push('/cliente')}>← Ferramentas</button>
             {analyticsEnabled && <PeriodFilter onApply={onPeriodApply} />}
+            {analyticsEnabled && campaigns.length > 0 && (
+              <button
+                className={styles.btnSecondary}
+                onClick={openPresentMode}
+                disabled={presentLoading}
+                style={{
+                  background: presentLoading ? '#94a3b8' : 'linear-gradient(135deg, #2563eb, #22d3ee)',
+                  color: '#fff',
+                  border: 'none',
+                  fontWeight: 700,
+                  cursor: presentLoading ? 'wait' : 'pointer',
+                }}
+                title="Abrir apresentação em tela cheia"
+              >
+                {presentLoading ? 'Carregando…' : '🎬 Apresentar'}
+              </button>
+            )}
             <button className={styles.userPill} onClick={() => setProfileOpen(true)} type="button">
               <div className={styles.userDot}>{(sess.user || 'CL').slice(0, 2).toUpperCase()}</div>
               <span className={styles.userName}>{sess.user}</span>
@@ -227,22 +293,41 @@ export default function ClienteAnalyticsView() {
             </div>
 
             <MetaAnalysisPanel
-              campaigns={campaigns}
+              campaigns={filteredCampaigns}
               prevCampaigns={prevCampaigns}
               periodLabel={periodLabel}
               comparisonLabel={comparisonLabel}
               title="Leitura estratégica das campanhas"
             />
 
-            <div className={styles.sectionTitle}>📋 Suas Campanhas <span className={styles.count}>{campaigns.length} campanhas</span></div>
+            <div className={styles.sectionTitle} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
+              <span>
+                📋 Suas Campanhas{' '}
+                <span className={styles.count}>
+                  {selectedCampIds.size > 0
+                    ? `${filteredCampaigns.length} de ${campaigns.length} selecionada${campaigns.length === 1 ? '' : 's'}`
+                    : `${campaigns.length} campanha${campaigns.length === 1 ? '' : 's'}`}
+                </span>
+              </span>
+              {!loading && campaigns.length > 0 && (
+                <CampanhasFilterButton
+                  campaigns={campaigns}
+                  selectedIds={selectedCampIds}
+                  onChange={setSelectedCampIds}
+                />
+              )}
+            </div>
 
             {loading && <div className={styles.loadingState}><div className={styles.spinner} /><p>Carregando suas campanhas...</p></div>}
             {error && <div className={styles.errorState}>⚠️ {error}</div>}
 
             {!loading && !error && (
               <div className={styles.campList}>
+                {filteredCampaigns.length === 0 && campaigns.length > 0 && (
+                  <div className={styles.empty}>Nenhuma campanha selecionada. Use o botão de filtro acima.</div>
+                )}
                 {campaigns.length === 0 && <div className={styles.empty}>Nenhuma campanha encontrada neste período.</div>}
-                {campaigns.map(c => (
+                {filteredCampaigns.map(c => (
                   <div key={c.id} className={`${styles.campCard} ${openCards.has(c.id) ? styles.open : ''}`}>
                     <div className={styles.campHeader} onClick={() => toggleCard(c.id)}>
                       <svg className={styles.chevron} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M9 18l6-6-6-6"/></svg>
@@ -300,6 +385,20 @@ export default function ClienteAnalyticsView() {
       </div>
 
       <ProfileModal isOpen={profileOpen} onClose={() => setProfileOpen(false)} />
+      {presentMode && (
+        <PresentMode
+          clienteName={sess.user || 'CLIENTE'}
+          metaAccount=""
+          periodLabel={periodLabel}
+          period={period}
+          campaigns={campaigns}
+          timeSeriesData={timeSeriesData}
+          selectedCampIds={selectedCampIds}
+          onChangeSelectedCampIds={setSelectedCampIds}
+          onApplyPeriod={(dp, label, cmpDp, cmpLbl) => { onPeriodApply(dp, label, cmpDp, cmpLbl) }}
+          onClose={() => setPresentMode(false)}
+        />
+      )}
     </div>
   )
 }
@@ -309,6 +408,149 @@ function Chip({ label, value, cls }: { label: string; value: string; cls?: strin
     <div style={{ background: '#f4f6fa', border: '1px solid #e8ecf3', borderRadius: 8, padding: '8px 12px', minWidth: 100 }}>
       <div style={{ fontSize: 10, color: '#9ca3af', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 3 }}>{label}</div>
       <div style={{ fontSize: 14, fontWeight: 700, color: cls === 'purple' ? '#7c3aed' : '#1a1d2e' }}>{value}</div>
+    </div>
+  )
+}
+
+// Botão+dropdown de filtro de campanhas. `selectedIds` vazio = "todas selecionadas"
+// (default), permitindo que o usuário não veja diferença sem interagir.
+function CampanhasFilterButton({
+  campaigns,
+  selectedIds,
+  onChange,
+}: {
+  campaigns: Campaign[]
+  selectedIds: Set<string>
+  onChange: (next: Set<string>) => void
+}) {
+  const [open, setOpen] = useState(false)
+  const wrapRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (!open) return
+    function onDocClick(e: MouseEvent) {
+      if (!wrapRef.current?.contains(e.target as Node)) setOpen(false)
+    }
+    function onKey(e: KeyboardEvent) {
+      if (e.key === 'Escape') setOpen(false)
+    }
+    document.addEventListener('mousedown', onDocClick)
+    document.addEventListener('keydown', onKey)
+    return () => {
+      document.removeEventListener('mousedown', onDocClick)
+      document.removeEventListener('keydown', onKey)
+    }
+  }, [open])
+
+  const allSelected = selectedIds.size === 0 || selectedIds.size === campaigns.length
+  const visibleCount = selectedIds.size === 0 ? campaigns.length : selectedIds.size
+  const label = allSelected
+    ? `Todas as campanhas (${campaigns.length})`
+    : `${visibleCount} de ${campaigns.length} selecionada${visibleCount === 1 ? '' : 's'}`
+
+  function toggle(id: string) {
+    // Convertemos "vazio = todas" pro estado explícito antes de mexer
+    const base = selectedIds.size === 0 ? new Set(campaigns.map(c => c.id)) : new Set(selectedIds)
+    if (base.has(id)) base.delete(id); else base.add(id)
+    // Se ficou idêntico a todas, voltamos pro estado "vazio = todas" pra simplificar
+    onChange(base.size === campaigns.length ? new Set() : base)
+  }
+
+  function selectAll() { onChange(new Set()) }
+  function clearAll() { onChange(new Set(['__none__'])) /* id que nunca existirá → filtra 0 */ }
+
+  return (
+    <div ref={wrapRef} style={{ position: 'relative' }}>
+      <button
+        type="button"
+        onClick={() => setOpen(o => !o)}
+        style={{
+          background: '#fff',
+          border: '1px solid #d1d5db',
+          borderRadius: 8,
+          padding: '8px 14px',
+          fontSize: 13,
+          fontWeight: 600,
+          color: '#1a1d2e',
+          cursor: 'pointer',
+          display: 'inline-flex',
+          alignItems: 'center',
+          gap: 8,
+          fontFamily: 'inherit',
+        }}
+      >
+        🎯 {label}
+        <span style={{ fontSize: 10, color: '#6b7280' }}>▾</span>
+      </button>
+      {open && (
+        <div
+          style={{
+            position: 'absolute',
+            top: 'calc(100% + 6px)',
+            right: 0,
+            zIndex: 50,
+            minWidth: 280,
+            maxWidth: 380,
+            background: '#fff',
+            border: '1px solid #e5e7eb',
+            borderRadius: 10,
+            boxShadow: '0 10px 30px rgba(0,0,0,0.12)',
+            padding: 8,
+          }}
+        >
+          <div style={{ display: 'flex', gap: 6, padding: '4px 4px 8px', borderBottom: '1px solid #f3f4f6', marginBottom: 4 }}>
+            <button
+              type="button"
+              onClick={selectAll}
+              style={{ flex: 1, padding: '6px 8px', fontSize: 12, fontWeight: 600, background: '#f4f6fa', border: '1px solid #e5e7eb', borderRadius: 6, cursor: 'pointer', fontFamily: 'inherit' }}
+            >
+              Selecionar todas
+            </button>
+            <button
+              type="button"
+              onClick={clearAll}
+              style={{ flex: 1, padding: '6px 8px', fontSize: 12, fontWeight: 600, background: '#fff', border: '1px solid #e5e7eb', borderRadius: 6, cursor: 'pointer', fontFamily: 'inherit', color: '#6b7280' }}
+            >
+              Limpar
+            </button>
+          </div>
+          <div style={{ maxHeight: 320, overflowY: 'auto' }}>
+            {campaigns.map(c => {
+              const checked = selectedIds.size === 0 ? true : selectedIds.has(c.id)
+              return (
+                <label
+                  key={c.id}
+                  style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 8px', cursor: 'pointer', borderRadius: 6, fontSize: 13 }}
+                  onMouseEnter={(e) => ((e.currentTarget as HTMLLabelElement).style.background = '#f9fafb')}
+                  onMouseLeave={(e) => ((e.currentTarget as HTMLLabelElement).style.background = 'transparent')}
+                >
+                  <input
+                    type="checkbox"
+                    checked={checked}
+                    onChange={() => toggle(c.id)}
+                    style={{ cursor: 'pointer' }}
+                  />
+                  <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: '#1a1d2e' }}>
+                    {c.name}
+                  </span>
+                  <span
+                    style={{
+                      fontSize: 10,
+                      fontWeight: 700,
+                      padding: '2px 6px',
+                      borderRadius: 4,
+                      background: c.status === 'ACTIVE' ? '#dcfce7' : '#fee2e2',
+                      color: c.status === 'ACTIVE' ? '#166534' : '#991b1b',
+                    }}
+                  >
+                    {c.status === 'ACTIVE' ? 'ATIVA' : 'PAUSADA'}
+                  </span>
+                </label>
+              )
+            })}
+          </div>
+        </div>
+      )}
     </div>
   )
 }

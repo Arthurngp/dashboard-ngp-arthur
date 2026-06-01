@@ -5,8 +5,6 @@ import { isAdmin, validateSession } from "../_shared/roles.ts"
 import { sha256Hex, tokenPrefix } from "../_shared/api_tokens.ts"
 import { ALL_SCOPES } from "../_shared/api_scopes.ts"
 
-const AVAILABLE_SCOPES = ALL_SCOPES
-
 const ALLOWED_EXPIRATION_DAYS = new Set([5, 15, 30, 60, 90, 180, 365])
 
 function randomToken(): string {
@@ -22,7 +20,7 @@ function normalizeScopes(value: unknown): string[] {
   if (!Array.isArray(value)) return []
   const scopes = value
     .map(scope => String(scope || '').trim())
-    .filter(scope => AVAILABLE_SCOPES.includes(scope))
+    .filter(scope => ALL_SCOPES.includes(scope))
   return Array.from(new Set(scopes))
 }
 
@@ -58,7 +56,7 @@ serve(async (req: Request) => {
         .order('created_at', { ascending: false })
 
       if (error) return json(req, { error: 'Erro ao listar tokens.' }, 500)
-      return json(req, { tokens: data ?? [], available_scopes: AVAILABLE_SCOPES })
+      return json(req, { tokens: data ?? [], available_scopes: ALL_SCOPES })
     }
 
     if (action === 'criar') {

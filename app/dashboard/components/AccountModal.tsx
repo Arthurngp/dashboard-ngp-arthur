@@ -143,6 +143,11 @@ export default function AccountModal({ data, loading, error, userRole, onSave, o
             </div>
 
             <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+              <label style={{ fontSize: 11, fontWeight: 700, color: '#6E6E73' }}>Google Ads Customer ID</label>
+              <input value={form.google_ads_customer_id || ''} onChange={e => up('google_ads_customer_id', e.target.value)} style={{ padding: '10px 14px', borderRadius: 10, border: '1.5px solid #F2F2F7', background: '#F5F5F7', fontSize: 13, fontWeight: 600 }} placeholder="123-456-7890" />
+            </div>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
               <label style={{ fontSize: 11, fontWeight: 700, color: '#6E6E73' }}>Investimento Autorizado (R$)</label>
               <input value={form.investimento_autorizado_mensal || ''} onChange={e => up('investimento_autorizado_mensal', e.target.value)} style={{ padding: '10px 14px', borderRadius: 10, border: '1.5px solid #F2F2F7', background: '#F5F5F7', fontSize: 13, fontWeight: 600 }} placeholder="5000.00" />
             </div>

@@ -3,7 +3,10 @@
 // Pensado para um agente externo (ex.: OpenClaw) consultar bugs em aberto pela
 // manhã e resolver autonomamente.
 //
-// Autenticação: header Authorization: Bearer ngp_live_... ou X-NGP-Api-Token.
+// Autenticação (escolha UM dos dois headers):
+//   x-ngp-api-token: ngp_live_...
+//   Authorization: Bearer ngp_live_...
+//
 // Escopos:
 //   - feedback:read   → list / get
 //   - feedback:update → update_status / answer
@@ -15,9 +18,15 @@
 //   { action: "update_status", id, status, resposta_admin? }
 //   { action: "answer",        id, resposta_admin }
 //
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
-import { handleCors, json } from '../_shared/cors.ts'
-import { hasScope, validateApiToken } from '../_shared/api_tokens.ts'
+import { serve } from "std/http/server"
+import { createClient } from "supabase"
+import { handleCors, json } from "../_shared/cors.ts"
+import {
+  authenticateApiToken,
+  AUTH_ERROR_MESSAGES,
+  AUTH_ERROR_STATUS,
+  hasScope,
+} from "../_shared/api_tokens.ts"
 
 const TIPOS       = new Set(['bug', 'erro', 'sugestao', 'duvida', 'outro'])
 const PRIORIDADES = new Set(['baixa', 'media', 'alta', 'critica'])
@@ -31,7 +40,45 @@ const errMsg = (e: unknown): string => {
   return String(obj.message || obj.details || obj.hint || obj.code || JSON.stringify(e))
 }
 
-Deno.serve(async (req) => {
+async function audit(
+  sb: any,
+  tokenId: string,
+  req: Request,
+  action: string,
+  status: string,
+  requestPayload: unknown,
+  responsePayload: unknown,
+) {
+  const forwardedFor = req.headers.get('x-forwarded-for') || ''
+  const { error } = await sb.from('api_token_audit_logs').insert({
+    api_token_id: tokenId,
+    action,
+    status,
+    request_payload: requestPayload ?? {},
+    response_payload: responsePayload ?? {},
+    ip_address: forwardedFor.split(',')[0]?.trim() || null,
+    user_agent: req.headers.get('user-agent'),
+  })
+  if (error) throw error
+}
+
+async function safeAudit(
+  sb: any,
+  tokenId: string,
+  req: Request,
+  action: string,
+  status: string,
+  requestPayload: unknown,
+  responsePayload: unknown,
+) {
+  try {
+    await audit(sb, tokenId, req, action, status, requestPayload, responsePayload)
+  } catch (e) {
+    console.error('[feedback-api:audit]', e)
+  }
+}
+
+serve(async (req: Request) => {
   const cors = handleCors(req)
   if (cors) return cors
 
@@ -40,8 +87,12 @@ Deno.serve(async (req) => {
     const SERVICE = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
     const sb      = createClient(SURL, SERVICE)
 
-    const apiToken = await validateApiToken(sb, req)
-    if (!apiToken) return json(req, { error: 'Token inválido ou expirado.' }, 401)
+    const auth = await authenticateApiToken(sb, req)
+    if (!auth.ok) {
+      const reason = auth.error!
+      return json(req, { error: AUTH_ERROR_MESSAGES[reason], code: reason }, AUTH_ERROR_STATUS[reason])
+    }
+    const apiToken = auth.token!
 
     const body = await req.json().catch(() => ({}))
     const action = String(body?.action || 'list')
@@ -49,19 +100,34 @@ Deno.serve(async (req) => {
     // ─── leitura ──────────────────────────────────────────────────────────────
     if (action === 'list' || action === 'get') {
       if (!hasScope(apiToken, 'feedback:read')) {
-        return json(req, { error: 'Token sem permissão feedback:read.' }, 403)
+        const response = { error: 'Token sem permissão feedback:read.' }
+        await safeAudit(sb, apiToken.id, req, action, 'forbidden', body, response)
+        return json(req, response, 403)
       }
 
       if (action === 'get') {
         const id = String(body?.id || '').trim()
-        if (!id) return json(req, { error: 'id é obrigatório.' }, 400)
+        if (!id) {
+          const response = { error: 'id é obrigatório.' }
+          await safeAudit(sb, apiToken.id, req, action, 'error', body, response)
+          return json(req, response, 400)
+        }
         const { data, error } = await sb
           .from('feedback')
           .select('id, created_at, updated_at, usuario_id, usuario_nome, usuario_role, usuario_foto, titulo, tipo, prioridade, mensagem, pagina_url, user_agent, screenshot_url, status, resposta_admin')
           .eq('id', id)
           .maybeSingle()
-        if (error) return json(req, { error: errMsg(error) }, 500)
-        if (!data)  return json(req, { error: 'Feedback não encontrado.' }, 404)
+        if (error) {
+          const response = { error: errMsg(error) }
+          await safeAudit(sb, apiToken.id, req, action, 'error', body, response)
+          return json(req, response, 500)
+        }
+        if (!data) {
+          const response = { error: 'Feedback não encontrado.' }
+          await safeAudit(sb, apiToken.id, req, action, 'error', body, response)
+          return json(req, response, 404)
+        }
+        await safeAudit(sb, apiToken.id, req, action, 'success', body, { id })
         return json(req, { feedback: data })
       }
 
@@ -90,32 +156,59 @@ Deno.serve(async (req) => {
       }
 
       const { data, error } = await query
-      if (error) return json(req, { error: errMsg(error) }, 500)
-      return json(req, { feedbacks: data ?? [], count: data?.length ?? 0 })
+      if (error) {
+        const response = { error: errMsg(error) }
+        await safeAudit(sb, apiToken.id, req, action, 'error', body, response)
+        return json(req, response, 500)
+      }
+      const count = data?.length ?? 0
+      await safeAudit(sb, apiToken.id, req, action, 'success', body, { count })
+      return json(req, { feedbacks: data ?? [], count })
     }
 
     // ─── atualização ──────────────────────────────────────────────────────────
     if (action === 'update_status' || action === 'answer') {
       if (!hasScope(apiToken, 'feedback:update')) {
-        return json(req, { error: 'Token sem permissão feedback:update.' }, 403)
+        const response = { error: 'Token sem permissão feedback:update.' }
+        await safeAudit(sb, apiToken.id, req, action, 'forbidden', body, response)
+        return json(req, response, 403)
       }
 
       const id = String(body?.id || '').trim()
-      if (!id) return json(req, { error: 'id é obrigatório.' }, 400)
+      if (!id) {
+        const response = { error: 'id é obrigatório.' }
+        await safeAudit(sb, apiToken.id, req, action, 'error', body, response)
+        return json(req, response, 400)
+      }
 
       const update: Record<string, unknown> = {}
 
       if (action === 'update_status') {
         const status = String(body?.status || '').trim()
-        if (!STATUSES.has(status)) return json(req, { error: 'status inválido.' }, 400)
+        if (!STATUSES.has(status)) {
+          const response = { error: 'status inválido.' }
+          await safeAudit(sb, apiToken.id, req, action, 'error', body, response)
+          return json(req, response, 400)
+        }
         update.status = status
         if (typeof body?.resposta_admin === 'string') update.resposta_admin = body.resposta_admin
       } else {
         // answer
         const resposta = String(body?.resposta_admin || '').trim()
-        if (!resposta) return json(req, { error: 'resposta_admin é obrigatória.' }, 400)
+        if (!resposta) {
+          const response = { error: 'resposta_admin é obrigatória.' }
+          await safeAudit(sb, apiToken.id, req, action, 'error', body, response)
+          return json(req, response, 400)
+        }
         update.resposta_admin = resposta
       }
+
+      // Snapshot do estado atual pra audit (before/after)
+      const { data: before } = await sb
+        .from('feedback')
+        .select('id, status, resposta_admin, updated_at')
+        .eq('id', id)
+        .maybeSingle()
 
       const { data, error } = await sb
         .from('feedback')
@@ -124,8 +217,17 @@ Deno.serve(async (req) => {
         .select('id, status, resposta_admin, updated_at')
         .maybeSingle()
 
-      if (error) return json(req, { error: errMsg(error) }, 500)
-      if (!data)  return json(req, { error: 'Feedback não encontrado.' }, 404)
+      if (error) {
+        const response = { error: errMsg(error) }
+        await safeAudit(sb, apiToken.id, req, action, 'error', body, response)
+        return json(req, response, 500)
+      }
+      if (!data) {
+        const response = { error: 'Feedback não encontrado.' }
+        await safeAudit(sb, apiToken.id, req, action, 'error', body, response)
+        return json(req, response, 404)
+      }
+      await safeAudit(sb, apiToken.id, req, action, 'success', body, { id, before, after: data })
       return json(req, { ok: true, feedback: data })
     }
 
