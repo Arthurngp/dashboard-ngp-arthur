@@ -1064,7 +1064,7 @@ serve(async (req: Request) => {
       let off = 0
       while (true) {
         const { data, error } = await sb.from('fin_transacoes_ativas')
-          .select('id,tipo,descricao,valor,status,competence_date,payment_date,installment_index,installment_total,categoria:fin_categorias(id,nome,cor),fornecedor:fin_fornecedores(id,nome)')
+          .select('id,tipo,descricao,valor,status,competence_date,payment_date,installment_index,installment_total,installment_group_id,categoria:fin_categorias(id,nome,cor),fornecedor:fin_fornecedores(id,nome)')
           .eq('account_id', cartao_id)
           .range(off, off + 999)
         if (error) return json(req, { error: 'Erro ao buscar lançamentos do cartão.' }, 500)

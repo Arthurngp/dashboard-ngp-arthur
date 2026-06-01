@@ -1219,11 +1219,11 @@ serve(async (req: Request) => {
 
     // ── ATUALIZAR ────────────────────────────────────────────────────────────
     if (action === 'atualizar') {
-      const { id, ...fields } = payload
+      const { id, apply_to_group, ...fields } = payload
       if (!id) return json(req, { error: 'ID obrigatório.' }, 400)
 
       const currentResult = await sb.from('fin_transacoes')
-        .select('competence_date, payment_date, status, tipo, transfer_pair_id, transfer_direction, account_id')
+        .select('competence_date, payment_date, status, tipo, transfer_pair_id, transfer_direction, account_id, installment_group_id')
         .eq('id', id)
         .single()
       if (currentResult.error || !currentResult.data) {
@@ -1359,6 +1359,18 @@ serve(async (req: Request) => {
         ].join(',')).single()
 
       if (error) return json(req, { error: 'Erro ao atualizar transação.' }, 500)
+
+      // Propaga a categoria para todas as parcelas da mesma compra (mesmo installment_group_id).
+      // Só categoria — os demais campos (valor, data, parcela) são específicos de cada linha.
+      const groupId = current.installment_group_id
+      if (apply_to_group && groupId && update.categoria_id !== undefined) {
+        const { error: groupErr } = await sb.from('fin_transacoes')
+          .update({ categoria_id: update.categoria_id, updated_at: new Date().toISOString() })
+          .eq('installment_group_id', groupId)
+          .neq('id', id)
+        if (groupErr) return json(req, { error: 'Categoria atualizada, mas falhou ao propagar para as outras parcelas.' }, 500)
+      }
+
       return json(req, { transacao: data })
     }
 
