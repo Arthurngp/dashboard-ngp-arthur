@@ -24,6 +24,7 @@ interface Lancamento {
   payment_date: string | null
   installment_index: number | null
   installment_total: number | null
+  installment_group_id: string | null
   categoria: { id: string; nome: string; cor: string } | null
   fornecedor: { id: string; nome: string } | null
 }
@@ -38,6 +39,7 @@ interface PagamentoFatura {
 }
 
 interface ContaBancaria { id: string; nome: string; tipo: string }
+interface Categoria { id: string; nome: string; cor: string; tipo: 'entrada' | 'saida' }
 
 function todayISO() { return new Date().toISOString().slice(0, 10) }
 
@@ -73,6 +75,8 @@ function FaturaDetalheInner() {
   const [data, setData] = useState<any>(null)
   const [pagamentos, setPagamentos] = useState<PagamentoFatura[]>([])
   const [contas, setContas] = useState<ContaBancaria[]>([])
+  const [categorias, setCategorias] = useState<Categoria[]>([])
+  const [catSavingId, setCatSavingId] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
   const [msg, setMsg] = useState<{ type: 'ok' | 'err'; text: string } | null>(null)
 
@@ -99,15 +103,17 @@ function FaturaDetalheInner() {
   const load = useCallback(async () => {
     if (!cartaoId || !mesRef) return
     setLoading(true)
-    const [resp, contasResp, pagsResp] = await Promise.all([
+    const [resp, contasResp, pagsResp, catsResp] = await Promise.all([
       callFn('financeiro-agent', { action: 'cartoes_fatura_detalhe', cartao_id: cartaoId, mes_ref: mesRef }),
       callFn('financeiro-aux', { entity: 'accounts', action: 'listar' }),
       callFn('financeiro-agent', { action: 'cartoes_fatura_pagamentos_listar', cartao_id: cartaoId, mes_ref: mesRef }),
+      callFn('financeiro-categorias', { action: 'listar' }),
     ])
     setLoading(false)
     if (resp?.error) { showMsg('err', resp.error); return }
     setData(resp)
     setPagamentos(pagsResp?.pagamentos || [])
+    if (catsResp?.categorias) setCategorias(catsResp.categorias)
     if (contasResp?.accounts) {
       setContas((contasResp.accounts as any[]).filter((a) =>
         a.ativo !== false && a.incluir_no_saldo !== false && ['banco', 'conta_corrente', 'carteira'].includes(a.tipo),
@@ -175,6 +181,49 @@ function FaturaDetalheInner() {
     if (resp?.error) { showMsg('err', resp.error); return }
     showMsg('ok', 'Pagamento removido.')
     void load()
+  }
+
+  async function mudarCategoria(lanc: Lancamento, novaCategoriaId: string) {
+    const catId = novaCategoriaId || null
+    if ((lanc.categoria?.id || null) === catId) return // nada mudou
+
+    const nova = catId ? categorias.find(c => c.id === catId) || null : null
+    const novaCatObj = nova ? { id: nova.id, nome: nova.nome, cor: nova.cor } : null
+    const anterior = lanc.categoria
+
+    // Optimistic: atualiza a linha (e demais parcelas do mesmo grupo) localmente.
+    setData((prev: any) => {
+      if (!prev?.lancamentos) return prev
+      const lancs = prev.lancamentos.map((l: any) =>
+        l.id === lanc.id || (lanc.installment_group_id && l.installment_group_id === lanc.installment_group_id)
+          ? { ...l, categoria: novaCatObj }
+          : l,
+      )
+      return { ...prev, lancamentos: lancs }
+    })
+    setCatSavingId(lanc.id)
+
+    const resp = await callFn('financeiro-transacoes', {
+      action: 'atualizar',
+      id: lanc.id,
+      categoria_id: catId,
+      apply_to_group: true,
+    })
+    setCatSavingId(null)
+
+    if (resp?.error) {
+      // Revert.
+      setData((prev: any) => {
+        if (!prev?.lancamentos) return prev
+        const lancs = prev.lancamentos.map((l: any) =>
+          l.id === lanc.id || (lanc.installment_group_id && l.installment_group_id === lanc.installment_group_id)
+            ? { ...l, categoria: anterior }
+            : l,
+        )
+        return { ...prev, lancamentos: lancs }
+      })
+      showMsg('err', resp.error)
+    }
   }
 
   const lancamentos: Lancamento[] = data?.lancamentos || []
@@ -299,7 +348,24 @@ function FaturaDetalheInner() {
                     <td>{new Date(l.competence_date + 'T00:00:00').toLocaleDateString('pt-BR')}</td>
                     <td>{l.descricao}</td>
                     <td>
-                      {l.categoria ? (
+                      {l.tipo === 'saida' ? (
+                        <div className={detStyles.catEditCell}>
+                          {l.categoria && (
+                            <span className={detStyles.catDot} style={{ background: l.categoria.cor }} />
+                          )}
+                          <select
+                            className={detStyles.catSelect}
+                            value={l.categoria?.id || ''}
+                            disabled={catSavingId === l.id}
+                            onChange={e => mudarCategoria(l, e.target.value)}
+                          >
+                            <option value="">— Sem categoria —</option>
+                            {categorias.filter(c => c.tipo === 'saida').map(c => (
+                              <option key={c.id} value={c.id}>{c.nome}</option>
+                            ))}
+                          </select>
+                        </div>
+                      ) : l.categoria ? (
                         <span className={detStyles.catTag}>
                           <span className={detStyles.catDot} style={{ background: l.categoria.cor }} />
                           {l.categoria.nome}
